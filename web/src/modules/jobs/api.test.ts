@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { listJobs, submitDiagnostics, type Job } from './api'
+import { getJob, listJobs, submitDiagnostics, type Job } from './api'
 
 const job: Job = {
   id: 12,
@@ -23,6 +23,17 @@ describe('jobs API', () => {
 
     await expect(listJobs()).resolves.toEqual([job])
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/jobs?limit=50', {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+  })
+
+  it('loads a single durable job with its result', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ...job, state: 'succeeded', result: { bytes: 42 } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getJob(12)).resolves.toEqual({ ...job, state: 'succeeded', result: { bytes: 42 } })
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/jobs/12', {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' },
     })

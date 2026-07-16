@@ -46,6 +46,15 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/adapters/podman"
 	"github.com/nexa-panel/nexa-panel/internal/modules/admintools"
 
+	"github.com/nexa-panel/nexa-panel/internal/modules/files"
+	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
+
+	"github.com/nexa-panel/nexa-panel/internal/modules/logs"
+	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
+
+	"github.com/nexa-panel/nexa-panel/internal/modules/schedules"
+	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+
 	"github.com/nexa-panel/nexa-panel/internal/modules/domains"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/authorization"
@@ -107,6 +116,8 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize sites module: %w", err)
 	}
+	identityModule.SetSiteDirectory(sitesModule)
+	sitesModule.SetAccessPolicy(identityModule)
 	domainsModule, err := domains.New(setupCtx, database, jobsModule, sitesModule, siteoperator.NewUnixClient(*agentSocket, *agentToken), nil)
 	if err != nil {
 		return fmt.Errorf("initialize domains module: %w", err)
@@ -140,6 +151,18 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize admin tools module: %w", err)
 	}
+	filesModule, err := files.New(jobsModule, sitesModule, identityModule, filesoperator.NewUnixClient(*agentSocket, *agentToken), auditModule)
+	if err != nil {
+		return fmt.Errorf("initialize files module: %w", err)
+	}
+	logsModule, err := logs.New(sitesModule, identityModule, logsoperator.NewUnixClient(*agentSocket, *agentToken))
+	if err != nil {
+		return fmt.Errorf("initialize logs module: %w", err)
+	}
+	schedulesModule, err := schedules.New(setupCtx, database, jobsModule, sitesModule, identityModule, scheduleoperator.NewUnixClient(*agentSocket, *agentToken))
+	if err != nil {
+		return fmt.Errorf("initialize schedules module: %w", err)
+	}
 
 	jobsModule.Start(context.Background())
 	defer jobsModule.Close()
@@ -156,6 +179,9 @@ func runAPI(args []string, logger *slog.Logger) error {
 		postgresDatabasesModule,
 		mysqlDatabasesModule,
 		adminToolsModule,
+		filesModule,
+		logsModule,
+		schedulesModule,
 		system.New(capacity.NewProcReader(), podman.NewInspector()),
 	}
 

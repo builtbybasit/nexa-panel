@@ -52,6 +52,14 @@ const (
 		ALTER TABLE identity_users ADD COLUMN recovery_code_hashes TEXT NOT NULL DEFAULT '[]';
 		ALTER TABLE identity_sessions ADD COLUMN mfa_verified_at TIMESTAMP;
 	`
+	identitySiteGrantSchema = `
+		CREATE TABLE identity_site_grants (
+			user_id TEXT NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
+			site_id TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			PRIMARY KEY (user_id, site_id)
+		);
+	`
 )
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$`)
@@ -127,14 +135,15 @@ func UserFromContext(ctx context.Context) (User, bool) {
 }
 
 type Module struct {
-	database   *bun.DB
-	audit      audit.Recorder
-	logger     *slog.Logger
-	now        func() time.Time
-	config     Config
-	parameters passwordParameters
-	secrets    secrets.Cipher
-	attempts   *attemptLimiter
+	database      *bun.DB
+	audit         audit.Recorder
+	logger        *slog.Logger
+	now           func() time.Time
+	config        Config
+	parameters    passwordParameters
+	secrets       secrets.Cipher
+	attempts      *attemptLimiter
+	siteDirectory SiteDirectory
 }
 
 func New(ctx context.Context, database *bun.DB, recorder audit.Recorder, cryptography secrets.Cipher, logger *slog.Logger) (*Module, error) {
@@ -157,7 +166,7 @@ func NewWithConfig(ctx context.Context, database *bun.DB, recorder audit.Recorde
 	if config.SessionTTL <= 0 || config.PasswordMemoryKiB == 0 || config.PasswordIterations == 0 || config.PasswordThreads == 0 || config.AttemptLimit <= 0 || config.AttemptWindow <= 0 {
 		return nil, errors.New("identity configuration values must be positive")
 	}
-	if err := persistence.Migrate(ctx, database, "identity", []string{identitySchema, identityMFASchema}); err != nil {
+	if err := persistence.Migrate(ctx, database, "identity", []string{identitySchema, identityMFASchema, identitySiteGrantSchema}); err != nil {
 		return nil, err
 	}
 	return &Module{
@@ -206,6 +215,21 @@ func (m *Module) Register(registry module.Registry) error {
 			err = registry.Handle(route.pattern, route.handler)
 		}
 		if err != nil {
+			return err
+		}
+	}
+	authorized := []struct {
+		pattern string
+		handler http.Handler
+	}{
+		{"GET /api/v1/users", http.HandlerFunc(m.listUsersHTTP)},
+		{"POST /api/v1/users", http.HandlerFunc(m.createUserHTTP)},
+		{"PATCH /api/v1/users/{id}", http.HandlerFunc(m.updateUserHTTP)},
+		{"DELETE /api/v1/users/{id}", http.HandlerFunc(m.deleteUserHTTP)},
+		{"PUT /api/v1/users/{id}/sites", http.HandlerFunc(m.replaceUserSitesHTTP)},
+	}
+	for _, route := range authorized {
+		if err := registry.HandleAuthorized(route.pattern, "users.manage", route.handler); err != nil {
 			return err
 		}
 	}

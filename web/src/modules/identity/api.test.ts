@@ -1,6 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { bootstrap, confirmMFA, enrollMFA, getIdentityStatus, IdentityRequestError, logout, verifyMFA } from './api'
+import {
+  bootstrap,
+  confirmMFA,
+  createUser,
+  deleteUser,
+  enrollMFA,
+  getIdentityStatus,
+  IdentityRequestError,
+  listUsers,
+  logout,
+  replaceUserSites,
+  updateUser,
+  verifyMFA,
+} from './api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -73,5 +86,101 @@ describe('identity API', () => {
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })))
     await expect(logout()).resolves.toBeUndefined()
+  })
+})
+
+describe('user management API', () => {
+  const managed = {
+    id: 'user-2',
+    username: 'dev',
+    role: 'developer',
+    createdAt: '2026-07-01T00:00:00Z',
+    lastLoginAt: null,
+    mfaConfirmed: false,
+    siteIds: ['site-1'],
+  }
+
+  it('lists managed users', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ items: [managed] }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(listUsers()).resolves.toEqual([managed])
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/users', {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+  })
+
+  it('creates a user with username, password, and role', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(managed, { status: 201 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(createUser({ username: 'dev', password: 'a-strong-password', role: 'developer' })).resolves.toEqual(managed)
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/users', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'dev', password: 'a-strong-password', role: 'developer' }),
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    })
+  })
+
+  it('patches role and password changes independently', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(updateUser('user-2', { role: 'operator' })).resolves.toBeUndefined()
+    await expect(updateUser('user-2', { password: 'a-new-strong-password' })).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/users/user-2', {
+      method: 'PATCH',
+      body: JSON.stringify({ role: 'operator' }),
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/users/user-2', {
+      method: 'PATCH',
+      body: JSON.stringify({ password: 'a-new-strong-password' }),
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    })
+  })
+
+  it('deletes a user without a body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(deleteUser('user-2')).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/users/user-2', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+  })
+
+  it('replaces developer site grants with a PUT of siteIds', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(replaceUserSites('user-2', ['site-1', 'site-2'])).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/users/user-2/sites', {
+      method: 'PUT',
+      body: JSON.stringify({ siteIds: ['site-1', 'site-2'] }),
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    })
+  })
+
+  it('surfaces the server-safe error envelope for guarded operations', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({ code: 'last_admin', message: 'The last administrator cannot be deleted.' }, { status: 400 }),
+      ),
+    )
+    await expect(deleteUser('user-1')).rejects.toEqual(
+      new IdentityRequestError('The last administrator cannot be deleted.', 400, 'last_admin'),
+    )
   })
 })

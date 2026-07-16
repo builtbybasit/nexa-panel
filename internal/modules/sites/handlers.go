@@ -15,6 +15,31 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "sites_unavailable", "Sites could not be loaded.")
 		return
 	}
+	if m.access != nil {
+		user, ok := identity.UserFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+			return
+		}
+		all, ids, err := m.access.AccessibleSiteIDs(r.Context(), user)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "sites_unavailable", "Sites could not be loaded.")
+			return
+		}
+		if !all {
+			granted := make(map[string]struct{}, len(ids))
+			for _, id := range ids {
+				granted[id] = struct{}{}
+			}
+			filtered := make([]Site, 0, len(items))
+			for _, site := range items {
+				if _, ok := granted[site.ID]; ok {
+					filtered = append(filtered, site)
+				}
+			}
+			items = filtered
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -39,6 +64,15 @@ func (m *Module) createHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) getHTTP(w http.ResponseWriter, r *http.Request) {
+	accessible, err := m.siteAccessible(r, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
+		return
+	}
+	if !accessible {
+		writeError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
+		return
+	}
 	site, err := m.Get(r.Context(), r.PathValue("id"))
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
@@ -52,6 +86,15 @@ func (m *Module) getHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) planHTTP(w http.ResponseWriter, r *http.Request) {
+	accessible, err := m.siteAccessible(r, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "site_plan_unavailable", "The site plan could not be loaded.")
+		return
+	}
+	if !accessible {
+		writeError(w, http.StatusNotFound, "site_plan_not_found", "A configuration plan is not ready for this site.")
+		return
+	}
 	plan, expiresAt, err := m.Plan(r.Context(), r.PathValue("id"))
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "site_plan_not_found", "A configuration plan is not ready for this site.")
@@ -62,6 +105,19 @@ func (m *Module) planHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"plan": plan, "expiresAt": expiresAt})
+}
+
+// siteAccessible hides sites the user cannot reach; callers respond 404 so
+// site existence does not leak to scoped roles.
+func (m *Module) siteAccessible(r *http.Request, siteID string) (bool, error) {
+	if m.access == nil {
+		return true, nil
+	}
+	user, ok := identity.UserFromContext(r.Context())
+	if !ok {
+		return false, nil
+	}
+	return m.access.SiteAccessible(r.Context(), user, siteID)
 }
 
 func (m *Module) replanHTTP(w http.ResponseWriter, r *http.Request) {

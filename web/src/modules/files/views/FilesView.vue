@@ -1,0 +1,784 @@
+<script setup lang="ts">
+import { useQuery } from '@tanstack/vue-query'
+import { computed, markRaw, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+
+import { useJobRunner } from '@/shared/composables/useJobRunner'
+import { formatBytes, formatDateTime } from '@/shared/formatters'
+import {
+  AppAlert,
+  AppButton,
+  AppCard,
+  AppIcon,
+  AppInput,
+  AppSelect,
+  EmptyState,
+  FormField,
+  JobProgress,
+  PageHeader,
+  ProgressBar,
+  StatusPill,
+} from '@/shared/ui'
+
+import { getJob } from '../../jobs/api'
+import { listSites } from '../../sites/api'
+import {
+  archiveEntries,
+  copyEntry,
+  deleteEntry,
+  directorySize,
+  downloadUrl,
+  extractEntry,
+  listFiles,
+  makeDirectory,
+  moveEntry,
+  uploadFile,
+  writeFileContent,
+  type DirectorySizeResult,
+  type EntryKind,
+  type FileEntry,
+} from '../api'
+import FileEditorDialog from './FileEditorDialog.vue'
+
+// --- Site selection (persisted in the ?site= route query) ---
+
+const route = useRoute()
+const router = useRouter()
+
+const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
+const activeSites = computed(() => (sitesQuery.data.value ?? []).filter((site) => site.status === 'active'))
+
+const siteId = computed(() => (typeof route.query.site === 'string' ? route.query.site : ''))
+const selectedSite = computed(() => activeSites.value.find((site) => site.id === siteId.value))
+
+function selectSite(id: string) {
+  const query = { ...route.query }
+  if (id) query.site = id
+  else delete query.site
+  void router.replace({ query })
+}
+
+const siteSelection = computed<string>({
+  get: () => siteId.value,
+  set: (value) => selectSite(value),
+})
+
+watch(
+  activeSites,
+  (sites) => {
+    const first = sites[0]
+    if (!siteId.value && first) selectSite(first.id)
+  },
+  { immediate: true },
+)
+
+// --- Directory listing ---
+
+const path = ref('.')
+const selectedNames = ref<string[]>([])
+
+const listingQuery = useQuery({
+  queryKey: ['files', siteId, path],
+  queryFn: () => listFiles(siteId.value, path.value),
+  enabled: computed(() => Boolean(selectedSite.value)),
+  retry: false,
+})
+const items = computed(() => listingQuery.data.value?.items ?? [])
+const listingTruncated = computed(() => listingQuery.data.value?.truncated ?? false)
+const listingError = computed(() => (listingQuery.error.value instanceof Error ? listingQuery.error.value.message : ''))
+
+async function refetchListing() {
+  await listingQuery.refetch()
+}
+
+function joinPath(directory: string, name: string): string {
+  return directory === '.' ? name : `${directory}/${name}`
+}
+
+const entryPath = (entry: FileEntry) => joinPath(path.value, entry.name)
+
+function setPath(next: string) {
+  path.value = next
+}
+
+watch(siteId, () => {
+  path.value = '.'
+  selectedNames.value = []
+  menu.value = undefined
+  sizeResult.value = undefined
+})
+watch(path, () => {
+  selectedNames.value = []
+  menu.value = undefined
+})
+
+const displayPath = computed(() => (path.value === '.' ? '/' : `/${path.value}`))
+const crumbs = computed(() => {
+  if (path.value === '.') return [] as { name: string; path: string }[]
+  const segments = path.value.split('/')
+  return segments.map((name, index) => ({ name, path: segments.slice(0, index + 1).join('/') }))
+})
+
+// --- Write-zone guard: mutations only inside public/, private/, tmp/, backups/ ---
+// The server enforces this; the UI hides mutation affordances at root depth and
+// in read-only trees such as logs/.
+
+const writeZones = new Set(['public', 'private', 'tmp', 'backups'])
+const canMutateHere = computed(() => path.value !== '.' && writeZones.has(path.value.split('/')[0] ?? ''))
+
+const kindIcons: Record<EntryKind, string> = { dir: 'folder', file: 'file-text', symlink: 'external-link', other: 'info' }
+
+function entrySize(entry: FileEntry): string {
+  if (entry.kind === 'dir') return '—'
+  return entry.size === 0 ? '0 B' : formatBytes(entry.size)
+}
+
+function isArchiveName(name: string): boolean {
+  return name.endsWith('.zip') || name.endsWith('.tar.gz') || name.endsWith('.tgz')
+}
+
+// --- Selection (archive sources) ---
+
+const allSelected = computed(() => items.value.length > 0 && selectedNames.value.length === items.value.length)
+
+function toggleSelect(name: string) {
+  selectedNames.value = selectedNames.value.includes(name)
+    ? selectedNames.value.filter((selected) => selected !== name)
+    : [...selectedNames.value, name]
+}
+
+function toggleAll() {
+  selectedNames.value = allSelected.value ? [] : items.value.map((entry) => entry.name)
+}
+
+// --- Row menu (fixed-position so the table's overflow container cannot clip it) ---
+
+const menu = ref<{ entry: FileEntry; top: number; right: number }>()
+
+function openMenu(entry: FileEntry, event: MouseEvent) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  menu.value = { entry, top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) }
+}
+
+function hasActions(entry: FileEntry): boolean {
+  return entry.kind === 'dir' || entry.kind === 'file' || canMutateHere.value
+}
+
+/** Close the menu, then open the menu entry (navigate for dirs, edit for files). */
+function menuOpenEntry() {
+  const current = menu.value
+  if (!current) return
+  menu.value = undefined
+  openEntry(current.entry)
+}
+
+// --- Editor ---
+
+const editorPath = ref<string>()
+
+function openEntry(entry: FileEntry) {
+  if (entry.kind === 'dir') setPath(entryPath(entry))
+  else if (entry.kind === 'file') editorPath.value = entryPath(entry)
+}
+
+// --- Dialogs (mkdir / new file / rename / copy / move / delete / extract / archive) ---
+
+type DialogKind = 'mkdir' | 'newfile' | 'rename' | 'copy' | 'move' | 'delete' | 'extract' | 'archive'
+const dialog = ref<DialogKind>()
+const dialogTarget = ref<FileEntry>()
+const dialogBusy = ref(false)
+const dialogError = ref('')
+const nameInput = ref('')
+const destinationInput = ref('')
+const overwriteInput = ref(false)
+const confirmInput = ref('')
+
+function openDialog(kind: DialogKind, entry?: FileEntry) {
+  menu.value = undefined
+  dialogTarget.value = entry
+  dialogError.value = ''
+  nameInput.value = kind === 'rename' ? (entry?.name ?? '') : ''
+  destinationInput.value = ''
+  overwriteInput.value = false
+  confirmInput.value = ''
+  if (kind === 'copy' || kind === 'move') destinationInput.value = entry ? entryPath(entry) : ''
+  if (kind === 'extract') destinationInput.value = canMutateHere.value ? path.value : 'tmp'
+  if (kind === 'archive') {
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)
+    destinationInput.value = `backups/archive-${stamp}.tar.gz`
+  }
+  dialog.value = kind
+}
+
+function closeDialog() {
+  if (dialogBusy.value) return
+  dialog.value = undefined
+  dialogTarget.value = undefined
+}
+
+async function runDialog(action: () => Promise<void>) {
+  dialogBusy.value = true
+  dialogError.value = ''
+  try {
+    await action()
+    dialog.value = undefined
+    dialogTarget.value = undefined
+    await refetchListing()
+  } catch (caught) {
+    dialogError.value = caught instanceof Error ? caught.message : 'The file operation failed.'
+  } finally {
+    dialogBusy.value = false
+  }
+}
+
+const submitMkdir = () => runDialog(() => makeDirectory(siteId.value, joinPath(path.value, nameInput.value.trim())))
+
+const submitNewFile = () =>
+  runDialog(async () => {
+    await writeFileContent(siteId.value, { path: joinPath(path.value, nameInput.value.trim()), content: '', expectedEtag: '' })
+  })
+
+const submitRename = () =>
+  runDialog(async () => {
+    const target = dialogTarget.value
+    if (!target) return
+    await moveEntry(siteId.value, { from: entryPath(target), to: joinPath(path.value, nameInput.value.trim()), overwrite: false })
+  })
+
+const submitCopy = () =>
+  runDialog(async () => {
+    const target = dialogTarget.value
+    if (!target) return
+    await copyEntry(siteId.value, { from: entryPath(target), to: destinationInput.value.trim() })
+  })
+
+const submitMove = () =>
+  runDialog(async () => {
+    const target = dialogTarget.value
+    if (!target) return
+    await moveEntry(siteId.value, { from: entryPath(target), to: destinationInput.value.trim(), overwrite: overwriteInput.value })
+  })
+
+const submitDelete = () =>
+  runDialog(async () => {
+    const target = dialogTarget.value
+    if (!target) return
+    await deleteEntry(siteId.value, { path: entryPath(target), recursive: target.kind === 'dir' })
+  })
+
+// --- Long-running operations (archive / extract / size) follow durable jobs ---
+
+const runner = useJobRunner()
+const sizeResult = ref<DirectorySizeResult & { path: string }>()
+
+const selectedPaths = computed(() => selectedNames.value.map((name) => joinPath(path.value, name)))
+
+function submitArchive() {
+  const paths = selectedPaths.value
+  const target = destinationInput.value.trim()
+  closeDialog()
+  void runner.run(async () => (await archiveEntries(siteId.value, { paths, target })).job.id, {
+    onSuccess: async () => {
+      selectedNames.value = []
+      await refetchListing()
+    },
+    failureMessage: 'The archive job failed. Inspect Jobs for the durable failure record.',
+  })
+}
+
+function submitExtract() {
+  const target = dialogTarget.value
+  if (!target) return
+  const from = entryPath(target)
+  const targetDir = destinationInput.value.trim()
+  closeDialog()
+  void runner.run(async () => (await extractEntry(siteId.value, { path: from, targetDir })).job.id, {
+    onSuccess: refetchListing,
+    failureMessage: 'The extract job failed. Inspect Jobs for the durable failure record.',
+  })
+}
+
+function computeSize(entry: FileEntry) {
+  const target = entryPath(entry)
+  menu.value = undefined
+  void runner.run(async () => (await directorySize(siteId.value, target)).job.id, {
+    onSuccess: async (event) => {
+      const result = ((await getJob(event.jobId)).result ?? {}) as Partial<DirectorySizeResult>
+      sizeResult.value = {
+        path: target,
+        bytes: Number(result.bytes ?? 0),
+        files: Number(result.files ?? 0),
+        dirs: Number(result.dirs ?? 0),
+        truncated: Boolean(result.truncated),
+      }
+    },
+    failureMessage: 'The size job failed. Inspect Jobs for the durable failure record.',
+  })
+}
+
+// --- Uploads (chunked, sequential, with per-file progress) ---
+
+interface UploadItem {
+  file: File
+  targetPath: string
+  sent: number
+  total: number
+  status: 'uploading' | 'done' | 'failed'
+  error: string
+}
+
+const uploads = ref<UploadItem[]>([])
+const filePicker = ref<HTMLInputElement>()
+
+async function onFilesChosen(event: Event) {
+  const input = event.target as HTMLInputElement
+  const chosen = Array.from(input.files ?? [])
+  input.value = ''
+  const directory = path.value
+  for (const file of chosen) {
+    uploads.value.push({
+      file: markRaw(file),
+      targetPath: joinPath(directory, file.name),
+      sent: 0,
+      total: file.size,
+      status: 'uploading',
+      error: '',
+    })
+    const item = uploads.value[uploads.value.length - 1]
+    if (item) await startUpload(item, false)
+  }
+}
+
+async function startUpload(item: UploadItem, overwrite: boolean) {
+  item.status = 'uploading'
+  item.error = ''
+  item.sent = 0
+  try {
+    await uploadFile(siteId.value, item.file, item.targetPath, overwrite, (sent, total) => {
+      item.sent = sent
+      item.total = total
+    })
+    item.status = 'done'
+    await refetchListing()
+  } catch (caught) {
+    item.status = 'failed'
+    item.error = caught instanceof Error ? caught.message : 'The upload failed.'
+  }
+}
+
+function uploadPercent(item: UploadItem): number {
+  if (item.status === 'done') return 100
+  return Math.round((item.sent / Math.max(item.total, 1)) * 100)
+}
+
+function clearFinishedUploads() {
+  uploads.value = uploads.value.filter((item) => item.status === 'uploading')
+}
+
+const uploadTones = { uploading: 'info', done: 'success', failed: 'danger' } as const
+const uploadLabels = { uploading: 'Uploading', done: 'Uploaded', failed: 'Failed' } as const
+</script>
+
+<template>
+  <section class="space-y-6">
+    <PageHeader
+      eyebrow="Web hosting"
+      title="Files"
+      description="Browse and manage files under each site's managed root. Changes are limited to public/, private/, tmp/, and backups/ — everything else is read-only."
+    >
+      <AppButton icon="refresh-cw" :loading="listingQuery.isFetching.value" :disabled="!selectedSite" @click="refetchListing">
+        Refresh
+      </AppButton>
+    </PageHeader>
+
+    <AppAlert v-if="sitesQuery.isPending.value" tone="info">Loading sites…</AppAlert>
+    <AppAlert v-else-if="sitesQuery.isError.value" tone="danger">The site list is unavailable.</AppAlert>
+    <EmptyState
+      v-else-if="!activeSites.length"
+      icon="folder"
+      title="No active sites"
+      description="Files become browsable once a site reaches the active state."
+    />
+
+    <template v-else>
+      <!-- Site selector + breadcrumb path -->
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="w-full sm:w-72">
+          <AppSelect v-model="siteSelection" aria-label="Site">
+            <option v-for="site in activeSites" :key="site.id" :value="site.id">
+              {{ site.displayName }} — {{ site.primaryDomain }}
+            </option>
+          </AppSelect>
+        </div>
+        <nav class="flex min-w-0 flex-1 items-center gap-0.5 font-mono text-[13px]" aria-label="Path">
+          <button
+            class="rounded px-1.5 py-0.5 transition-colors hover:bg-white/[0.05] hover:text-ink"
+            :class="path === '.' ? 'text-ink' : 'text-ink-secondary'"
+            @click="setPath('.')"
+          >
+            /
+          </button>
+          <template v-for="(crumb, index) in crumbs" :key="crumb.path">
+            <AppIcon v-if="index > 0" name="chevron-right" :size="12" class="shrink-0 text-ink-muted" />
+            <button
+              class="truncate rounded px-1.5 py-0.5 transition-colors hover:bg-white/[0.05] hover:text-ink"
+              :class="index === crumbs.length - 1 ? 'text-ink' : 'text-ink-secondary'"
+              @click="setPath(crumb.path)"
+            >
+              {{ crumb.name }}
+            </button>
+          </template>
+        </nav>
+      </div>
+
+      <AppAlert v-if="siteId && sitesQuery.isSuccess.value && !selectedSite" tone="warning">
+        The selected site is not active or not accessible. Choose another site.
+      </AppAlert>
+
+      <AppAlert v-if="runner.error.value" tone="danger">{{ runner.error.value }}</AppAlert>
+      <JobProgress v-if="runner.progress.value" :event="runner.progress.value" />
+
+      <AppAlert v-if="sizeResult" tone="info" :title="`Directory size — /${sizeResult.path}`">
+        <p>
+          {{ formatBytes(sizeResult.bytes) }} · {{ sizeResult.files.toLocaleString() }} files ·
+          {{ sizeResult.dirs.toLocaleString() }} directories<template v-if="sizeResult.truncated"> · count truncated</template>
+        </p>
+        <AppButton size="sm" class="mt-2" @click="sizeResult = undefined">Dismiss</AppButton>
+      </AppAlert>
+
+      <!-- Upload progress -->
+      <AppCard v-if="uploads.length" eyebrow="Transfers" title="Uploads">
+        <template #actions>
+          <AppButton size="sm" @click="clearFinishedUploads">Clear finished</AppButton>
+        </template>
+        <ul class="space-y-3">
+          <li v-for="(item, index) in uploads" :key="`${item.targetPath}-${index}`" class="space-y-1.5">
+            <div class="flex items-center justify-between gap-3 text-[13px]">
+              <span class="min-w-0 truncate font-mono text-ink">{{ item.targetPath }}</span>
+              <span class="flex shrink-0 items-center gap-2">
+                <span class="font-mono text-[11px] text-ink-muted">{{ formatBytes(item.sent) }} / {{ formatBytes(item.total) }}</span>
+                <AppButton v-if="item.status === 'failed'" size="sm" @click="startUpload(item, true)">Retry and overwrite</AppButton>
+                <StatusPill :tone="uploadTones[item.status]" :label="uploadLabels[item.status]" :pulse="item.status === 'uploading'" />
+              </span>
+            </div>
+            <ProgressBar :value="uploadPercent(item)" :tone="item.status === 'failed' ? 'danger' : 'accent'" />
+            <p v-if="item.error" class="text-xs text-rose-300">{{ item.error }}</p>
+          </li>
+        </ul>
+      </AppCard>
+
+      <!-- Directory listing -->
+      <AppCard v-if="selectedSite" eyebrow="Directory" :title="displayPath" flush>
+        <template #actions>
+          <StatusPill v-if="!canMutateHere" tone="neutral" label="Read-only path" :pulse="false" />
+          <template v-else>
+            <AppButton size="sm" icon="folder" @click="openDialog('mkdir')">New folder</AppButton>
+            <AppButton size="sm" icon="file-text" @click="openDialog('newfile')">New file</AppButton>
+            <AppButton size="sm" icon="upload" @click="filePicker?.click()">Upload</AppButton>
+          </template>
+          <AppButton size="sm" icon="archive" :disabled="!selectedNames.length" @click="openDialog('archive')">
+            Archive{{ selectedNames.length ? ` (${selectedNames.length})` : '' }}
+          </AppButton>
+        </template>
+
+        <div class="px-3 pb-3 sm:px-4 sm:pb-4">
+          <AppAlert v-if="listingQuery.isPending.value" tone="info" class="m-2">Loading directory…</AppAlert>
+          <AppAlert v-else-if="listingError" tone="danger" class="m-2">{{ listingError }}</AppAlert>
+          <template v-else>
+            <AppAlert v-if="listingTruncated" tone="warning" class="mx-2 mb-3">
+              This directory holds more entries than the listing limit; only the first 5000 are shown.
+            </AppAlert>
+            <div v-if="items.length" class="overflow-x-auto">
+              <table class="w-full border-collapse text-left">
+                <thead>
+                  <tr class="border-b border-outline">
+                    <th class="w-8 px-3 py-2.5">
+                      <input
+                        type="checkbox"
+                        class="accent-accent-500"
+                        :checked="allSelected"
+                        aria-label="Select all entries"
+                        @change="toggleAll"
+                      />
+                    </th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Name</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Size</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Mode</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Owner</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Modified</th>
+                    <th class="px-3 py-2.5"><span class="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-outline">
+                  <tr v-for="entry in items" :key="entry.name">
+                    <td class="px-3 py-2.5">
+                      <input
+                        type="checkbox"
+                        class="accent-accent-500"
+                        :checked="selectedNames.includes(entry.name)"
+                        :aria-label="`Select ${entry.name}`"
+                        @change="toggleSelect(entry.name)"
+                      />
+                    </td>
+                    <td class="max-w-xs px-3 py-2.5">
+                      <button
+                        class="flex w-full min-w-0 items-center gap-2.5 text-left disabled:cursor-default"
+                        :disabled="entry.kind === 'symlink' || entry.kind === 'other'"
+                        @click="openEntry(entry)"
+                      >
+                        <AppIcon
+                          :name="kindIcons[entry.kind]"
+                          :size="16"
+                          class="shrink-0"
+                          :class="entry.kind === 'dir' ? 'text-accent-300' : 'text-ink-muted'"
+                        />
+                        <span class="truncate text-[13px] font-medium text-ink">{{ entry.name }}</span>
+                      </button>
+                    </td>
+                    <td class="px-3 py-2.5 font-mono text-xs whitespace-nowrap text-ink-secondary">{{ entrySize(entry) }}</td>
+                    <td class="px-3 py-2.5 font-mono text-xs whitespace-nowrap text-ink-secondary">{{ entry.mode }}</td>
+                    <td class="px-3 py-2.5 text-xs whitespace-nowrap text-ink-secondary">{{ entry.owner }}:{{ entry.group }}</td>
+                    <td class="px-3 py-2.5 text-xs whitespace-nowrap text-ink-secondary">{{ formatDateTime(entry.modifiedAt) }}</td>
+                    <td class="px-3 py-2.5 text-right">
+                      <AppButton
+                        v-if="hasActions(entry)"
+                        size="sm"
+                        variant="ghost"
+                        icon="more-horizontal"
+                        :aria-label="`Actions for ${entry.name}`"
+                        @click="openMenu(entry, $event)"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <EmptyState
+              v-else
+              icon="folder"
+              title="Empty directory"
+              :description="canMutateHere ? 'Create a folder or file, or upload something here.' : 'Nothing to show at this path.'"
+              class="m-2"
+            />
+          </template>
+        </div>
+      </AppCard>
+    </template>
+
+    <input ref="filePicker" type="file" multiple class="hidden" @change="onFilesChosen" />
+
+    <!-- Row action menu -->
+    <div v-if="menu" class="fixed inset-0 z-40" @click="menu = undefined">
+      <div
+        class="absolute w-48 rounded-xl border border-outline bg-raised p-1 shadow-2xl"
+        :style="{ top: `${menu.top}px`, right: `${menu.right}px` }"
+        role="menu"
+        @click.stop
+      >
+        <button
+          v-if="menu.entry.kind === 'dir'"
+          class="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-secondary hover:bg-white/[0.05] hover:text-ink"
+          @click="menuOpenEntry"
+        >
+          Open
+        </button>
+        <button
+          v-if="menu.entry.kind === 'file'"
+          class="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-secondary hover:bg-white/[0.05] hover:text-ink"
+          @click="menuOpenEntry"
+        >
+          Edit
+        </button>
+        <a
+          v-if="menu.entry.kind === 'file'"
+          :href="downloadUrl(siteId, joinPath(path, menu.entry.name))"
+          class="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-secondary hover:bg-white/[0.05] hover:text-ink"
+          @click="menu = undefined"
+        >
+          Download
+        </a>
+        <button
+          v-if="menu.entry.kind === 'dir'"
+          class="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-secondary hover:bg-white/[0.05] hover:text-ink"
+          @click="computeSize(menu.entry)"
+        >
+          Compute size
+        </button>
+        <template v-if="canMutateHere">
+          <div class="my-1 border-t border-outline" role="separator" />
+          <button
+            class="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-secondary hover:bg-white/[0.05] hover:text-ink"
+            @click="openDialog('rename', menu.entry)"
+          >
+            Rename…
+          </button>
+          <button
+            class="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-secondary hover:bg-white/[0.05] hover:text-ink"
+            @click="openDialog('copy', menu.entry)"
+          >
+            Copy to…
+          </button>
+          <button
+            class="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-secondary hover:bg-white/[0.05] hover:text-ink"
+            @click="openDialog('move', menu.entry)"
+          >
+            Move to…
+          </button>
+          <button
+            v-if="menu.entry.kind === 'file' && isArchiveName(menu.entry.name)"
+            class="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink-secondary hover:bg-white/[0.05] hover:text-ink"
+            @click="openDialog('extract', menu.entry)"
+          >
+            Extract…
+          </button>
+          <button
+            class="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-rose-300 hover:bg-rose-500/10"
+            @click="openDialog('delete', menu.entry)"
+          >
+            Delete…
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <!-- Dialogs -->
+    <div v-if="dialog" class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+      <div class="absolute inset-0 bg-canvas/70 backdrop-blur-sm" aria-hidden="true" @click="closeDialog" />
+      <div class="relative w-full max-w-md">
+        <AppCard v-if="dialog === 'mkdir'" eyebrow="Directory" title="New folder">
+          <form class="space-y-4" @submit.prevent="submitMkdir">
+            <FormField label="Name" :hint="`Created inside ${displayPath}. Nested paths such as a/b are allowed.`">
+              <AppInput v-model="nameInput" autocomplete="off" required />
+            </FormField>
+            <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
+            <div class="flex justify-end gap-2">
+              <AppButton :disabled="dialogBusy" @click="closeDialog">Cancel</AppButton>
+              <AppButton variant="primary" type="submit" :loading="dialogBusy">Create folder</AppButton>
+            </div>
+          </form>
+        </AppCard>
+
+        <AppCard v-else-if="dialog === 'newfile'" eyebrow="File" title="New file">
+          <form class="space-y-4" @submit.prevent="submitNewFile">
+            <FormField label="Name" :hint="`An empty file is created inside ${displayPath}; click it to edit.`">
+              <AppInput v-model="nameInput" autocomplete="off" required />
+            </FormField>
+            <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
+            <div class="flex justify-end gap-2">
+              <AppButton :disabled="dialogBusy" @click="closeDialog">Cancel</AppButton>
+              <AppButton variant="primary" type="submit" :loading="dialogBusy">Create file</AppButton>
+            </div>
+          </form>
+        </AppCard>
+
+        <AppCard v-else-if="dialog === 'rename' && dialogTarget" eyebrow="Rename" :title="dialogTarget.name">
+          <form class="space-y-4" @submit.prevent="submitRename">
+            <FormField label="New name" :hint="`Stays inside ${displayPath}.`">
+              <AppInput v-model="nameInput" autocomplete="off" required />
+            </FormField>
+            <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
+            <div class="flex justify-end gap-2">
+              <AppButton :disabled="dialogBusy" @click="closeDialog">Cancel</AppButton>
+              <AppButton variant="primary" type="submit" :loading="dialogBusy">Rename</AppButton>
+            </div>
+          </form>
+        </AppCard>
+
+        <AppCard v-else-if="dialog === 'copy' && dialogTarget" eyebrow="Copy" :title="dialogTarget.name">
+          <form class="space-y-4" @submit.prevent="submitCopy">
+            <FormField label="Destination path" hint="Site-relative path inside public/, private/, tmp/, or backups/.">
+              <AppInput v-model="destinationInput" autocomplete="off" required />
+            </FormField>
+            <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
+            <div class="flex justify-end gap-2">
+              <AppButton :disabled="dialogBusy" @click="closeDialog">Cancel</AppButton>
+              <AppButton variant="primary" type="submit" :loading="dialogBusy">Copy</AppButton>
+            </div>
+          </form>
+        </AppCard>
+
+        <AppCard v-else-if="dialog === 'move' && dialogTarget" eyebrow="Move" :title="dialogTarget.name">
+          <form class="space-y-4" @submit.prevent="submitMove">
+            <FormField label="Destination path" hint="Site-relative path inside public/, private/, tmp/, or backups/.">
+              <AppInput v-model="destinationInput" autocomplete="off" required />
+            </FormField>
+            <label class="flex cursor-pointer items-center gap-2.5 text-[13px] text-ink-secondary">
+              <input v-model="overwriteInput" type="checkbox" class="accent-accent-500" />
+              Overwrite the destination if it exists
+            </label>
+            <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
+            <div class="flex justify-end gap-2">
+              <AppButton :disabled="dialogBusy" @click="closeDialog">Cancel</AppButton>
+              <AppButton variant="primary" type="submit" :loading="dialogBusy">Move</AppButton>
+            </div>
+          </form>
+        </AppCard>
+
+        <AppCard v-else-if="dialog === 'delete' && dialogTarget" eyebrow="Irreversible" title="Delete entry">
+          <div class="space-y-4">
+            <p class="text-[13px] leading-relaxed text-ink-secondary">
+              Delete <strong class="font-mono font-semibold text-ink">{{ dialogTarget.name }}</strong
+              ><template v-if="dialogTarget.kind === 'dir'"> and everything inside it</template>? This cannot be undone.
+            </p>
+            <FormField
+              v-if="dialogTarget.kind === 'dir'"
+              label="Type the folder name to confirm"
+              hint="Recursive deletion requires typing the exact entry name."
+            >
+              <AppInput v-model="confirmInput" autocomplete="off" :placeholder="dialogTarget.name" />
+            </FormField>
+            <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
+            <div class="flex justify-end gap-2">
+              <AppButton :disabled="dialogBusy" @click="closeDialog">Cancel</AppButton>
+              <AppButton
+                variant="danger"
+                :loading="dialogBusy"
+                :disabled="dialogTarget.kind === 'dir' && confirmInput !== dialogTarget.name"
+                @click="submitDelete"
+              >
+                Delete
+              </AppButton>
+            </div>
+          </div>
+        </AppCard>
+
+        <AppCard v-else-if="dialog === 'extract' && dialogTarget" eyebrow="Archive" :title="`Extract ${dialogTarget.name}`">
+          <form class="space-y-4" @submit.prevent="submitExtract">
+            <FormField
+              label="Target directory"
+              hint="Site-relative directory inside public/, private/, tmp/, or backups/. It is created if missing."
+            >
+              <AppInput v-model="destinationInput" autocomplete="off" required />
+            </FormField>
+            <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
+            <div class="flex justify-end gap-2">
+              <AppButton :disabled="dialogBusy" @click="closeDialog">Cancel</AppButton>
+              <AppButton variant="primary" type="submit" :loading="dialogBusy">Extract</AppButton>
+            </div>
+          </form>
+        </AppCard>
+
+        <AppCard v-else-if="dialog === 'archive'" eyebrow="Archive" :title="`Archive ${selectedNames.length} selected`">
+          <form class="space-y-4" @submit.prevent="submitArchive">
+            <FormField label="Target archive" hint="A .tar.gz path inside public/, private/, tmp/, or backups/.">
+              <AppInput v-model="destinationInput" autocomplete="off" pattern=".+\.tar\.gz" required />
+            </FormField>
+            <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
+            <div class="flex justify-end gap-2">
+              <AppButton :disabled="dialogBusy" @click="closeDialog">Cancel</AppButton>
+              <AppButton variant="primary" type="submit" :loading="dialogBusy">Create archive</AppButton>
+            </div>
+          </form>
+        </AppCard>
+      </div>
+    </div>
+
+    <FileEditorDialog
+      v-if="editorPath && selectedSite"
+      :site-id="siteId"
+      :path="editorPath"
+      @close="editorPath = undefined"
+      @saved="refetchListing"
+    />
+  </section>
+</template>

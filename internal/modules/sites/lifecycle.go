@@ -85,6 +85,10 @@ func (m *Module) Get(ctx context.Context, id string) (Site, error) {
 	return model.toSite(), nil
 }
 
+func (m *Module) SiteExists(ctx context.Context, id string) (bool, error) {
+	return m.database.NewSelect().Model((*siteModel)(nil)).Where("id = ?", id).Exists(ctx)
+}
+
 func (m *Module) Plan(ctx context.Context, siteID string) (siteoperator.Plan, time.Time, error) {
 	model := new(planModel)
 	if err := m.database.NewSelect().Model(model).Where("site_id = ?", siteID).Scan(ctx); err != nil {

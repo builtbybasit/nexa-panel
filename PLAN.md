@@ -1077,6 +1077,44 @@ credentials appearing in browser-visible URLs or logs.
 - Log discovery, filters, bounded live tail, and download.
 - Scheduled task lifecycle, manual run, output, timeout, and overlap protection.
 
+Current implementation progress:
+
+- complete: the authorization policy adds files, logs, schedules, and user
+  management permissions plus a developer role limited to reading, files, logs,
+  and scheduled tasks; administrators manage users, roles, password resets, and
+  per-site developer grants through audited identity endpoints and a Users UI;
+- complete: developer site scoping is enforced server-side — site listings are
+  filtered to granted sites and ungranted site, file, log, and task requests
+  return not-found without leaking existence;
+- complete: a shared site-filesystem operator validates every agent request
+  against the slug-derived root, owner, and path rules and confines all file
+  I/O beneath the site root with kernel-enforced `os.Root` resolution
+  (openat2 `RESOLVE_BENEATH` on Linux), rejecting traversal, absolute paths,
+  and symlink escapes;
+- complete: the file broker lists, stats, reads, writes (SHA-256 ETag
+  optimistic concurrency), creates, moves, copies, and deletes only under the
+  writable site zones, preserves site ownership on every write, streams
+  chunked uploads through staged tmp sessions and bounded downloads through
+  both HTTP hops, and runs capped archive create/extract (bomb-defended) and
+  directory-size work as durable jobs with audited mutations;
+- complete: the logs module discovers site log files, serves bounded filtered
+  tail and incremental reads with rotation detection, streams a live tail over
+  SSE with offset resume and deadline extension, and downloads logs — all
+  read-only through the confined agent;
+- complete: scheduled tasks render root-owned wrapper scripts and
+  `/etc/cron.d` entries through HMAC-signed, drift-checked, rollback-capable
+  agent plans; tasks always run as the site Unix user with `timeout`-enforced
+  limits, `flock` overlap skipping, bounded captured output, and recorded run
+  history; manual runs execute as durable jobs with capped timeouts;
+- complete: Files, Logs, and Scheduled tasks Vue modules cover browsing,
+  editing with conflict recovery, chunked upload progress, live log follow
+  with scroll lock, task plan preview/apply/rollback, run-now results, and
+  run history; the agent systemd unit gains `/etc/cron.d` write access and
+  tmpfiles entries for the generated task-script directory;
+- pending: Ubuntu end-to-end acceptance of cron execution, `runuser` manual
+  runs, and Linux `openat2` confinement (developed and unit-tested on macOS
+  behind injected fakes).
+
 **Exit:** a developer role can manage only its assigned site and cannot escape
 the site's filesystem or execute a scheduled task as root.
 

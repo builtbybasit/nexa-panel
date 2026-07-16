@@ -22,3 +22,46 @@ func TestRolePermissions(t *testing.T) {
 		}
 	}
 }
+
+func TestRolePermissionMatrix(t *testing.T) {
+	policy := New()
+	permissions := []Permission{
+		SystemRead, JobsRead, AuditRead, RuntimesRead, SitesRead, SitesWrite,
+		DomainsRead, DomainsWrite, CertificatesRead, CertificatesWrite,
+		DatabasesRead, DatabasesWrite, OperationsPlan, OperationsApply,
+		FilesRead, FilesWrite, LogsRead, SchedulesRead, SchedulesWrite, UsersManage,
+	}
+	expected := map[string]map[Permission]bool{
+		"viewer": {
+			SystemRead: true, JobsRead: true, RuntimesRead: true, SitesRead: true,
+			DomainsRead: true, CertificatesRead: true, DatabasesRead: true,
+			FilesRead: true, LogsRead: true, SchedulesRead: true,
+		},
+		"developer": {
+			SystemRead: true, JobsRead: true, RuntimesRead: true, SitesRead: true,
+			FilesRead: true, FilesWrite: true, LogsRead: true,
+			SchedulesRead: true, SchedulesWrite: true,
+		},
+		"operator": {
+			SystemRead: true, JobsRead: true, RuntimesRead: true, SitesRead: true, SitesWrite: true,
+			DomainsRead: true, DomainsWrite: true, CertificatesRead: true, CertificatesWrite: true,
+			DatabasesRead: true, DatabasesWrite: true, OperationsPlan: true,
+			FilesRead: true, FilesWrite: true, LogsRead: true, SchedulesRead: true, SchedulesWrite: true,
+		},
+		"admin": {
+			SystemRead: true, JobsRead: true, AuditRead: true, RuntimesRead: true, SitesRead: true, SitesWrite: true,
+			DomainsRead: true, DomainsWrite: true, CertificatesRead: true, CertificatesWrite: true,
+			DatabasesRead: true, DatabasesWrite: true, OperationsPlan: true, OperationsApply: true,
+			FilesRead: true, FilesWrite: true, LogsRead: true, SchedulesRead: true, SchedulesWrite: true,
+			UsersManage: true,
+		},
+		"unknown": {},
+	}
+	for role, grants := range expected {
+		for _, permission := range permissions {
+			if got := policy.Allowed(role, permission); got != grants[permission] {
+				t.Errorf("Allowed(%q, %q) = %v, want %v", role, permission, got, grants[permission])
+			}
+		}
+	}
+}

@@ -96,3 +96,37 @@ _Avoid_: Task, process
 **Restore Point**:
 A backup snapshot whose manifest and checksums can be used to reconstruct its captured resources.
 _Avoid_: Backup job, archive
+
+## Site Tools
+
+**File Broker**:
+The typed, site-scoped file interface that resolves every path beneath one site's root and preserves the site's ownership on writes.
+_Avoid_: Filesystem browser, shell, FTP
+
+**Write Zone**:
+The public, private, tmp, and backups directories where the File Broker permits mutations; everything else under the site root is read-only.
+_Avoid_: Whole site root, arbitrary directory
+
+**Upload Session**:
+A staged, chunked transfer into a site's tmp directory that becomes the target file only on an explicit, size-verified commit.
+_Avoid_: Direct write, form upload
+
+**Log Stream**:
+A bounded, offset-resumable live tail of one discovered site log delivered over server-sent events with rotation detection.
+_Avoid_: Unbounded tail, log file handle
+
+**Scheduled Task**:
+A user-defined cron-expression command that always executes as its site's Unix Owner through a Nexa-owned wrapper script.
+_Avoid_: Root cron job, crontab entry, Job
+
+**Wrapper Script**:
+The root-owned, site-group-executable script that enforces a Scheduled Task's timeout, overlap skipping, bounded output, and run recording.
+_Avoid_: User script, inline command
+
+**Task Run**:
+One recorded execution of a Scheduled Task with start time, duration, exit status, trigger, and bounded output.
+_Avoid_: Job, log line
+
+**Site Grant**:
+An administrator-managed assignment that limits a developer account to specific sites; ungranted sites stay invisible.
+_Avoid_: Share, permission flag, role

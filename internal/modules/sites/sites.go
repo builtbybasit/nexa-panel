@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 
 	"github.com/uptrace/bun"
@@ -89,13 +90,23 @@ type RuntimeCatalog interface {
 	Allowed(ctx context.Context, version string) (bool, error)
 }
 
+// AccessPolicy scopes what the requesting user may see; the identity module
+// provides the concrete implementation via SetAccessPolicy.
+type AccessPolicy interface {
+	SiteAccessible(ctx context.Context, user identity.User, siteID string) (bool, error)
+	AccessibleSiteIDs(ctx context.Context, user identity.User) (bool, []string, error)
+}
+
 type Module struct {
 	database *bun.DB
 	jobs     *jobs.Module
 	runtimes RuntimeCatalog
 	operator siteoperator.Operator
+	access   AccessPolicy
 	now      func() time.Time
 }
+
+func (m *Module) SetAccessPolicy(policy AccessPolicy) { m.access = policy }
 
 type siteModel struct {
 	bun.BaseModel `bun:"table:sites,alias:site"`

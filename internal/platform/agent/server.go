@@ -15,6 +15,12 @@ import (
 	"crypto/subtle"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 
+	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
+
+	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
+
+	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+
 	"fmt"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 
@@ -39,6 +45,9 @@ type Server struct {
 	postgres     postgresoperator.Operator
 	mysql        mysqloperator.Operator
 	adminTools   admintooloperator.Operator
+	files        filesoperator.Operator
+	logs         logsoperator.Operator
+	schedules    scheduleoperator.Operator
 	logger       *slog.Logger
 }
 
@@ -99,6 +108,36 @@ func (s *Server) Serve(ctx context.Context) error {
 		mux.HandleFunc("GET /v1/admin-tools", s.adminToolsDiscoverHTTP)
 		mux.HandleFunc("POST /v1/admin-tools/plan", s.adminToolsPlanHTTP)
 		mux.HandleFunc("POST /v1/admin-tools/apply", s.adminToolsApplyHTTP)
+	}
+	if s.files != nil {
+		mux.HandleFunc("POST /v1/files/list", s.filesListHTTP)
+		mux.HandleFunc("POST /v1/files/stat", s.filesStatHTTP)
+		mux.HandleFunc("POST /v1/files/read", s.filesReadHTTP)
+		mux.HandleFunc("POST /v1/files/write", s.filesWriteHTTP)
+		mux.HandleFunc("POST /v1/files/mkdir", s.filesMkdirHTTP)
+		mux.HandleFunc("POST /v1/files/move", s.filesMoveHTTP)
+		mux.HandleFunc("POST /v1/files/copy", s.filesCopyHTTP)
+		mux.HandleFunc("POST /v1/files/delete", s.filesDeleteHTTP)
+		mux.HandleFunc("POST /v1/files/archive", s.filesArchiveHTTP)
+		mux.HandleFunc("POST /v1/files/extract", s.filesExtractHTTP)
+		mux.HandleFunc("POST /v1/files/size", s.filesSizeHTTP)
+		mux.HandleFunc("POST /v1/files/uploads", s.filesUploadBeginHTTP)
+		mux.HandleFunc("PUT /v1/files/uploads/{id}", s.filesUploadChunkHTTP)
+		mux.HandleFunc("POST /v1/files/uploads/{id}/commit", s.filesUploadCommitHTTP)
+		mux.HandleFunc("DELETE /v1/files/uploads/{id}", s.filesUploadAbortHTTP)
+		mux.HandleFunc("GET /v1/files/download", s.filesDownloadHTTP)
+	}
+	if s.logs != nil {
+		mux.HandleFunc("POST /v1/logs/list", s.logsListHTTP)
+		mux.HandleFunc("POST /v1/logs/read", s.logsReadHTTP)
+		mux.HandleFunc("GET /v1/logs/download", s.logsDownloadHTTP)
+	}
+	if s.schedules != nil {
+		mux.HandleFunc("POST /v1/schedules/plan", s.schedulePlanHTTP)
+		mux.HandleFunc("POST /v1/schedules/apply", s.scheduleApplyHTTP)
+		mux.HandleFunc("POST /v1/schedules/rollback", s.scheduleRollbackHTTP)
+		mux.HandleFunc("POST /v1/schedules/run", s.scheduleRunHTTP)
+		mux.HandleFunc("POST /v1/schedules/runs", s.scheduleRunsHTTP)
 	}
 	httpServer := &http.Server{
 		Handler:           s.authenticate(mux),

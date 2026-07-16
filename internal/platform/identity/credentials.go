@@ -11,7 +11,11 @@ func validateCredentials(input credentials) error {
 	if !usernamePattern.MatchString(input.Username) {
 		return errors.New("Username must be 3-64 characters and use only letters, numbers, dot, underscore, or hyphen.")
 	}
-	if len(input.Password) < 12 || len(input.Password) > 1024 {
+	return validatePassword(input.Password)
+}
+
+func validatePassword(password string) error {
+	if len(password) < 12 || len(password) > 1024 {
 		return errors.New("Password must be between 12 and 1024 characters.")
 	}
 	return nil

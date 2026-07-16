@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
+import { useIdentityStore } from '@/modules/identity/store'
 import { featureModules } from '@/modules/registry'
 import { AppIcon } from '@/shared/ui'
 
@@ -9,16 +10,21 @@ import BrandMark from './BrandMark.vue'
 
 const emit = defineEmits<{ navigate: [] }>()
 
+const identity = useIdentityStore()
+
 interface NavigationGroup {
   label: string
   items: { id: string; label: string; to: string; icon: string }[]
 }
 
 const groups = computed<NavigationGroup[]>(() => {
+  const role = identity.user?.role
   const grouped: NavigationGroup[] = []
   for (const feature of featureModules) {
     if (!feature.navigation) continue
-    const { group, label, to, icon } = feature.navigation
+    const { group, label, to, icon, roles } = feature.navigation
+    // Cosmetic gating only; the server rejects unauthorized requests regardless.
+    if (roles && (!role || !roles.includes(role))) continue
     const existing = grouped.find((entry) => entry.label === group)
     const item = { id: feature.id, label, to, icon }
     if (existing) existing.items.push(item)

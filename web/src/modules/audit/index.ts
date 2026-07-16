@@ -4,7 +4,7 @@ export const auditModule: FeatureModule = {
   id: 'audit',
   name: 'Audit Log',
   description: 'Append-only identity and operation history.',
-  navigation: { label: 'Audit log', to: '/audit', icon: 'file-text', group: 'Operations', order: 43 },
+  navigation: { label: 'Audit log', to: '/audit', icon: 'file-text', group: 'Operations', order: 43, roles: ['admin'] },
   routes: [
     {
       path: '/audit',

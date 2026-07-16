@@ -96,3 +96,38 @@ export async function verifyMFA(value: string, recovery: boolean): Promise<User>
 export function logout(): Promise<void> {
   return request('/api/v1/auth/logout', { method: 'POST' })
 }
+
+// --- Admin user management (permission users.manage) ---
+
+export type ManagedRole = 'admin' | 'operator' | 'developer' | 'viewer'
+
+export interface ManagedUser {
+  id: string
+  username: string
+  role: ManagedRole
+  createdAt: string
+  lastLoginAt?: string | null
+  mfaConfirmed: boolean
+  /** Site grants; only meaningful for the developer role. */
+  siteIds?: string[] | null
+}
+
+export async function listUsers(): Promise<ManagedUser[]> {
+  return (await request<{ items: ManagedUser[] }>('/api/v1/users')).items
+}
+
+export function createUser(input: { username: string; password: string; role: ManagedRole }): Promise<ManagedUser> {
+  return request('/api/v1/users', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export function updateUser(id: string, input: { role?: ManagedRole; password?: string }): Promise<void> {
+  return request(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) })
+}
+
+export function deleteUser(id: string): Promise<void> {
+  return request(`/api/v1/users/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function replaceUserSites(id: string, siteIds: string[]): Promise<void> {
+  return request(`/api/v1/users/${encodeURIComponent(id)}/sites`, { method: 'PUT', body: JSON.stringify({ siteIds }) })
+}

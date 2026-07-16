@@ -207,6 +207,112 @@ paths:
       responses:
         "204":
           description: The current session was revoked.
+  /users:
+    get:
+      operationId: listUsers
+      tags: [Users]
+      x-permission: users.manage
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: All managed users with their developer site grants.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ManagedUser"
+    post:
+      operationId: createUser
+      tags: [Users]
+      x-permission: users.manage
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUser"
+      responses:
+        "201":
+          description: The managed user was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "409": {description: A user with this username already exists., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The username or password or role is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /users/{id}:
+    patch:
+      operationId: updateUser
+      tags: [Users]
+      x-permission: users.manage
+      security:
+        - sessionCookie: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUser"
+      responses:
+        "200":
+          description: The updated user; every live session of the user was revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagedUser"
+        "400": {description: Neither a role nor a password was provided., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "404": {description: The user does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: The last administrator cannot lose the admin role., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The role or password is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    delete:
+      operationId: deleteUser
+      tags: [Users]
+      x-permission: users.manage
+      security:
+        - sessionCookie: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "204":
+          description: The user plus their sessions and site grants were removed.
+        "404": {description: The user does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: The last administrator or your own account cannot be deleted., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /users/{id}/sites:
+    put:
+      operationId: replaceUserSiteGrants
+      tags: [Users]
+      x-permission: users.manage
+      security:
+        - sessionCookie: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserSiteGrants"
+      responses:
+        "200":
+          description: The developer's site grants were replaced with the deduplicated set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSiteGrants"
+        "400": {description: Site grants apply to developer users only., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "404": {description: The user does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: A granted site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "503": {description: Site grants are not configured on this control plane., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
   /audit/events:
     get:
       operationId: listAuditEvents
@@ -554,6 +660,760 @@ paths:
         - {name: id, in: path, required: true, schema: {type: string}}
       responses:
         "202": {description: Drift-guarded site rollback was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+  /sites/{id}/files:
+    get:
+      operationId: listSiteFiles
+      tags: [Files]
+      x-permission: files.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - {name: path, in: query, schema: {type: string}, description: Site-relative directory; defaults to the site root.}
+      responses:
+        "200":
+          description: Bounded directory listing confined to the site root.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileListing"
+        "404": {description: The site or path does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/stat:
+    get:
+      operationId: statSiteFile
+      tags: [Files]
+      x-permission: files.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - {name: path, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Metadata for one entry inside the site root.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileEntry"
+        "404": {description: The site or path does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/content:
+    get:
+      operationId: readSiteFileContent
+      tags: [Files]
+      x-permission: files.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - {name: path, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Bounded text content with the entity tag used for conditional writes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileReadResult"
+        "404": {description: The site or file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    put:
+      operationId: writeSiteFileContent
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WriteFile"
+      responses:
+        "200":
+          description: The file was written; the response carries the new entity tag.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileWriteResult"
+        "404": {description: The site or file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: The expected entity tag no longer matches or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The path or content is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/download:
+    get:
+      operationId: downloadSiteFile
+      tags: [Files]
+      x-permission: files.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - {name: path, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: The file streamed as an attachment.
+          headers:
+            Content-Disposition:
+              schema: {type: string}
+            Content-Length:
+              schema: {type: integer, format: int64, minimum: 0}
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404": {description: The site or file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/mkdir:
+    post:
+      operationId: createSiteDirectory
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [path]
+              properties:
+                path: {type: string}
+      responses:
+        "200":
+          description: The directory was created and is owned by the site account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileEntry"
+        "404": {description: The site or parent directory does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: The target already exists or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/move:
+    post:
+      operationId: moveSiteFile
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [from, to]
+              properties:
+                from: {type: string}
+                to: {type: string}
+                overwrite: {type: boolean, default: false}
+      responses:
+        "200":
+          description: The entry was renamed inside the site root.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileEntry"
+        "404": {description: The site or source does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: The destination already exists or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: A path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/copy:
+    post:
+      operationId: copySiteFile
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [from, to]
+              properties:
+                from: {type: string}
+                to: {type: string}
+      responses:
+        "200":
+          description: The file or directory tree was copied inside the site root.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileCopyResult"
+        "404": {description: The site or source does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: The destination already exists or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: A path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/delete:
+    post:
+      operationId: deleteSiteFile
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [path]
+              properties:
+                path: {type: string}
+                recursive: {type: boolean, default: false}
+      responses:
+        "200":
+          description: The entry was removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, const: deleted}
+        "404": {description: The site or path does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The path is not allowed or the directory is not empty without recursive., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/uploads:
+    post:
+      operationId: beginSiteFileUpload
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [path, size]
+              properties:
+                path: {type: string}
+                size: {type: integer, format: int64, minimum: 0}
+                overwrite: {type: boolean, default: false}
+      responses:
+        "200":
+          description: A chunked upload session was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileUpload"
+        "404": {description: The site or target directory does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: The target already exists or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The path or size is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/uploads/{uploadId}:
+    put:
+      operationId: uploadSiteFileChunk
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - $ref: "#/components/parameters/UploadID"
+        - {name: offset, in: query, required: true, schema: {type: integer, format: int64, minimum: 0}, description: Byte offset of this chunk within the staged file.}
+      requestBody:
+        required: true
+        description: One raw chunk of at most 8 MiB.
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: The chunk was staged at the requested offset.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, const: received}
+        "400": {description: The offset query parameter must be a non-negative integer., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "404": {description: The site or upload session does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: The offset does not match the next expected byte; the error carries the expected offset., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The chunk exceeds 8 MiB., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    delete:
+      operationId: abortSiteFileUpload
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - $ref: "#/components/parameters/UploadID"
+      responses:
+        "200":
+          description: The upload session and its staged bytes were discarded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, const: aborted}
+        "404": {description: The site or upload session does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/uploads/{uploadId}/commit:
+    post:
+      operationId: commitSiteFileUpload
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - $ref: "#/components/parameters/UploadID"
+      responses:
+        "200":
+          description: The staged upload was moved into place and is owned by the site account.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileEntry"
+        "404": {description: The site or upload session does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: The staged bytes are incomplete or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The upload is not committable., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/archive:
+    post:
+      operationId: archiveSiteFiles
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [paths, target]
+              properties:
+                paths:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: {type: string}
+                target:
+                  type: string
+                  pattern: "\\.tar\\.gz$"
+      responses:
+        "202":
+          description: The archive job was persisted and queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                properties:
+                  job:
+                    $ref: "#/components/schemas/Job"
+        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: A path is not allowed or the target is not a .tar.gz path., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/extract:
+    post:
+      operationId: extractSiteArchive
+      tags: [Files]
+      x-permission: files.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [path, targetDir]
+              properties:
+                path:
+                  type: string
+                  pattern: "\\.(zip|tar\\.gz|tgz)$"
+                targetDir: {type: string}
+      responses:
+        "202":
+          description: The extraction job was persisted and queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                properties:
+                  job:
+                    $ref: "#/components/schemas/Job"
+        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The archive path or target directory is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/files/size:
+    post:
+      operationId: measureSiteDirectorySize
+      tags: [Files]
+      x-permission: files.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [path]
+              properties:
+                path: {type: string}
+      responses:
+        "202":
+          description: The directory size job was persisted and queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                properties:
+                  job:
+                    $ref: "#/components/schemas/Job"
+        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/logs:
+    get:
+      operationId: listSiteLogs
+      tags: [Logs]
+      x-permission: logs.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      responses:
+        "200":
+          description: Discovered log files under the site logs directory.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LogFile"
+        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Logs are not available until the site has been provisioned., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/logs/read:
+    get:
+      operationId: readSiteLog
+      tags: [Logs]
+      x-permission: logs.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - {name: name, in: query, required: true, schema: {type: string}, description: Log file name slash-relative to the site logs directory.}
+        - {name: tail, in: query, schema: {type: integer, minimum: 1, maximum: 2000, default: 200}, description: Trailing lines to return in tail mode; values above the maximum are capped.}
+        - {name: max, in: query, schema: {type: integer, minimum: 1, maximum: 262144, default: 65536}, description: Read window in bytes; values above the maximum are capped.}
+        - {name: offset, in: query, schema: {type: integer, format: int64, minimum: 0}, description: Return complete lines appended since this byte offset instead of tailing.}
+        - {name: filter, in: query, schema: {type: string}, description: Case-insensitive substring filter applied per line.}
+      responses:
+        "200":
+          description: One bounded window of log lines with the offset to poll from next.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogReadResult"
+        "400": {description: A query parameter is malformed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "404": {description: The site or log file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Logs are not available until the site has been provisioned., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The log name is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/logs/stream:
+    get:
+      operationId: streamSiteLog
+      tags: [Logs]
+      x-permission: logs.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - {name: name, in: query, required: true, schema: {type: string}}
+        - {name: filter, in: query, schema: {type: string}}
+        - {name: Last-Event-ID, in: header, schema: {type: integer, format: int64, minimum: 0}, description: Resume the tail from this byte offset.}
+      responses:
+        "200":
+          description: Replayable Server-Sent Events live tail; each lines event carries appended lines and rotation state as JSON and its event ID is the next byte offset.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400": {description: Last-Event-ID must be a non-negative integer., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "404": {description: The site or log file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Logs are not available until the site has been provisioned., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The log name is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/logs/download:
+    get:
+      operationId: downloadSiteLog
+      tags: [Logs]
+      x-permission: logs.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - {name: name, in: query, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: The log file streamed as an attachment.
+          headers:
+            Content-Disposition:
+              schema: {type: string}
+            Content-Length:
+              schema: {type: integer, format: int64, minimum: 0}
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404": {description: The site or log file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Logs are not available until the site has been provisioned., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The log name is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/tasks:
+    get:
+      operationId: listScheduledTasks
+      tags: [Scheduled Tasks]
+      x-permission: schedules.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      responses:
+        "200":
+          description: Desired scheduled tasks for the site.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ScheduledTask"
+        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Scheduled tasks are not available for draft sites., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    post:
+      operationId: createScheduledTask
+      tags: [Scheduled Tasks]
+      x-permission: schedules.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduledTaskRequest"
+      responses:
+        "202":
+          description: The task desired state was persisted and its signed plan was queued.
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task, job]
+                properties:
+                  task:
+                    $ref: "#/components/schemas/ScheduledTask"
+                  job:
+                    $ref: "#/components/schemas/Job"
+        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Scheduled tasks can only be changed while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The name or cron expression or command or timeout is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/tasks/{taskId}:
+    get:
+      operationId: getScheduledTask
+      tags: [Scheduled Tasks]
+      x-permission: schedules.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - $ref: "#/components/parameters/TaskID"
+      responses:
+        "200":
+          description: The scheduled task plus its signed plan while one is ready for review.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task]
+                properties:
+                  task:
+                    $ref: "#/components/schemas/ScheduledTask"
+                  plan:
+                    $ref: "#/components/schemas/SchedulePlan"
+                  planExpiresAt:
+                    type: string
+                    format: date-time
+        "404": {description: The site or task does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Scheduled tasks are not available for draft sites., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    put:
+      operationId: updateScheduledTask
+      tags: [Scheduled Tasks]
+      x-permission: schedules.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - $ref: "#/components/parameters/TaskID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduledTaskRequest"
+      responses:
+        "202":
+          description: The desired state was replaced and a fresh signed plan was queued.
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task, job]
+                properties:
+                  task:
+                    $ref: "#/components/schemas/ScheduledTask"
+                  job:
+                    $ref: "#/components/schemas/Job"
+        "404": {description: The site or task does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: An operation is in flight or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The name or cron expression or command or timeout is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    delete:
+      operationId: deleteScheduledTask
+      tags: [Scheduled Tasks]
+      x-permission: schedules.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - $ref: "#/components/parameters/TaskID"
+      responses:
+        "202":
+          description: The task was marked for removal and its removal plan was queued.
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task, job]
+                properties:
+                  task:
+                    $ref: "#/components/schemas/ScheduledTask"
+                  job:
+                    $ref: "#/components/schemas/Job"
+        "404": {description: The site or task does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: An operation is in flight or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/tasks/{taskId}/apply:
+    post:
+      operationId: applyScheduledTaskPlan
+      tags: [Scheduled Tasks]
+      x-permission: schedules.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - $ref: "#/components/parameters/TaskID"
+      responses:
+        "202":
+          description: The reviewed signed schedule plan was queued for activation.
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404": {description: The site or task or signed plan does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: The plan is not ready or has expired or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/tasks/{taskId}/rollback:
+    post:
+      operationId: rollbackScheduledTaskPlan
+      tags: [Scheduled Tasks]
+      x-permission: schedules.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - $ref: "#/components/parameters/TaskID"
+      responses:
+        "202":
+          description: A rollback of the applied schedule plan was queued.
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404": {description: The site or task or signed plan does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Only an applied scheduled task can be rolled back., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/tasks/{taskId}/run:
+    post:
+      operationId: runScheduledTask
+      tags: [Scheduled Tasks]
+      x-permission: schedules.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - $ref: "#/components/parameters/TaskID"
+      responses:
+        "202":
+          description: An on-demand run with bounded output capture was queued.
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404": {description: The site or task does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Only an applied and enabled scheduled task can be run., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sites/{id}/tasks/{taskId}/runs:
+    get:
+      operationId: listScheduledTaskRuns
+      tags: [Scheduled Tasks]
+      x-permission: schedules.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - $ref: "#/components/parameters/SiteID"
+        - $ref: "#/components/parameters/TaskID"
+      responses:
+        "200":
+          description: Most recent bounded run records captured by the wrapper script.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 200
+                    items:
+                      $ref: "#/components/schemas/ScheduleRunRecord"
+        "404": {description: The site or task does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "409": {description: Scheduled tasks are not available for draft sites., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
   /domains:
     get:
       operationId: listDomains
@@ -640,7 +1500,7 @@ paths:
       parameters:
         - {name: id, in: path, required: true, schema: {type: string}}
       responses:
-        "202": {description: HTTP-01 issue, renewal, or revocation was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+        "202": {description: "HTTP-01 issue, renewal, or revocation was queued", content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
   /postgresql/instances:
     get:
       operationId: listPostgreSQLInstances
@@ -690,7 +1550,7 @@ paths:
       security: [{sessionCookie: []}]
       parameters: [{name: id, in: path, required: true, schema: {type: string}}]
       responses:
-        "200": {description: One-time, non-cacheable credential response, headers: {Cache-Control: {schema: {type: string, const: no-store}}}, content: {application/json: {schema: {type: object, required: [credential], properties: {credential: {type: string, format: password, x-one-time-secret: true}}}}}}
+        "200": {description: "One-time, non-cacheable credential response", headers: {Cache-Control: {schema: {type: string, const: no-store}}}, content: {application/json: {schema: {type: object, required: [credential], properties: {credential: {type: string, format: password, x-one-time-secret: true}}}}}}
   /postgresql/databases:
     get:
       operationId: listManagedPostgreSQLDatabases
@@ -967,6 +1827,25 @@ components:
         type: integer
         format: int64
         minimum: 1
+    SiteID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    TaskID:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-f0-9]{32}$"
+    UploadID:
+      name: uploadId
+      in: path
+      required: true
+      schema:
+        type: string
   schemas:
     Liveness:
       type: object
@@ -1088,6 +1967,60 @@ components:
           format: password
           minLength: 1
           maxLength: 1024
+    Error:
+      description: Shared error envelope returned by every non-2xx JSON response.
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        offset:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Present on upload offset conflicts; the next byte offset the server expects.
+    ManagedRole:
+      type: string
+      enum: [admin, operator, developer, viewer]
+    ManagedUser:
+      type: object
+      required: [id, username, role, createdAt, mfaConfirmed, siteIds]
+      properties:
+        id: {type: string}
+        username: {type: string, minLength: 3, maxLength: 64}
+        role: {$ref: "#/components/schemas/ManagedRole"}
+        createdAt: {type: string, format: date-time}
+        lastLoginAt: {type: string, format: date-time}
+        mfaConfirmed: {type: boolean}
+        siteIds:
+          type: array
+          items: {type: string}
+          description: Sites granted to a developer; empty for unscoped roles.
+    CreateUser:
+      type: object
+      additionalProperties: false
+      required: [username, password, role]
+      properties:
+        username: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$"}
+        password: {type: string, format: password, minLength: 12, maxLength: 1024}
+        role: {$ref: "#/components/schemas/ManagedRole"}
+    UpdateUser:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        role: {$ref: "#/components/schemas/ManagedRole"}
+        password: {type: string, format: password, minLength: 12, maxLength: 1024}
+    UserSiteGrants:
+      type: object
+      additionalProperties: false
+      required: [siteIds]
+      properties:
+        siteIds:
+          type: array
+          items: {type: string}
     AuditEvent:
       type: object
       required: [id, occurredAt, action, subject, metadata]
@@ -1506,6 +2439,180 @@ components:
         databaseId: {type: string}
         accountId: {type: string}
         access: {type: string, enum: [connect, read_only, read_write]}
+    FileEntry:
+      type: object
+      required: [name, kind, size, mode, owner, group, modifiedAt]
+      properties:
+        name: {type: string}
+        kind: {type: string, enum: [file, dir, symlink, other]}
+        size: {type: integer, format: int64, minimum: 0}
+        mode: {type: string}
+        owner: {type: string}
+        group: {type: string}
+        modifiedAt: {type: string, format: date-time}
+    FileListing:
+      type: object
+      required: [entries, truncated]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileEntry"
+        truncated: {type: boolean}
+    FileReadResult:
+      type: object
+      required: [content, etag, size, truncated, binary]
+      properties:
+        content: {type: string}
+        etag: {type: string}
+        size: {type: integer, format: int64, minimum: 0}
+        truncated: {type: boolean}
+        binary: {type: boolean}
+    WriteFile:
+      type: object
+      additionalProperties: false
+      required: [path, content]
+      properties:
+        path: {type: string}
+        content: {type: string}
+        expectedEtag:
+          type: string
+          description: Entity tag from the last read; an empty or missing value writes unconditionally.
+    FileWriteResult:
+      type: object
+      required: [etag]
+      properties:
+        etag: {type: string}
+    FileUpload:
+      type: object
+      required: [uploadId]
+      properties:
+        uploadId: {type: string}
+    FileCopyResult:
+      type: object
+      required: [copied, bytes, skipped]
+      properties:
+        copied: {type: integer, minimum: 0}
+        bytes: {type: integer, format: int64, minimum: 0}
+        skipped: {type: integer, minimum: 0}
+    LogFile:
+      type: object
+      required: [name, size, modifiedAt]
+      properties:
+        name: {type: string}
+        size: {type: integer, format: int64, minimum: 0}
+        modifiedAt: {type: string, format: date-time}
+    LogReadResult:
+      type: object
+      required: [lines, nextOffset, size, rotated, truncated]
+      properties:
+        lines:
+          type: array
+          items: {type: string}
+        nextOffset: {type: integer, format: int64, minimum: 0}
+        size: {type: integer, format: int64, minimum: 0}
+        rotated: {type: boolean}
+        truncated: {type: boolean}
+    ScheduledTask:
+      type: object
+      required: [id, siteId, name, cronExpression, command, timeoutSeconds, enabled, status, pendingRemoval, createdAt, updatedAt]
+      properties:
+        id: {type: string, pattern: "^[a-f0-9]{32}$"}
+        siteId: {type: string}
+        name: {type: string, minLength: 1, maxLength: 64}
+        cronExpression: {type: string}
+        command: {type: string, minLength: 1, maxLength: 2048}
+        timeoutSeconds: {type: integer, minimum: 10, maximum: 86400}
+        enabled: {type: boolean}
+        status: {type: string, enum: [draft, planning, plan_ready, activating, active, rolling_back, rolled_back, failed]}
+        pendingRemoval: {type: boolean}
+        lastJobId: {type: integer, format: int64}
+        failure: {type: string}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    ScheduledTaskRequest:
+      type: object
+      additionalProperties: false
+      required: [name, cronExpression, command, timeoutSeconds]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 64}
+        cronExpression:
+          type: string
+          description: Exactly five numeric cron fields; names such as @daily or MON are rejected.
+        command: {type: string, minLength: 1, maxLength: 2048}
+        timeoutSeconds: {type: integer, minimum: 10, maximum: 86400}
+        enabled: {type: boolean, default: false}
+    SiteScope:
+      type: object
+      required: [siteId, slug, rootPath, unixUser]
+      properties:
+        siteId: {type: string}
+        slug: {type: string}
+        rootPath: {type: string}
+        unixUser: {type: string}
+    SchedulePlanTask:
+      type: object
+      required: [id, name, cronExpression, command, timeoutSeconds, enabled, scope]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        cronExpression: {type: string}
+        command: {type: string}
+        timeoutSeconds: {type: integer}
+        enabled: {type: boolean}
+        scope:
+          $ref: "#/components/schemas/SiteScope"
+    ScheduleArtifact:
+      type: object
+      required: [path, mode, content, owner, group, remove]
+      properties:
+        path: {type: string}
+        mode: {type: integer}
+        content: {type: string}
+        owner: {type: string}
+        group: {type: string}
+        remove: {type: boolean}
+    ScheduleSnapshot:
+      type: object
+      required: [path, exists]
+      properties:
+        path: {type: string}
+        exists: {type: boolean}
+        mode: {type: integer}
+        digest: {type: string}
+        content: {type: string}
+        uid: {type: integer}
+        gid: {type: integer}
+    SchedulePlan:
+      type: object
+      required: [id, kind, task, artifacts, before, warnings, plannedAt, expiresAt]
+      properties:
+        id: {type: string}
+        kind: {type: string, const: nexa.schedule.change.v1}
+        task:
+          $ref: "#/components/schemas/SchedulePlanTask"
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScheduleArtifact"
+        before:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScheduleSnapshot"
+        warnings:
+          type: array
+          items: {type: string}
+        plannedAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        signature: {type: string}
+    ScheduleRunRecord:
+      type: object
+      required: [startedAt, durationSeconds, exitCode, trigger]
+      properties:
+        startedAt: {type: string, format: date-time}
+        durationSeconds: {type: integer, minimum: 0}
+        exitCode: {type: integer}
+        trigger: {type: string}
     Job:
       type: object
       required: [id, kind, state, progress, request, createdAt, updatedAt]

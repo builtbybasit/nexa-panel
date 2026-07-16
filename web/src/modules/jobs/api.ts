@@ -43,6 +43,10 @@ export async function listJobs(): Promise<Job[]> {
   return response.items
 }
 
+export function getJob(id: number): Promise<Job> {
+  return request(`/api/v1/jobs/${id}`)
+}
+
 export function submitDiagnostics(delayMilliseconds = 150): Promise<Job> {
   return request('/api/v1/jobs/diagnostics', {
     method: 'POST',
