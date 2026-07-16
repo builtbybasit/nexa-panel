@@ -1,0 +1,16 @@
+import { auditModule } from './audit'
+import { adminToolsModule } from './admintools'
+import { certificatesModule } from './certificates'
+import { databasesModule } from './databases'
+import { domainsModule } from './domains'
+import { jobsModule } from './jobs'
+import { mysqlModule } from './mysql'
+import { nodeOperationsModule } from './nodeoperations'
+import { overviewModule } from './overview'
+import { sitesModule } from './sites'
+import { systemModule } from './system'
+import type { FeatureModule } from './types'
+
+export const featureModules: FeatureModule[] = [overviewModule, sitesModule, domainsModule, certificatesModule, databasesModule, mysqlModule, adminToolsModule, systemModule, nodeOperationsModule, jobsModule, auditModule].sort(
+  (left, right) => (left.navigation?.order ?? 999) - (right.navigation?.order ?? 999),
+)

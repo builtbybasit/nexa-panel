@@ -1,0 +1,201 @@
+package main
+
+import (
+	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
+
+	"flag"
+	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
+
+	"os/signal"
+	"syscall"
+
+	"github.com/nexa-panel/nexa-panel/internal/modules/postgres"
+
+	"github.com/nexa-panel/nexa-panel/internal/modules/runtimes"
+	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
+
+	"context"
+	"github.com/nexa-panel/nexa-panel/internal/platform/capacity"
+
+	"fmt"
+
+	"net/http"
+
+	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
+
+	"github.com/nexa-panel/nexa-panel/internal/modules/certificates"
+	"github.com/nexa-panel/nexa-panel/internal/platform/nodeoperations"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
+	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+	"log/slog"
+
+	"github.com/nexa-panel/nexa-panel/internal/modules/mysql"
+
+	"github.com/nexa-panel/nexa-panel/internal/modules/system"
+	"os"
+
+	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
+
+	"errors"
+	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
+
+	"github.com/nexa-panel/nexa-panel/internal/adapters/podman"
+	"github.com/nexa-panel/nexa-panel/internal/modules/admintools"
+
+	"github.com/nexa-panel/nexa-panel/internal/modules/domains"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/authorization"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/controlplane"
+	"github.com/nexa-panel/nexa-panel/internal/platform/version"
+	"time"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+)
+
+func runAPI(args []string, logger *slog.Logger) error {
+	flags := flag.NewFlagSet("api", flag.ContinueOnError)
+	address := flags.String("address", envOrDefault("NEXA_API_ADDRESS", "127.0.0.1:8080"), "HTTP listen address")
+	state := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/tmp/nexa-panel/control.db"), "SQLite control-plane state path")
+	masterKey := flags.String("master-key", envOrDefault("NEXA_MASTER_KEY", "/tmp/nexa-panel/master.key"), "AES master key path")
+	agentSocket := flags.String("agent-socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
+	agentToken := flags.String("agent-token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	database, err := persistence.Open(*state)
+	if err != nil {
+		return fmt.Errorf("open control-plane state: %w", err)
+	}
+	defer database.Close()
+	secretBox, err := secrets.OpenKeyFile(*masterKey)
+	if err != nil {
+		return fmt.Errorf("open control-plane master key: %w", err)
+	}
+
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelSetup()
+	auditModule, err := audit.New(setupCtx, database)
+	if err != nil {
+		return fmt.Errorf("initialize audit module: %w", err)
+	}
+	identityModule, err := identity.New(setupCtx, database, auditModule, secretBox, logger)
+	if err != nil {
+		return fmt.Errorf("initialize identity module: %w", err)
+	}
+	jobsModule, err := jobs.New(setupCtx, database, auditModule, logger)
+	if err != nil {
+		return fmt.Errorf("initialize jobs module: %w", err)
+	}
+	nodeOperationsModule, err := nodeoperations.New(nodeoperator.NewUnixClient(*agentSocket, *agentToken), jobsModule)
+	if err != nil {
+		return fmt.Errorf("initialize node operations module: %w", err)
+	}
+	runtimesModule, err := runtimes.New(runtimes.FilesystemDiscoverer{PHPConfigRoot: "/etc/php"})
+	if err != nil {
+		return fmt.Errorf("initialize runtimes module: %w", err)
+	}
+	sitesModule, err := sites.New(setupCtx, database, jobsModule, runtimesModule, siteoperator.NewUnixClient(*agentSocket, *agentToken))
+	if err != nil {
+		return fmt.Errorf("initialize sites module: %w", err)
+	}
+	domainsModule, err := domains.New(setupCtx, database, jobsModule, sitesModule, siteoperator.NewUnixClient(*agentSocket, *agentToken), nil)
+	if err != nil {
+		return fmt.Errorf("initialize domains module: %w", err)
+	}
+	certificatesModule, err := certificates.New(setupCtx, database, jobsModule, sitesModule, domainsModule, certificateoperator.NewUnixClient(*agentSocket, *agentToken), siteoperator.NewUnixClient(*agentSocket, *agentToken), nil)
+	if err != nil {
+		return fmt.Errorf("initialize certificates module: %w", err)
+	}
+	domainsModule.SetTLSProvider(certificatesModule)
+	postgresDatabasesModule, err := postgres.New(setupCtx, database, jobsModule, secretBox, postgresoperator.NewUnixClient(*agentSocket, *agentToken))
+	if err != nil {
+		return fmt.Errorf("initialize PostgreSQL databases module: %w", err)
+	}
+	mysqlDatabasesModule, err := mysql.New(setupCtx, database, jobsModule, secretBox, mysqloperator.NewUnixClient(*agentSocket, *agentToken))
+	if err != nil {
+		return fmt.Errorf("initialize MySQL-family databases module: %w", err)
+	}
+	credentialResolver := func(ctx context.Context, engine, databaseID, accountID string) (admintools.Credential, error) {
+		switch engine {
+		case "postgresql":
+			credential, resolveErr := postgresDatabasesModule.ResolveAdminToolCredential(ctx, databaseID, accountID)
+			return admintools.Credential{Host: credential.Host, Port: credential.Port, Database: credential.Database, Username: credential.Username, Secret: credential.Secret}, resolveErr
+		case "mysql":
+			credential, resolveErr := mysqlDatabasesModule.ResolveAdminToolCredential(ctx, databaseID, accountID)
+			return admintools.Credential{Host: credential.Host, Port: credential.Port, Database: credential.Database, Username: credential.Username, Secret: credential.Secret}, resolveErr
+		default:
+			return admintools.Credential{}, errors.New("database engine is unsupported for admin tool launch")
+		}
+	}
+	adminToolsModule, err := admintools.New(setupCtx, database, jobsModule, admintooloperator.NewUnixClient(*agentSocket, *agentToken), admintools.WithLaunchGateway(secretBox, credentialResolver, auditModule))
+	if err != nil {
+		return fmt.Errorf("initialize admin tools module: %w", err)
+	}
+
+	jobsModule.Start(context.Background())
+	defer jobsModule.Close()
+
+	modules := []module.Module{
+		auditModule,
+		identityModule,
+		jobsModule,
+		nodeOperationsModule,
+		runtimesModule,
+		sitesModule,
+		domainsModule,
+		certificatesModule,
+		postgresDatabasesModule,
+		mysqlDatabasesModule,
+		adminToolsModule,
+		system.New(capacity.NewProcReader(), podman.NewInspector()),
+	}
+
+	app, err := controlplane.New(version.Version, modules, logger,
+		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(authorization.New()))
+	if err != nil {
+		return fmt.Errorf("create control plane: %w", err)
+	}
+
+	server := &http.Server{
+		Addr:              *address,
+		Handler:           app.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	return serveHTTP(server, logger)
+}
+
+func serveHTTP(server *http.Server, logger *slog.Logger) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("api listening", "address", server.Addr)
+		errCh <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return server.Shutdown(shutdownCtx)
+	}
+}

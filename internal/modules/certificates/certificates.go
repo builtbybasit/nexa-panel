@@ -1,0 +1,183 @@
+package certificates
+
+import (
+	"github.com/uptrace/bun"
+
+	"net/http"
+
+	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+
+	"errors"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+
+	"github.com/nexa-panel/nexa-panel/internal/modules/domains"
+
+	"context"
+	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+
+	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
+
+	"net"
+
+	"time"
+)
+
+const schema = `
+	CREATE TABLE certificates (
+		id TEXT PRIMARY KEY,
+		site_id TEXT NOT NULL UNIQUE REFERENCES sites(id) ON DELETE CASCADE,
+		primary_domain TEXT NOT NULL,
+		email TEXT NOT NULL,
+		status TEXT NOT NULL,
+		domains_json TEXT NOT NULL DEFAULT '[]',
+		certificate_path TEXT,
+		private_key_path TEXT,
+		issued_at TIMESTAMP,
+		expires_at TIMESTAMP,
+		last_job_id INTEGER REFERENCES jobs(id),
+		failure TEXT,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL
+	);
+	CREATE TABLE certificate_plans (
+		certificate_id TEXT PRIMARY KEY REFERENCES certificates(id) ON DELETE CASCADE,
+		operation TEXT NOT NULL,
+		plan_json TEXT NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		expires_at TIMESTAMP NOT NULL
+	);
+`
+
+type Status string
+
+const (
+	StatusPlanning  Status = "planning"
+	StatusPlanReady Status = "plan_ready"
+	StatusIssuing   Status = "issuing"
+	StatusActive    Status = "active"
+	StatusRenewing  Status = "renewing"
+	StatusRevoking  Status = "revoking"
+	StatusRevoked   Status = "revoked"
+	StatusFailed    Status = "failed"
+)
+
+type Certificate struct {
+	ID              string     `json:"id"`
+	SiteID          string     `json:"siteId"`
+	PrimaryDomain   string     `json:"primaryDomain"`
+	Email           string     `json:"email"`
+	Status          Status     `json:"status"`
+	Domains         []string   `json:"domains"`
+	CertificatePath string     `json:"certificatePath,omitempty"`
+	IssuedAt        *time.Time `json:"issuedAt,omitempty"`
+	ExpiresAt       *time.Time `json:"expiresAt,omitempty"`
+	ExpiringSoon    bool       `json:"expiringSoon"`
+	LastJobID       *int64     `json:"lastJobId,omitempty"`
+	Failure         string     `json:"failure,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+}
+
+type CreateRequest struct {
+	SiteID string `json:"siteId"`
+	Email  string `json:"email"`
+}
+
+type DomainCatalog interface {
+	List(context.Context, string) ([]domains.Domain, error)
+	Routing(context.Context, string, string) ([]siteoperator.Route, error)
+}
+
+type SiteCatalog interface {
+	Get(context.Context, string) (sites.Site, error)
+}
+
+type Resolver interface {
+	LookupHost(context.Context, string) ([]string, error)
+}
+
+type StoredPlan struct {
+	Operation string                   `json:"operation"`
+	AgentPlan certificateoperator.Plan `json:"agentPlan"`
+	DNS       map[string][]string      `json:"dns"`
+}
+
+type Module struct {
+	database     *bun.DB
+	jobs         *jobs.Module
+	sites        SiteCatalog
+	domains      DomainCatalog
+	certificates certificateoperator.Operator
+	siteOperator siteoperator.Operator
+	resolver     Resolver
+	now          func() time.Time
+}
+
+type certificateModel struct {
+	bun.BaseModel   `bun:"table:certificates,alias:certificate"`
+	ID              string `bun:",pk"`
+	SiteID          string
+	PrimaryDomain   string
+	Email           string
+	Status          string
+	DomainsJSON     string
+	CertificatePath *string
+	PrivateKeyPath  *string
+	IssuedAt        *time.Time
+	ExpiresAt       *time.Time
+	LastJobID       *int64
+	Failure         *string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type planModel struct {
+	bun.BaseModel `bun:"table:certificate_plans,alias:certificate_plan"`
+	CertificateID string `bun:",pk"`
+	Operation     string
+	PlanJSON      string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+}
+
+func New(ctx context.Context, database *bun.DB, queue *jobs.Module, siteCatalog SiteCatalog, domainCatalog DomainCatalog, certOperator certificateoperator.Operator, siteOperator siteoperator.Operator, resolver Resolver) (*Module, error) {
+	if database == nil || queue == nil || siteCatalog == nil || domainCatalog == nil || certOperator == nil || siteOperator == nil {
+		return nil, errors.New("certificate dependencies are required")
+	}
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	if err := persistence.Migrate(ctx, database, "certificates", []string{schema}); err != nil {
+		return nil, err
+	}
+	m := &Module{database: database, jobs: queue, sites: siteCatalog, domains: domainCatalog, certificates: certOperator, siteOperator: siteOperator, resolver: resolver, now: time.Now}
+	if err := queue.RegisterHandler("certificate.plan", m.planJob); err != nil {
+		return nil, err
+	}
+	if err := queue.RegisterHandler("certificate.execute", m.executeJob); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (m *Module) Descriptor() module.Descriptor {
+	return module.Descriptor{ID: "certificates", Name: "Certificates", Version: "0.1.0", Description: "Let's Encrypt HTTP-01 issuance, renewal, revocation, and expiry monitoring.", Dependencies: []string{"identity", "jobs", "sites", "domains"}, EstimatedIdleBytes: 512 * 1024}
+}
+
+func (m *Module) Register(registry module.Registry) error {
+	routes := []struct {
+		pattern, permission string
+		handler             http.Handler
+	}{{"GET /api/v1/certificates", "certificates.read", http.HandlerFunc(m.listHTTP)}, {"POST /api/v1/certificates", "certificates.write", http.HandlerFunc(m.createHTTP)}, {"GET /api/v1/certificates/{id}/plan", "certificates.read", http.HandlerFunc(m.planHTTP)}, {"POST /api/v1/certificates/{id}/plans", "certificates.write", http.HandlerFunc(m.prepareHTTP)}, {"POST /api/v1/certificates/{id}/apply", "operations.apply", http.HandlerFunc(m.applyHTTP)}}
+	for _, route := range routes {
+		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -1,0 +1,42 @@
+[Unit]
+Description=Nexa Panel control plane
+Documentation=https://github.com/nexa-panel/nexa-panel
+After=network-online.target nexa-agent.service
+Wants=network-online.target
+Requires=nexa-agent.service
+
+[Service]
+Type=simple
+User=nexa
+Group=nexa
+UMask=0027
+Environment=NEXA_AGENT_SOCKET=/run/nexa-panel/agent.sock
+Environment=NEXA_AGENT_TOKEN=/etc/nexa-panel/agent.token
+ExecStart=/usr/bin/nexa api --address 127.0.0.1:8080 --state /var/lib/nexa-panel/control.db --master-key /var/lib/nexa-panel/master.key
+Restart=on-failure
+RestartSec=3s
+StateDirectory=nexa-panel
+StateDirectoryMode=0750
+LogsDirectory=nexa-panel
+LogsDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

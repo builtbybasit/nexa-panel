@@ -1,0 +1,1629 @@
+openapi: 3.1.0
+info:
+  title: Nexa Panel HTTP Interface
+  version: 0.1.0
+  description: Initial control-plane contract for the Nexa Panel foundation.
+servers:
+  - url: /api/v1
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      tags: [Platform]
+      responses:
+        "200":
+          description: The control-plane process is running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Liveness"
+  /modules:
+    get:
+      operationId: listModules
+      tags: [Platform]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Independently registered feature modules.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ModuleDescriptor"
+  /system/overview:
+    get:
+      operationId: getSystemOverview
+      tags: [System]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Observed capacity and container-runtime capabilities.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemOverview"
+  /auth/status:
+    get:
+      operationId: getIdentityStatus
+      tags: [Identity]
+      responses:
+        "200":
+          description: Bootstrap and current-session status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityStatus"
+  /auth/bootstrap:
+    post:
+      operationId: bootstrapAdministrator
+      tags: [Identity]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Credentials"
+      responses:
+        "201":
+          description: The first administrator and session were created.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordResponse"
+        "409":
+          description: An administrator already exists.
+  /auth/login:
+    post:
+      operationId: login
+      tags: [Identity]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Credentials"
+      responses:
+        "200":
+          description: Credentials were accepted and a session was created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordResponse"
+        "401":
+          description: The credentials were not accepted.
+        "429":
+          description: Too many password attempts were made from the client address.
+  /auth/mfa/enroll:
+    post:
+      operationId: enrollMFA
+      tags: [Identity]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Encrypted TOTP enrollment material for the pre-authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MFAEnrollment"
+        "409":
+          description: MFA is already enrolled.
+  /auth/mfa/confirm:
+    post:
+      operationId: confirmMFA
+      tags: [Identity]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code:
+                  $ref: "#/components/schemas/TOTPCode"
+      responses:
+        "200":
+          description: Enrollment was confirmed; recovery codes are returned once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MFAConfirmation"
+        "401":
+          description: The TOTP was invalid, expired, or previously accepted.
+        "429":
+          description: Too many verification attempts were made.
+  /auth/mfa/verify:
+    post:
+      operationId: verifyMFA
+      tags: [Identity]
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [code]
+                  properties:
+                    code:
+                      $ref: "#/components/schemas/TOTPCode"
+                - type: object
+                  additionalProperties: false
+                  required: [recoveryCode]
+                  properties:
+                    recoveryCode:
+                      type: string
+                      pattern: "^[A-Fa-f0-9]{4}(-[A-Fa-f0-9]{4}){3}$"
+      responses:
+        "200":
+          description: The pre-authenticated session is now fully authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          description: The TOTP or recovery code was invalid or already consumed.
+        "429":
+          description: Too many verification attempts were made.
+  /auth/session:
+    get:
+      operationId: getSession
+      tags: [Identity]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: The authenticated administrator.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          description: A valid session is required.
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [Identity]
+      security:
+        - sessionCookie: []
+      responses:
+        "204":
+          description: The current session was revoked.
+  /audit/events:
+    get:
+      operationId: listAuditEvents
+      tags: [Audit]
+      x-permission: audit.read
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+      responses:
+        "200":
+          description: Most recent append-only audit events.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEvent"
+  /jobs:
+    get:
+      operationId: listJobs
+      tags: [Jobs]
+      x-permission: jobs.read
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Most recent durable jobs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Job"
+  /jobs/{id}:
+    get:
+      operationId: getJob
+      tags: [Jobs]
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+      responses:
+        "200":
+          description: Current durable job state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          description: The job does not exist.
+  /jobs/{id}/events:
+    get:
+      operationId: streamJobEvents
+      tags: [Jobs]
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+        - name: Last-Event-ID
+          in: header
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Replayable Server-Sent Events until the job reaches a terminal state.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /jobs/diagnostics:
+    post:
+      operationId: submitDiagnostics
+      tags: [Jobs]
+      x-permission: operations.apply
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                delayMilliseconds:
+                  type: integer
+                  minimum: 10
+                  maximum: 2000
+                  default: 100
+      responses:
+        "202":
+          description: The safe diagnostic job was persisted and queued.
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+  /node/probe/observe:
+    get:
+      operationId: observeManagedProbe
+      tags: [Node Operations]
+      x-permission: system.read
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Current state of the fixed Nexa-owned probe target.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeSnapshot"
+        "503":
+          description: The privileged node agent is unavailable.
+  /node/probe/plan:
+    post:
+      operationId: planManagedProbe
+      tags: [Node Operations]
+      x-permission: operations.plan
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProbeChange"
+      responses:
+        "200":
+          description: A signed, time-limited plan issued by the privileged agent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodePlan"
+  /node/probe/apply:
+    post:
+      operationId: applyManagedProbePlan
+      tags: [Node Operations]
+      x-permission: operations.apply
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NodePlan"
+      responses:
+        "202":
+          description: The signed plan was persisted as a durable job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+  /node/probe/rollback:
+    post:
+      operationId: rollbackManagedProbePlan
+      tags: [Node Operations]
+      x-permission: operations.apply
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NodePlan"
+      responses:
+        "202":
+          description: A rollback of the signed plan was persisted as a durable job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+  /runtimes:
+    get:
+      operationId: listRuntimes
+      tags: [Runtimes]
+      x-permission: runtimes.read
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Installed and enabled PHP-FPM 7.4 and 8.x runtimes discovered on the node.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Runtime"
+  /sites:
+    get:
+      operationId: listSites
+      tags: [Sites]
+      x-permission: sites.read
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Desired sites managed by the control plane.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Site"
+    post:
+      operationId: createSite
+      tags: [Sites]
+      x-permission: sites.write
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSite"
+      responses:
+        "202":
+          description: The site desired state was persisted and its configuration plan was queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [site, job]
+                properties:
+                  site:
+                    $ref: "#/components/schemas/Site"
+                  job:
+                    $ref: "#/components/schemas/Job"
+        "422":
+          description: The site identity, domain, or selected runtime is not allowed.
+  /sites/{id}:
+    get:
+      operationId: getSite
+      tags: [Sites]
+      x-permission: sites.read
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One managed site.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        "404":
+          description: The site does not exist.
+  /sites/{id}/plan:
+    get:
+      operationId: getSitePlan
+      tags: [Sites]
+      x-permission: sites.read
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Immutable generated artifacts awaiting privileged node validation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [plan, expiresAt]
+                properties:
+                  plan:
+                    $ref: "#/components/schemas/SitePlan"
+                  expiresAt:
+                    type: string
+                    format: date-time
+        "404":
+          description: A plan is not ready for this site.
+    post:
+      operationId: refreshSitePlan
+      tags: [Sites]
+      x-permission: sites.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "202": {description: A new agent-signed site plan was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+  /sites/{id}/activate:
+    post:
+      operationId: activateSite
+      tags: [Sites]
+      x-permission: operations.apply
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "202": {description: Signed site activation was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+  /sites/{id}/rollback:
+    post:
+      operationId: rollbackSite
+      tags: [Sites]
+      x-permission: operations.apply
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "202": {description: Drift-guarded site rollback was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+  /domains:
+    get:
+      operationId: listDomains
+      tags: [Domains]
+      x-permission: domains.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: siteId, in: query, schema: {type: string}}
+      responses:
+        "200": {description: Managed routing identities, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/Domain"}}}}}}}
+    post:
+      operationId: createDomain
+      tags: [Domains]
+      x-permission: domains.write
+      security: [{sessionCookie: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateDomain"}}}}
+      responses:
+        "202": {description: DNS and routing planning was queued}
+  /domains/{id}/plan:
+    get:
+      operationId: getDomainPlan
+      tags: [Domains]
+      x-permission: domains.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: DNS preflight and signed routing plan}
+  /domains/{id}/activate:
+    post:
+      operationId: activateDomain
+      tags: [Domains]
+      x-permission: operations.apply
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "202": {description: Atomic routing activation was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+  /certificates:
+    get:
+      operationId: listCertificates
+      tags: [Certificates]
+      x-permission: certificates.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: siteId, in: query, schema: {type: string}}
+      responses:
+        "200": {description: Certificate state and expiry monitoring, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/Certificate"}}}}}}}
+    post:
+      operationId: createCertificate
+      tags: [Certificates]
+      x-permission: certificates.write
+      security: [{sessionCookie: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateCertificate"}}}}
+      responses:
+        "202": {description: HTTP-01 issuance planning was queued}
+  /certificates/{id}/plan:
+    get:
+      operationId: getCertificatePlan
+      tags: [Certificates]
+      x-permission: certificates.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: Agent-signed certificate lifecycle plan}
+  /certificates/{id}/plans:
+    post:
+      operationId: prepareCertificateOperation
+      tags: [Certificates]
+      x-permission: certificates.write
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [operation], properties: {operation: {type: string, enum: [issue, renew, revoke]}}}}}}
+      responses:
+        "202": {description: Certificate lifecycle planning was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+  /certificates/{id}/apply:
+    post:
+      operationId: applyCertificateOperation
+      tags: [Certificates]
+      x-permission: operations.apply
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "202": {description: HTTP-01 issue, renewal, or revocation was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+  /postgresql/instances:
+    get:
+      operationId: listPostgreSQLInstances
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses:
+        "200": {description: Discovered PostgreSQL 16-18 instances, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/PostgreSQLInstance"}}}}}}}
+    post:
+      operationId: createPostgreSQLInstance
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreatePostgreSQLInstance"}}}}
+      responses:
+        "202": {description: PostgreSQL instance provisioning plan was queued}
+  /postgresql/roles:
+    get:
+      operationId: listPostgreSQLRoles
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses:
+        "200": {description: Managed non-superuser login roles, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/PostgreSQLRole"}}}}}}}
+    post:
+      operationId: createPostgreSQLRole
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreatePostgreSQLRole"}}}}
+      responses:
+        "202": {description: Role creation and encrypted credential planning was queued}
+  /postgresql/roles/{id}/rotate:
+    post:
+      operationId: rotatePostgreSQLRole
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        "202": {description: Failure-safe credential rotation planning was queued}
+  /postgresql/roles/{id}/credential:
+    post:
+      operationId: revealPostgreSQLCredentialOnce
+      tags: [Databases]
+      x-permission: operations.apply
+      security: [{sessionCookie: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        "200": {description: One-time, non-cacheable credential response, headers: {Cache-Control: {schema: {type: string, const: no-store}}}, content: {application/json: {schema: {type: object, required: [credential], properties: {credential: {type: string, format: password, x-one-time-secret: true}}}}}}
+  /postgresql/databases:
+    get:
+      operationId: listManagedPostgreSQLDatabases
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses:
+        "200": {description: Managed logical databases, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/ManagedPostgreSQLDatabase"}}}}}}}
+    post:
+      operationId: createManagedPostgreSQLDatabase
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateManagedPostgreSQLDatabase"}}}}
+      responses:
+        "202": {description: Logical database creation planning was queued}
+  /postgresql/grants:
+    get:
+      operationId: listPostgreSQLGrants
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses:
+        "200": {description: Managed database-scoped grants, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/PostgreSQLGrant"}}}}}}}
+    post:
+      operationId: createPostgreSQLGrant
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreatePostgreSQLGrant"}}}}
+      responses:
+        "202": {description: Scoped grant planning was queued}
+  /postgresql/databases/{id}/backups:
+    post:
+      operationId: createPostgreSQLRestorePoint
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        "202": {description: Custom-format logical backup planning was queued}
+  /postgresql/restore-points:
+    get:
+      operationId: listPostgreSQLRestorePoints
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses:
+        "200": {description: Verified logical restore points, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/PostgreSQLRestorePoint"}}}}}}}
+  /postgresql/restore-points/{id}/restore:
+    post:
+      operationId: preparePostgreSQLRestore
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        "202": {description: Failure-safe staged restore planning was queued}
+  /postgresql/{resourceType}/{id}/plan:
+    get:
+      operationId: getPostgreSQLPlan
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: resourceType, in: path, required: true, schema: {type: string, enum: [instances, roles, databases, grants, restore-points]}}
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "200": {description: Agent-signed PostgreSQL plan, content: {application/json: {schema: {type: object, properties: {plan: {$ref: "#/components/schemas/PostgreSQLStoredPlan"}}}}}}
+  /postgresql/{resourceType}/{id}/apply:
+    post:
+      operationId: applyPostgreSQLPlan
+      tags: [Databases]
+      x-permission: operations.apply
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: resourceType, in: path, required: true, schema: {type: string, enum: [instances, roles, databases, grants, restore-points]}}
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "202": {description: Reviewed PostgreSQL operation was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+  /mysql-family/engines:
+    get:
+      operationId: listMySQLFamilyEngines
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses:
+        "200": {description: The single discovered native MySQL-family engine, content: {application/json: {schema: {type: object, properties: {items: {type: array, maxItems: 1, items: {$ref: "#/components/schemas/MySQLFamilyEngine"}}}}}}}
+  /mysql-family/accounts:
+    get:
+      operationId: listMySQLFamilyAccounts
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses: {"200": {description: Managed database accounts}}
+    post:
+      operationId: createMySQLFamilyAccount
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateMySQLFamilyAccount"}}}}
+      responses: {"202": {description: Encrypted account creation planning was queued}}
+  /mysql-family/accounts/{id}/rotate:
+    post:
+      operationId: rotateMySQLFamilyAccount
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses: {"202": {description: Failure-safe credential rotation planning was queued}}
+  /mysql-family/accounts/{id}/credential:
+    post:
+      operationId: revealMySQLFamilyCredentialOnce
+      tags: [Databases]
+      x-permission: operations.apply
+      security: [{sessionCookie: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses: {"200": {description: One-time non-cacheable credential response}}
+  /mysql-family/databases:
+    get:
+      operationId: listMySQLFamilyDatabases
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses: {"200": {description: Managed MySQL-family databases}}
+    post:
+      operationId: createMySQLFamilyDatabase
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateMySQLFamilyDatabase"}}}}
+      responses: {"202": {description: Database creation planning was queued}}
+  /mysql-family/grants:
+    get:
+      operationId: listMySQLFamilyGrants
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses: {"200": {description: Database-scoped grants}}
+    post:
+      operationId: createMySQLFamilyGrant
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateMySQLFamilyGrant"}}}}
+      responses: {"202": {description: Scoped grant planning was queued}}
+  /mysql-family/databases/{id}/backups:
+    post:
+      operationId: createMySQLFamilyRestorePoint
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses: {"202": {description: Consistent logical backup planning was queued}}
+  /mysql-family/restore-points:
+    get:
+      operationId: listMySQLFamilyRestorePoints
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses: {"200": {description: Verified MySQL-family restore points}}
+  /mysql-family/restore-points/{id}/restore:
+    post:
+      operationId: prepareMySQLFamilyRestore
+      tags: [Databases]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses: {"202": {description: Checksum-bound restore with automatic rollback planning was queued}}
+  /mysql-family/{resourceType}/{id}/plan:
+    get:
+      operationId: getMySQLFamilyPlan
+      tags: [Databases]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: resourceType, in: path, required: true, schema: {type: string, enum: [accounts, databases, grants, restore-points]}}
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses: {"200": {description: Agent-signed MySQL-family plan}}
+  /mysql-family/{resourceType}/{id}/apply:
+    post:
+      operationId: applyMySQLFamilyPlan
+      tags: [Databases]
+      x-permission: operations.apply
+      security: [{sessionCookie: []}]
+      parameters:
+        - {name: resourceType, in: path, required: true, schema: {type: string, enum: [accounts, databases, grants, restore-points]}}
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        "202":
+          description: Reviewed MySQL-family operation was queued
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Job"}
+  /admin-tools:
+    get:
+      operationId: listAdminTools
+      tags: [Admin Tools]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      responses: {"200": {description: Observed phpMyAdmin and pgAdmin deployment state}}
+  /admin-tools/{kind}/plan:
+    get:
+      operationId: getAdminToolPlan
+      tags: [Admin Tools]
+      x-permission: databases.read
+      security: [{sessionCookie: []}]
+      parameters: [{name: kind, in: path, required: true, schema: {type: string, enum: [phpmyadmin, pgadmin]}}]
+      responses: {"200": {description: Agent-signed Podman deployment plan}}
+    post:
+      operationId: prepareAdminToolChange
+      tags: [Admin Tools]
+      x-permission: databases.write
+      security: [{sessionCookie: []}]
+      parameters: [{name: kind, in: path, required: true, schema: {type: string, enum: [phpmyadmin, pgadmin]}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [action], properties: {action: {type: string, enum: [tool.deploy, tool.start, tool.stop]}}}}}}
+      responses: {"202": {description: Admin tool change planning was queued}}
+  /admin-tools/{kind}/apply:
+    post:
+      operationId: applyAdminToolPlan
+      tags: [Admin Tools]
+      x-permission: operations.apply
+      security: [{sessionCookie: []}]
+      parameters: [{name: kind, in: path, required: true, schema: {type: string, enum: [phpmyadmin, pgadmin]}}]
+      responses:
+        "202":
+          description: Reviewed Podman tool operation was queued
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Job"}
+  /admin-tools/{kind}/launch:
+    post:
+      operationId: createAdminToolLaunch
+      tags: [Admin Tools]
+      x-permission: operations.apply
+      security: [{sessionCookie: []}]
+      parameters: [{name: kind, in: path, required: true, schema: {type: string, enum: [phpmyadmin, pgadmin]}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sourceEngine, databaseId, accountId]
+              properties:
+                sourceEngine: {type: string, enum: [postgresql, mysql]}
+                databaseId: {type: string}
+                accountId: {type: string}
+      responses:
+        "201":
+          description: One-time launch cookie and credential-free gateway URL
+          headers:
+            Set-Cookie: {schema: {type: string}, description: HttpOnly Strict SameSite launch cookie with a 60-second lifetime}
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url]
+                properties: {url: {type: string, pattern: "^/tools/(phpmyadmin|pgadmin)/$"}}
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nexa_session
+  parameters:
+    JobID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+  schemas:
+    Liveness:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          const: ok
+        version:
+          type: string
+    ModuleDescriptor:
+      type: object
+      required:
+        - id
+        - name
+        - version
+        - description
+        - dependencies
+        - requiredCapabilities
+        - estimatedIdleBytes
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        description:
+          type: string
+        dependencies:
+          type: array
+          items:
+            type: string
+        requiredCapabilities:
+          type: array
+          items:
+            type: string
+        estimatedIdleBytes:
+          type: integer
+          format: int64
+          minimum: 0
+    User:
+      type: object
+      required: [id, username, role]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+        role:
+          type: string
+          enum: [viewer, operator, admin]
+    UserResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+    PasswordResponse:
+      type: object
+      required: [user, next]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        next:
+          type: string
+          enum: [mfa_enrollment, mfa_challenge]
+    IdentityStatus:
+      type: object
+      required: [bootstrapRequired, authenticated, mfaEnrollmentRequired, mfaChallengeRequired]
+      properties:
+        bootstrapRequired:
+          type: boolean
+        authenticated:
+          type: boolean
+        mfaEnrollmentRequired:
+          type: boolean
+        mfaChallengeRequired:
+          type: boolean
+        user:
+          $ref: "#/components/schemas/User"
+    TOTPCode:
+      type: string
+      pattern: "^[0-9]{6}$"
+    MFAEnrollment:
+      type: object
+      required: [secret, provisioningUri]
+      properties:
+        secret:
+          type: string
+        provisioningUri:
+          type: string
+          pattern: "^otpauth://totp/"
+    MFAConfirmation:
+      type: object
+      required: [user, recoveryCodes]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        recoveryCodes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items:
+            type: string
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+        password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 1024
+    AuditEvent:
+      type: object
+      required: [id, occurredAt, action, subject, metadata]
+      properties:
+        id:
+          type: integer
+          format: int64
+        occurredAt:
+          type: string
+          format: date-time
+        actorUserId:
+          type: string
+        action:
+          type: string
+        subject:
+          type: string
+        remoteAddress:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+    ProbeChange:
+      type: object
+      additionalProperties: false
+      required: [present]
+      properties:
+        present:
+          type: boolean
+        content:
+          type: string
+          maxLength: 256
+    NodeSnapshot:
+      type: object
+      required: [exists]
+      properties:
+        exists:
+          type: boolean
+        digest:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+        content:
+          type: string
+          maxLength: 256
+    NodePlan:
+      type: object
+      required: [id, kind, target, action, changed, before, desired, plannedAt, expiresAt, signature]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          const: nexa.probe.v1
+        target:
+          type: string
+        action:
+          type: string
+          enum: [none, create, update, remove]
+        changed:
+          type: boolean
+        before:
+          $ref: "#/components/schemas/NodeSnapshot"
+        desired:
+          $ref: "#/components/schemas/NodeSnapshot"
+        plannedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        signature:
+          type: string
+    Runtime:
+      type: object
+      required: [engine, version, installed, enabled, supportStatus]
+      properties:
+        engine:
+          type: string
+          const: php
+        version:
+          type: string
+          pattern: "^(7\\.4|8\\.[0-9]{1,2})$"
+        installed:
+          type: boolean
+        enabled:
+          type: boolean
+        supportStatus:
+          type: string
+    CreateSite:
+      type: object
+      additionalProperties: false
+      required: [slug, displayName, primaryDomain, phpVersion]
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z][a-z0-9-]{1,31}$"
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 80
+        primaryDomain:
+          type: string
+          maxLength: 253
+        phpVersion:
+          type: string
+          pattern: "^(7\\.4|8\\.[0-9]{1,2})$"
+    Site:
+      type: object
+      required: [id, slug, displayName, primaryDomain, phpVersion, unixUser, rootPath, socketPath, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        displayName:
+          type: string
+        primaryDomain:
+          type: string
+        phpVersion:
+          type: string
+        unixUser:
+          type: string
+        rootPath:
+          type: string
+        socketPath:
+          type: string
+        status:
+          type: string
+          enum: [draft, planning, plan_ready, activating, active, rolling_back, rolled_back, failed]
+        lastJobId:
+          type: integer
+          format: int64
+        failure:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SiteArtifact:
+      type: object
+      required: [kind, path, mode, content]
+      properties:
+        kind:
+          type: string
+          enum: [site-root, php-fpm-pool, nginx-site]
+        path:
+          type: string
+        mode:
+          type: integer
+        content:
+          type: string
+    SitePlan:
+      type: object
+      required: [id, kind, site, artifacts, before, enabledBefore, warnings, plannedAt, expiresAt, signature]
+      properties:
+        id: {type: string}
+        kind: {type: string, const: nexa.site.activation.v1}
+        site:
+          $ref: "#/components/schemas/SitePlanTarget"
+        artifacts:
+          type: array
+          items:
+            $ref: "#/components/schemas/SiteArtifact"
+        before:
+          type: array
+          items: {type: object}
+        enabledBefore: {type: boolean}
+        warnings:
+          type: array
+          items:
+            type: string
+        plannedAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        signature: {type: string}
+    SitePlanTarget:
+      type: object
+      required: [id, slug, primaryDomain, phpVersion, unixUser, rootPath, socketPath]
+      properties:
+        id:
+          type: string
+        slug:
+          type: string
+        primaryDomain:
+          type: string
+        phpVersion:
+          type: string
+        unixUser:
+          type: string
+        rootPath:
+          type: string
+        socketPath:
+          type: string
+        routes:
+          type: array
+          items: {$ref: "#/components/schemas/SiteRoute"}
+        tls:
+          type: object
+          properties:
+            certificatePath: {type: string}
+            privateKeyPath: {type: string}
+        tlsDomains:
+          type: array
+          items: {type: string}
+    SiteRoute:
+      type: object
+      required: [hostname, kind]
+      properties:
+        hostname: {type: string}
+        kind: {type: string, enum: [subdomain, alias, redirect]}
+        redirectTarget: {type: string}
+    CreateDomain:
+      type: object
+      additionalProperties: false
+      required: [siteId, hostname, kind]
+      properties:
+        siteId: {type: string}
+        hostname: {type: string}
+        kind: {type: string, enum: [subdomain, alias, redirect]}
+        redirectTarget: {type: string}
+    Domain:
+      type: object
+      required: [id, siteId, hostname, kind, status, resolvedAddresses, createdAt, updatedAt]
+      properties:
+        id: {type: string}
+        siteId: {type: string}
+        hostname: {type: string}
+        kind: {type: string, enum: [primary, subdomain, alias, redirect]}
+        redirectTarget: {type: string}
+        status: {type: string, enum: [planning, plan_ready, activating, active, failed]}
+        resolvedAddresses: {type: array, items: {type: string}}
+        lastJobId: {type: integer, format: int64}
+        failure: {type: string}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    CreateCertificate:
+      type: object
+      additionalProperties: false
+      required: [siteId, email]
+      properties:
+        siteId: {type: string}
+        email: {type: string, format: email}
+    Certificate:
+      type: object
+      required: [id, siteId, primaryDomain, email, status, domains, expiringSoon, createdAt, updatedAt]
+      properties:
+        id: {type: string}
+        siteId: {type: string}
+        primaryDomain: {type: string}
+        email: {type: string, format: email}
+        status: {type: string, enum: [planning, plan_ready, issuing, active, renewing, revoking, revoked, failed]}
+        domains: {type: array, items: {type: string}}
+        certificatePath: {type: string}
+        issuedAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        expiringSoon: {type: boolean}
+        lastJobId: {type: integer, format: int64}
+        failure: {type: string}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    PostgreSQLStatus:
+      type: string
+      enum: [planning, plan_ready, applying, active, online, down, backing_up, verified, restoring, failed]
+    CreatePostgreSQLInstance:
+      type: object
+      additionalProperties: false
+      required: [version, cluster]
+      properties:
+        version: {type: string, enum: ["16", "17", "18"]}
+        cluster: {type: string, pattern: "^[a-z][a-z0-9_]{1,30}$"}
+        port: {type: integer, minimum: 1024, maximum: 65535}
+    PostgreSQLInstance:
+      type: object
+      required: [id, version, cluster, port, status, owner, dataPath, socketPath, logPath, configPath, systemdUnit, managedByNexa]
+      properties:
+        id: {type: string}
+        version: {type: string, enum: ["16", "17", "18"]}
+        cluster: {type: string}
+        port: {type: integer}
+        status: {$ref: "#/components/schemas/PostgreSQLStatus"}
+        owner: {type: string}
+        dataPath: {type: string}
+        socketPath: {type: string}
+        logPath: {type: string}
+        configPath: {type: string}
+        systemdUnit: {type: string}
+        managedByNexa: {type: boolean}
+        lastJobId: {type: integer, format: int64}
+        failure: {type: string}
+    CreatePostgreSQLRole:
+      type: object
+      additionalProperties: false
+      required: [instanceId, name]
+      properties:
+        instanceId: {type: string}
+        name: {type: string, pattern: "^[a-z][a-z0-9_]{1,62}$"}
+    PostgreSQLRole:
+      type: object
+      required: [id, instanceId, name, status, credentialAvailable, credentialVersion]
+      properties:
+        id: {type: string}
+        instanceId: {type: string}
+        name: {type: string}
+        status: {$ref: "#/components/schemas/PostgreSQLStatus"}
+        credentialAvailable: {type: boolean}
+        credentialVersion: {type: integer, minimum: 0}
+        lastJobId: {type: integer, format: int64}
+        failure: {type: string}
+    CreateManagedPostgreSQLDatabase:
+      type: object
+      additionalProperties: false
+      required: [instanceId, name, ownerRoleId]
+      properties:
+        instanceId: {type: string}
+        name: {type: string, pattern: "^[a-z][a-z0-9_]{1,62}$"}
+        ownerRoleId: {type: string}
+    ManagedPostgreSQLDatabase:
+      type: object
+      required: [id, instanceId, name, ownerRoleId, status]
+      properties:
+        id: {type: string}
+        instanceId: {type: string}
+        name: {type: string}
+        ownerRoleId: {type: string}
+        status: {$ref: "#/components/schemas/PostgreSQLStatus"}
+        lastJobId: {type: integer, format: int64}
+        failure: {type: string}
+    CreatePostgreSQLGrant:
+      type: object
+      additionalProperties: false
+      required: [databaseId, roleId, access]
+      properties:
+        databaseId: {type: string}
+        roleId: {type: string}
+        access: {type: string, enum: [connect, read_only, read_write]}
+    PostgreSQLGrant:
+      type: object
+      required: [id, databaseId, roleId, access, status]
+      properties:
+        id: {type: string}
+        databaseId: {type: string}
+        roleId: {type: string}
+        access: {type: string, enum: [connect, read_only, read_write]}
+        status: {$ref: "#/components/schemas/PostgreSQLStatus"}
+        lastJobId: {type: integer, format: int64}
+        failure: {type: string}
+    PostgreSQLRestorePoint:
+      type: object
+      required: [id, databaseId, status]
+      properties:
+        id: {type: string}
+        databaseId: {type: string}
+        status: {$ref: "#/components/schemas/PostgreSQLStatus"}
+        sha256: {type: string, pattern: "^[a-f0-9]{64}$"}
+        sizeBytes: {type: integer, format: int64, minimum: 0}
+        verifiedAt: {type: string, format: date-time}
+        lastJobId: {type: integer, format: int64}
+        failure: {type: string}
+    PostgreSQLStoredPlan:
+      type: object
+      required: [id, resourceType, resourceId, operation, agentPlan, createdAt, expiresAt]
+      properties:
+        id: {type: string}
+        resourceType: {type: string, enum: [instance, role, database, grant, restore_point]}
+        resourceId: {type: string}
+        operation: {type: string, enum: [instance.provision, role.create, role.rotate, database.create, grant.apply, backup.create, backup.restore]}
+        agentPlan:
+          type: object
+          required: [id, kind, change, steps, warnings, observedFingerprint, interruption, plannedAt, expiresAt, signature]
+          properties:
+            id: {type: string}
+            kind: {type: string, const: nexa.postgresql.v1}
+            change: {type: object, additionalProperties: true}
+            steps: {type: array, items: {type: string}}
+            warnings: {type: array, items: {type: string}}
+            observedFingerprint: {type: string, pattern: "^[a-f0-9]{64}$"}
+            interruption: {type: boolean}
+            plannedAt: {type: string, format: date-time}
+            expiresAt: {type: string, format: date-time}
+            signature: {type: string}
+        createdAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+    MySQLFamilyEngine:
+      type: object
+      required: [id, kind, version, versionText, socketPath, port, status, systemdUnit]
+      properties:
+        id: {type: string, enum: [mysql, mariadb]}
+        kind: {type: string, enum: [mysql, mariadb]}
+        version: {type: string}
+        versionText: {type: string}
+        socketPath: {type: string}
+        port: {type: integer, minimum: 1, maximum: 65535}
+        status: {type: string, enum: [online]}
+        systemdUnit: {type: string}
+    CreateMySQLFamilyAccount:
+      type: object
+      additionalProperties: false
+      required: [engineId, name]
+      properties:
+        engineId: {type: string, enum: [mysql, mariadb]}
+        name: {type: string, pattern: "^[a-z][a-z0-9_]{1,62}$"}
+        host: {type: string, default: localhost}
+    CreateMySQLFamilyDatabase:
+      type: object
+      additionalProperties: false
+      required: [engineId, name, ownerAccountId]
+      properties:
+        engineId: {type: string, enum: [mysql, mariadb]}
+        name: {type: string, pattern: "^[a-z][a-z0-9_]{1,62}$"}
+        ownerAccountId: {type: string}
+    CreateMySQLFamilyGrant:
+      type: object
+      additionalProperties: false
+      required: [databaseId, accountId, access]
+      properties:
+        databaseId: {type: string}
+        accountId: {type: string}
+        access: {type: string, enum: [connect, read_only, read_write]}
+    Job:
+      type: object
+      required: [id, kind, state, progress, request, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+        state:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        actorUserId:
+          type: string
+        request:
+          type: object
+          additionalProperties: true
+        result:
+          type: object
+          additionalProperties: true
+        failure:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+    JobEvent:
+      type: object
+      required: [sequence, jobId, state, progress, message, occurredAt]
+      properties:
+        sequence:
+          type: integer
+          format: int64
+        jobId:
+          type: integer
+          format: int64
+        state:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        message:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+    SystemOverview:
+      type: object
+      required: [observedAt, podman, warnings]
+      properties:
+        observedAt:
+          type: string
+          format: date-time
+        memory:
+          $ref: "#/components/schemas/MemorySnapshot"
+        podman:
+          $ref: "#/components/schemas/PodmanStatus"
+        warnings:
+          type: array
+          items:
+            type: string
+    MemorySnapshot:
+      type: object
+      required:
+        - supported
+        - totalBytes
+        - availableBytes
+        - swapTotalBytes
+        - swapFreeBytes
+        - usedPercent
+        - profile
+      properties:
+        supported:
+          type: boolean
+        totalBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        availableBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        swapTotalBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        swapFreeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        usedPercent:
+          type: number
+          minimum: 0
+          maximum: 100
+        profile:
+          type: string
+          enum: [unsupported, compact, standard, pro]
+    PodmanStatus:
+      type: object
+      required: [available]
+      properties:
+        available:
+          type: boolean
+        version:
+          type: string
+        path:
+          type: string

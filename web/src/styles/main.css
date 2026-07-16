@@ -1,0 +1,79 @@
+@import 'tailwindcss';
+
+/*
+ * Nexa Panel design tokens.
+ *
+ * The palette is a deep-navy canvas with a teal brand accent. Semantic status
+ * colors (success/warning/danger/info) map onto Tailwind's emerald, amber,
+ * rose, and sky scales so status is never expressed with a raw hex in views.
+ */
+@theme {
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:
+    ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* Surfaces */
+  --color-canvas: #060c16;
+  --color-surface: #0b1422;
+  --color-raised: #101c2e;
+  --color-overlay: #14233a;
+
+  /* Hairlines */
+  --color-outline: color-mix(in srgb, #94aac8 12%, transparent);
+  --color-outline-strong: color-mix(in srgb, #94aac8 24%, transparent);
+
+  /* Typography */
+  --color-ink: #e9eff9;
+  --color-ink-secondary: #93a5c1;
+  --color-ink-muted: #64789b;
+
+  /* Brand accent */
+  --color-accent-50: #f0fdfa;
+  --color-accent-100: #ccfbf1;
+  --color-accent-200: #99f6e4;
+  --color-accent-300: #5eead4;
+  --color-accent-400: #2dd4bf;
+  --color-accent-500: #14b8a6;
+  --color-accent-600: #0d9488;
+  --color-accent-700: #0f766e;
+  --color-accent-800: #115e59;
+  --color-accent-900: #134e4a;
+  --color-accent-950: #042f2e;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scrollbar-color: color-mix(in srgb, #94aac8 28%, transparent) transparent;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse 60rem 30rem at 85% -10%, color-mix(in srgb, #14b8a6 9%, transparent), transparent),
+    var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent-500) 35%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent-400);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
