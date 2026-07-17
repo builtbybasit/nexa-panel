@@ -102,6 +102,9 @@ type Observation struct {
 
 type Operator interface {
 	Discover(context.Context) (*Engine, error)
+	// Sizes takes no engine identifier because a node runs at most one
+	// MySQL-family engine, which is the same reason Discover returns one.
+	Sizes(context.Context) (map[string]int64, error)
 	Plan(context.Context, Change) (Plan, error)
 	Apply(context.Context, Execution) (Observation, error)
 }

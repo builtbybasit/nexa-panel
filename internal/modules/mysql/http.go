@@ -98,7 +98,7 @@ func (m *Module) credentialHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"credential": credential})
 }
 func (m *Module) databasesHTTP(w http.ResponseWriter, r *http.Request) {
-	items, err := m.ListDatabases(r.Context(), r.URL.Query().Get("engineId"))
+	items, err := m.SyncDatabaseSizes(r.Context(), r.URL.Query().Get("engineId"))
 	if err != nil {
 		writeError(w, 500, "mysql_family_databases_unavailable", "MySQL-family databases could not be loaded.")
 		return

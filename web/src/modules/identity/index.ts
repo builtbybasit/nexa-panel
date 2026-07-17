@@ -12,5 +12,13 @@ export const identityModule: FeatureModule = {
       component: () => import('./views/UsersView.vue'),
       meta: { moduleId: 'identity' },
     },
+    {
+      // Per-account security (MFA); available to every signed-in role, so it is
+      // reached from the top-bar account menu rather than the admin sidebar.
+      path: '/account/security',
+      name: 'account-security',
+      component: () => import('./views/AccountSecurityView.vue'),
+      meta: { moduleId: 'identity' },
+    },
   ],
 }

@@ -199,9 +199,10 @@ func TestUserCRUDHandlers(t *testing.T) {
 		t.Fatalf("empty update = %d %s", empty.Code, empty.Body.String())
 	}
 
-	// New users must enter the standard login flow at MFA enrollment.
+	// A new user has no second factor, so login signs straight in; MFA can be
+	// enabled later from account security.
 	login := h.do(http.MethodPost, "/api/v1/auth/login", `{"username":"dev-anna","password":"a-strong-password"}`)
-	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), `"next":"mfa_enrollment"`) {
+	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), `"next":"authenticated"`) {
 		t.Fatalf("new user login = %d %s", login.Code, login.Body.String())
 	}
 

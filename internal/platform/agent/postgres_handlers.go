@@ -26,6 +26,18 @@ func (s *Server) postgresDiscoverHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+// Reads observed state and mutates nothing, so it needs no signed plan — the
+// bearer token that reached this handler is the whole authorization story, as
+// with postgresDiscoverHTTP.
+func (s *Server) postgresSizesHTTP(w http.ResponseWriter, r *http.Request) {
+	sizes, err := s.postgres.Sizes(r.Context(), r.URL.Query().Get("instanceId"))
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "postgresql_sizes_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sizes": sizes})
+}
+
 func (s *Server) postgresPlanHTTP(w http.ResponseWriter, r *http.Request) {
 	var change postgresoperator.Change
 	if err := decodeJSON(w, r, &change); err != nil {

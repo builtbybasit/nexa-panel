@@ -1,0 +1,22 @@
+runtimes:
+  get:
+    operationId: listRuntimes
+    tags:
+    - Runtimes
+    x-permission: runtimes.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Installed and enabled PHP-FPM 7.4 and 8.x runtimes discovered on the node.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/runtimes.yaml#/Runtime

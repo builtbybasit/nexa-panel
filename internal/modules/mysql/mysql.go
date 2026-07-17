@@ -67,7 +67,7 @@ func New(ctx context.Context, database *bun.DB, queue *jobs.Module, cipher secre
 	if database == nil || queue == nil || cipher == nil || operator == nil {
 		return nil, errors.New("databases state, jobs, secret cipher, and MySQL-family operator are required")
 	}
-	if err := persistence.Migrate(ctx, database, "mysql_databases", []string{schema}); err != nil {
+	if err := persistence.Migrate(ctx, database, "mysql_databases", []string{schema, databaseSizeSchema}); err != nil {
 		return nil, err
 	}
 	m := &Module{database: database, jobs: queue, cipher: cipher, operator: operator, now: time.Now, backupRoot: "/var/lib/nexa-panel/backups/mysql"}

@@ -19,13 +19,26 @@ import (
 )
 
 type fakePostgresOperator struct {
-	instance postgresoperator.Instance
-	failNext bool
-	secrets  []string
+	instance  postgresoperator.Instance
+	failNext  bool
+	secrets   []string
+	sizes     map[string]int64
+	sizeError error
+	sizeCalls int
 }
 
 func (f *fakePostgresOperator) Discover(context.Context) ([]postgresoperator.Instance, error) {
 	return []postgresoperator.Instance{f.instance}, nil
+}
+func (f *fakePostgresOperator) Sizes(_ context.Context, instanceID string) (map[string]int64, error) {
+	f.sizeCalls++
+	if f.sizeError != nil {
+		return nil, f.sizeError
+	}
+	if instanceID != f.instance.ID {
+		return nil, errors.New("unknown PostgreSQL instance")
+	}
+	return f.sizes, nil
 }
 func (f *fakePostgresOperator) Plan(_ context.Context, change postgresoperator.Change) (postgresoperator.Plan, error) {
 	now := time.Now().UTC()

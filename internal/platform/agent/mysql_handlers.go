@@ -27,6 +27,17 @@ func (s *Server) mysqlDiscoverHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"engine": engine})
 }
 
+// Read-only, so no signed plan is involved — the bearer token is the whole
+// authorization story, as with mysqlDiscoverHTTP.
+func (s *Server) mysqlSizesHTTP(w http.ResponseWriter, r *http.Request) {
+	sizes, err := s.mysql.Sizes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "mysql_family_sizes_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sizes": sizes})
+}
+
 func (s *Server) mysqlPlanHTTP(w http.ResponseWriter, r *http.Request) {
 	var change mysqloperator.Change
 	if err := decodeJSON(w, r, &change); err != nil {

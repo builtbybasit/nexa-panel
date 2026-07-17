@@ -1,0 +1,70 @@
+CreateCertificate:
+  type: object
+  additionalProperties: false
+  required:
+  - siteId
+  - email
+  properties:
+    siteId:
+      type: string
+    email:
+      type: string
+      format: email
+Certificate:
+  type: object
+  required:
+  - id
+  - siteId
+  - primaryDomain
+  - email
+  - status
+  - domains
+  - expiringSoon
+  - createdAt
+  - updatedAt
+  properties:
+    id:
+      type: string
+    siteId:
+      type: string
+    primaryDomain:
+      type: string
+    email:
+      type: string
+      format: email
+    status:
+      type: string
+      enum:
+      - planning
+      - plan_ready
+      - issuing
+      - active
+      - renewing
+      - revoking
+      - revoked
+      - failed
+    domains:
+      type: array
+      items:
+        type: string
+    certificatePath:
+      type: string
+    issuedAt:
+      type: string
+      format: date-time
+    expiresAt:
+      type: string
+      format: date-time
+    expiringSoon:
+      type: boolean
+    lastJobId:
+      type: integer
+      format: int64
+    failure:
+      type: string
+    createdAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time

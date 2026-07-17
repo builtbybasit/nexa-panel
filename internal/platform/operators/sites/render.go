@@ -9,14 +9,50 @@ import (
 
 	"path/filepath"
 
+	"strconv"
 	"strings"
 )
 
 var (
-	slugPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
-	domainPattern     = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
-	phpVersionPattern = regexp.MustCompile(`^(?:7\.4|8\.[0-9]{1,2})$`)
+	slugPattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
+	domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
+	// phpVersionPattern gates the shape only. PHP branches are not enumerated
+	// here: the Applications page offers whatever the node's PHP repository
+	// publishes, and a site must be able to run any branch that can be installed.
+	// The one rule is the floor below.
+	phpVersionPattern = regexp.MustCompile(`^[0-9]{1,2}\.[0-9]{1,2}$`)
 )
+
+// phpFloor is the oldest PHP branch Nexa serves.
+const phpFloor = "7.4"
+
+// phpVersionSupported accepts any well-formed branch at or above the floor, so a
+// PHP release published after this code was written is usable without an edit.
+func phpVersionSupported(version string) bool {
+	if !phpVersionPattern.MatchString(version) {
+		return false
+	}
+	return comparePHPVersions(version, phpFloor) >= 0
+}
+
+// comparePHPVersions orders dotted numeric versions field by field, so "8.10"
+// sorts above "8.9" rather than below it as strings would.
+func comparePHPVersions(a, b string) int {
+	left, right := strings.Split(a, "."), strings.Split(b, ".")
+	for index := 0; index < len(left) || index < len(right); index++ {
+		var first, second int
+		if index < len(left) {
+			first, _ = strconv.Atoi(left[index])
+		}
+		if index < len(right) {
+			second, _ = strconv.Atoi(right[index])
+		}
+		if first != second {
+			return first - second
+		}
+	}
+	return 0
+}
 
 type Site struct {
 	ID            string   `json:"id"`
@@ -127,8 +163,8 @@ func (r Renderer) Render(site Site) (Plan, error) {
 }
 
 func (r Renderer) validate(site Site) error {
-	if site.ID == "" || !slugPattern.MatchString(site.Slug) || !domainPattern.MatchString(site.PrimaryDomain) || !phpVersionPattern.MatchString(site.PHPVersion) {
-		return errors.New("site identity, slug, primary domain, and an allowed PHP 7.4 or 8.x runtime are required")
+	if site.ID == "" || !slugPattern.MatchString(site.Slug) || !domainPattern.MatchString(site.PrimaryDomain) || !phpVersionSupported(site.PHPVersion) {
+		return errors.New("site identity, slug, primary domain, and a PHP " + phpFloor + " or newer runtime are required")
 	}
 	expectedUser := "nexa_" + strings.ReplaceAll(site.Slug, "-", "_")
 	if site.UnixUser != expectedUser {
@@ -202,6 +238,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name {{.Names}};
+    add_header X-Nexa-Site {{.Site.Slug}} always;
     location ^~ /.well-known/acme-challenge/ { root /srv/nexa/acme; }
 {{if .Site.TLS}}    location / { return 301 https://{{.Site.PrimaryDomain}}$request_uri; }
 {{else}}    root {{.Site.RootPath}}/public;
@@ -231,6 +268,7 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     server_name {{.TLSNames}};
+    add_header X-Nexa-Site {{.Site.Slug}} always;
     ssl_certificate {{.Site.TLS.CertificatePath}};
     ssl_certificate_key {{.Site.TLS.PrivateKeyPath}};
     ssl_protocols TLSv1.2 TLSv1.3;

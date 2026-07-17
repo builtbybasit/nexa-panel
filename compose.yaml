@@ -3,7 +3,16 @@
 # PID 1, so it needs a privileged, cgroup-mounted setup — this is a test node,
 # not a production deployment.
 #
-#   docker compose up --build -d      # build image + start
+# /usr/bin/nexa is bind-mounted from dist/nexa-linux-amd64 (built by
+# scripts/build-linux-release.sh), not baked into the image, so after the
+# first build, iterating on the binary is just:
+#
+#   bash scripts/build-linux-release.sh amd64 && docker compose restart nexa-node
+#
+# On an arm64 host, point at the arm64 binary instead:
+#   NEXA_BIN=./dist/nexa-linux-arm64 docker compose up -d
+#
+#   docker compose up --build -d      # build image + start (first run)
 #   docker compose logs -f            # follow systemd/service logs
 #   docker compose down               # stop and remove
 #
@@ -19,10 +28,17 @@ services:
     privileged: true
     cgroup: host
     stop_signal: SIGRTMIN+3        # tell systemd to shut down cleanly
+    # This privileged systemd container does not resolve through Docker's
+    # embedded DNS (127.0.0.11), so package installs (apt-get update) fail to
+    # reach the mirrors. Point glibc at public resolvers; egress by IP works.
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     ports:
       - "8080:8080"
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ${NEXA_BIN:-./dist/nexa-linux-amd64}:/usr/bin/nexa:ro
     tmpfs:
       - /run
       - /run/lock

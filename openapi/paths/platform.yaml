@@ -1,0 +1,47 @@
+health_live:
+  get:
+    operationId: getLiveness
+    tags:
+    - Platform
+    responses:
+      '200':
+        description: The control-plane process is running.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Liveness
+modules:
+  get:
+    operationId: listModules
+    tags:
+    - Platform
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Independently registered feature modules.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/common.yaml#/ModuleDescriptor
+system_overview:
+  get:
+    operationId: getSystemOverview
+    tags:
+    - System
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Observed capacity and container-runtime capabilities.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/system.yaml#/SystemOverview

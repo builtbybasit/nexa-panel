@@ -123,6 +123,12 @@ function signOut() {
             </span>
           </div>
           <DropdownMenuSeparator />
+          <DropdownMenuItem as-child>
+            <RouterLink to="/account/security">
+              <AppIcon name="lock" :size="14" class="text-ink-muted" />
+              Account security
+            </RouterLink>
+          </DropdownMenuItem>
           <DropdownMenuItem v-if="identity.user?.role === 'admin'" as-child>
             <RouterLink to="/audit">
               <AppIcon name="shield" :size="14" class="text-ink-muted" />

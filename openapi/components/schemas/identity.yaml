@@ -1,0 +1,148 @@
+User:
+  type: object
+  required:
+  - id
+  - username
+  - role
+  properties:
+    id:
+      type: string
+    username:
+      type: string
+      minLength: 3
+      maxLength: 64
+    role:
+      type: string
+      enum:
+      - viewer
+      - operator
+      - admin
+UserResponse:
+  type: object
+  required:
+  - user
+  properties:
+    user:
+      $ref: '#/User'
+PasswordResponse:
+  type: object
+  required:
+  - user
+  - next
+  properties:
+    user:
+      $ref: '#/User'
+    next:
+      type: string
+      description: >-
+        Where the client should go next. `mfa_enrollment` offers optional
+        second-factor setup after the first-administrator bootstrap;
+        `mfa_challenge` is required only for accounts that enrolled a second
+        factor; `authenticated` means no further step is needed.
+      enum:
+      - mfa_enrollment
+      - mfa_challenge
+      - authenticated
+IdentityStatus:
+  type: object
+  required:
+  - bootstrapRequired
+  - authenticated
+  - mfaEnabled
+  - mfaChallengeRequired
+  properties:
+    bootstrapRequired:
+      type: boolean
+    authenticated:
+      type: boolean
+    mfaEnabled:
+      type: boolean
+      description: Whether the current session's account has a confirmed second factor.
+    mfaChallengeRequired:
+      type: boolean
+    user:
+      $ref: '#/User'
+TOTPCode:
+  type: string
+  pattern: ^[0-9]{6}$
+MFAEnrollment:
+  type: object
+  required:
+  - secret
+  - provisioningUri
+  properties:
+    secret:
+      type: string
+    provisioningUri:
+      type: string
+      pattern: ^otpauth://totp/
+MFAConfirmation:
+  type: object
+  required:
+  - user
+  - recoveryCodes
+  properties:
+    user:
+      $ref: '#/User'
+    recoveryCodes:
+      type: array
+      minItems: 10
+      maxItems: 10
+      items:
+        type: string
+MFADisableRequest:
+  type: object
+  additionalProperties: false
+  required:
+  - password
+  properties:
+    password:
+      type: string
+      format: password
+      minLength: 1
+      maxLength: 1024
+MFADisableResponse:
+  type: object
+  required:
+  - user
+  - mfaEnabled
+  properties:
+    user:
+      $ref: '#/User'
+    mfaEnabled:
+      type: boolean
+      enum:
+      - false
+ChangePasswordRequest:
+  type: object
+  additionalProperties: false
+  required:
+  - currentPassword
+  - newPassword
+  properties:
+    currentPassword:
+      type: string
+      format: password
+      minLength: 1
+      maxLength: 1024
+    newPassword:
+      type: string
+      format: password
+      minLength: 12
+      maxLength: 1024
+Credentials:
+  type: object
+  additionalProperties: false
+  required:
+  - username
+  - password
+  properties:
+    username:
+      type: string
+      minLength: 3
+      maxLength: 64
+    password:
+      type: string
+      format: password
+      minLength: 1
+      maxLength: 1024

@@ -1,0 +1,774 @@
+sites_id_files:
+  get:
+    operationId: listSiteFiles
+    tags:
+    - Files
+    x-permission: files.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - name: path
+      in: query
+      schema:
+        type: string
+      description: Site-relative directory; defaults to the site root.
+    responses:
+      '200':
+        description: Bounded directory listing confined to the site root.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/files.yaml#/FileListing
+      '404':
+        description: The site or path does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Files are only available while the site is active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The path is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_stat:
+  get:
+    operationId: statSiteFile
+    tags:
+    - Files
+    x-permission: files.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - name: path
+      in: query
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Metadata for one entry inside the site root.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/files.yaml#/FileEntry
+      '404':
+        description: The site or path does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Files are only available while the site is active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The path is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_content:
+  get:
+    operationId: readSiteFileContent
+    tags:
+    - Files
+    x-permission: files.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - name: path
+      in: query
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Bounded text content with the entity tag used for conditional writes.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/files.yaml#/FileReadResult
+      '404':
+        description: The site or file does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Files are only available while the site is active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The path is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+  put:
+    operationId: writeSiteFileContent
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/files.yaml#/WriteFile
+    responses:
+      '200':
+        description: The file was written; the response carries the new entity tag.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/files.yaml#/FileWriteResult
+      '404':
+        description: The site or file does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The expected entity tag no longer matches or the site is not active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The path or content is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_download:
+  get:
+    operationId: downloadSiteFile
+    tags:
+    - Files
+    x-permission: files.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - name: path
+      in: query
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: The file streamed as an attachment.
+        headers:
+          Content-Disposition:
+            schema:
+              type: string
+          Content-Length:
+            schema:
+              type: integer
+              format: int64
+              minimum: 0
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      '404':
+        description: The site or file does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Files are only available while the site is active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The path is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_mkdir:
+  post:
+    operationId: createSiteDirectory
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - path
+            properties:
+              path:
+                type: string
+    responses:
+      '200':
+        description: The directory was created and is owned by the site account.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/files.yaml#/FileEntry
+      '404':
+        description: The site or parent directory does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The target already exists or the site is not active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The path is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_move:
+  post:
+    operationId: moveSiteFile
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - from
+            - to
+            properties:
+              from:
+                type: string
+              to:
+                type: string
+              overwrite:
+                type: boolean
+                default: false
+    responses:
+      '200':
+        description: The entry was renamed inside the site root.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/files.yaml#/FileEntry
+      '404':
+        description: The site or source does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The destination already exists or the site is not active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: A path is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_copy:
+  post:
+    operationId: copySiteFile
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - from
+            - to
+            properties:
+              from:
+                type: string
+              to:
+                type: string
+    responses:
+      '200':
+        description: The file or directory tree was copied inside the site root.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/files.yaml#/FileCopyResult
+      '404':
+        description: The site or source does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The destination already exists or the site is not active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: A path is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_delete:
+  post:
+    operationId: deleteSiteFile
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - path
+            properties:
+              path:
+                type: string
+              recursive:
+                type: boolean
+                default: false
+    responses:
+      '200':
+        description: The entry was removed.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - status
+              properties:
+                status:
+                  type: string
+                  const: deleted
+      '404':
+        description: The site or path does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Files are only available while the site is active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The path is not allowed or the directory is not empty without recursive.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_uploads:
+  post:
+    operationId: beginSiteFileUpload
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - path
+            - size
+            properties:
+              path:
+                type: string
+              size:
+                type: integer
+                format: int64
+                minimum: 0
+              overwrite:
+                type: boolean
+                default: false
+    responses:
+      '200':
+        description: A chunked upload session was created.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/files.yaml#/FileUpload
+      '404':
+        description: The site or target directory does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The target already exists or the site is not active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The path or size is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_uploads_uploadId:
+  put:
+    operationId: uploadSiteFileChunk
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - $ref: ../components/parameters.yaml#/UploadID
+    - name: offset
+      in: query
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+      description: Byte offset of this chunk within the staged file.
+    requestBody:
+      required: true
+      description: One raw chunk of at most 8 MiB.
+      content:
+        application/octet-stream:
+          schema:
+            type: string
+            format: binary
+    responses:
+      '200':
+        description: The chunk was staged at the requested offset.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - status
+              properties:
+                status:
+                  type: string
+                  const: received
+      '400':
+        description: The offset query parameter must be a non-negative integer.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '404':
+        description: The site or upload session does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The offset does not match the next expected byte; the error carries the expected offset.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The chunk exceeds 8 MiB.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+  delete:
+    operationId: abortSiteFileUpload
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - $ref: ../components/parameters.yaml#/UploadID
+    responses:
+      '200':
+        description: The upload session and its staged bytes were discarded.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - status
+              properties:
+                status:
+                  type: string
+                  const: aborted
+      '404':
+        description: The site or upload session does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Files are only available while the site is active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_uploads_uploadId_commit:
+  post:
+    operationId: commitSiteFileUpload
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - $ref: ../components/parameters.yaml#/UploadID
+    responses:
+      '200':
+        description: The staged upload was moved into place and is owned by the site account.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/files.yaml#/FileEntry
+      '404':
+        description: The site or upload session does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The staged bytes are incomplete or the site is not active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The upload is not committable.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_archive:
+  post:
+    operationId: archiveSiteFiles
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - paths
+            - target
+            properties:
+              paths:
+                type: array
+                minItems: 1
+                maxItems: 100
+                items:
+                  type: string
+              target:
+                type: string
+                pattern: \.tar\.gz$
+    responses:
+      '202':
+        description: The archive job was persisted and queued.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - job
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The site does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Files are only available while the site is active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: A path is not allowed or the target is not a .tar.gz path.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_extract:
+  post:
+    operationId: extractSiteArchive
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - path
+            - targetDir
+            properties:
+              path:
+                type: string
+                pattern: \.(zip|tar\.gz|tgz)$
+              targetDir:
+                type: string
+    responses:
+      '202':
+        description: The extraction job was persisted and queued.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - job
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The site does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Files are only available while the site is active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The archive path or target directory is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_size:
+  post:
+    operationId: measureSiteDirectorySize
+    tags:
+    - Files
+    x-permission: files.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - path
+            properties:
+              path:
+                type: string
+    responses:
+      '202':
+        description: The directory size job was persisted and queued.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - job
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The site does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Files are only available while the site is active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The path is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error

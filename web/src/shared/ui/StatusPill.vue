@@ -22,6 +22,7 @@ const toneByStatus: Record<string, PillTone> = {
   succeeded: 'success',
   verified: 'success',
   available: 'success',
+  installed: 'success',
   ready: 'success',
   failed: 'danger',
   rollback_failed: 'danger',
@@ -38,6 +39,8 @@ const toneByStatus: Record<string, PillTone> = {
   running: 'info',
   activating: 'info',
   applying: 'info',
+  installing: 'info',
+  removing: 'info',
   verifying: 'info',
   rolling_back: 'info',
   created: 'info',
@@ -49,7 +52,8 @@ const descriptionByStatus: Record<string, string> = {
   online: 'Up and reachable',
   succeeded: 'Finished successfully',
   verified: 'Checked and confirmed working',
-  available: 'Ready to use',
+  available: 'Not installed yet',
+  installed: 'Installed and ready to use',
   ready: 'Ready to use',
   failed: 'The last operation did not finish — check the job for details',
   rollback_failed: 'Undoing the change also failed — needs manual attention',
@@ -66,6 +70,8 @@ const descriptionByStatus: Record<string, string> = {
   running: 'In progress right now',
   activating: 'Putting the approved plan into effect',
   applying: 'Making the changes now',
+  installing: 'Installing packages now',
+  removing: 'Removing packages now',
   verifying: 'Checking that everything works',
   rolling_back: 'Undoing changes after a failure',
   created: 'Created but not started yet',
@@ -78,7 +84,9 @@ const hint = computed(() => props.description ?? descriptionByStatus[props.statu
 const busy = computed(
   () =>
     props.pulse ??
-    ['queued', 'planning', 'running', 'activating', 'applying', 'verifying', 'rolling_back'].includes(props.status ?? ''),
+    ['queued', 'planning', 'running', 'activating', 'applying', 'installing', 'removing', 'verifying', 'rolling_back'].includes(
+      props.status ?? '',
+    ),
 )
 
 const toneClasses: Record<PillTone, string> = {

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
-import { formatBytes, formatDateTime, humanize } from '@/shared/formatters'
-import { useJobRunner, type FollowOptions } from '@/shared/composables/useJobRunner'
-import { useToasts } from '@/shared/composables/useToasts'
+import { useCollection } from '@/shared/composables/useCollection'
+import { useJobRunner, type JobMessage } from '@/shared/composables/useJobRunner'
+import { formatDateTime, formatMeasuredBytes, humanize } from '@/shared/formatters'
 import {
   AppAlert,
   AppButton,
@@ -15,46 +15,45 @@ import {
   AppInput,
   AppSelect,
   CredentialReveal,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   EmptyState,
-  FactList,
   FormField,
   JobFailureNotice,
   JobProgress,
+  ListToolbar,
   PageHeader,
   PlanReviewDialog,
-  ResourceRow,
   SkeletonRow,
   StatusPill,
+  TablePager,
   type Fact,
 } from '@/shared/ui'
 
 import {
-  applyPlan,
   createAccount,
   createBackup,
   createDatabase,
-  createGrant,
-  getPlan,
   listAccounts,
   listDatabases,
   listEngines,
-  listGrants,
-  listRestorePoints,
-  prepareRestore,
   revealCredential,
   rotateAccount,
-  type Access,
   type Account,
-  type Plan,
-  type ResourceType,
-  type RestorePoint,
+  type Database,
+  type Engine,
 } from '../api'
+import { usePlanReview, type PlanTarget } from '../composables/usePlanReview'
 
-interface SelectedResource {
-  type: ResourceType
-  id: string
-  label: string
-}
+const NAME_RULE = /^[a-z][a-z0-9_]+$/
+const NAME_HINT = 'Lowercase letters, numbers, and underscores; starts with a letter.'
+const NAME_ERROR = 'Use lowercase letters, numbers, and underscores, starting with a letter (at least 2 characters).'
+
+/** MySQL and MariaDB are separate products sharing one wire protocol; never collapse the two. */
+const ENGINE_NAMES: Record<Engine['kind'], string> = { mysql: 'MySQL', mariadb: 'MariaDB' }
 
 const route = useRoute()
 const router = useRouter()
@@ -62,1069 +61,734 @@ const router = useRouter()
 const enginesQuery = useQuery({ queryKey: ['mysql-engines'], queryFn: listEngines, retry: false })
 const accountsQuery = useQuery({ queryKey: ['mysql-accounts'], queryFn: listAccounts, retry: false })
 const databasesQuery = useQuery({ queryKey: ['mysql-databases'], queryFn: listDatabases, retry: false })
-const grantsQuery = useQuery({ queryKey: ['mysql-grants'], queryFn: listGrants, retry: false })
-const restorePointsQuery = useQuery({ queryKey: ['mysql-restore-points'], queryFn: listRestorePoints, retry: false })
 
 const engines = computed(() => enginesQuery.data.value ?? [])
+/**
+ * At most one native engine runs per host, and it is discovered rather than
+ * provisioned — there is no create endpoint. Accounts and databases are always
+ * created against this one.
+ */
 const engine = computed(() => engines.value[0])
 const accounts = computed(() => accountsQuery.data.value ?? [])
 const databases = computed(() => databasesQuery.data.value ?? [])
-const grants = computed(() => grantsQuery.data.value ?? [])
-const restorePoints = computed(() => restorePointsQuery.data.value ?? [])
 const activeAccounts = computed(() => accounts.value.filter((item) => item.status === 'active'))
-const activeDatabases = computed(() => databases.value.filter((item) => item.status === 'active'))
 
-const accessLabels: Record<Access, string> = {
-  connect: 'Connect only',
-  read_only: 'Read only',
-  read_write: 'Read and write',
+// One runner per operation so only the form or button that launched a job shows
+// busy while everything else stays usable.
+const accountRunner = useJobRunner()
+const databaseRunner = useJobRunner()
+const rotateRunner = useJobRunner()
+const backupRunner = useJobRunner()
+
+type Runner = ReturnType<typeof useJobRunner>
+
+function failureProps(runner: Runner): { message: string; jobId?: number } {
+  const props: { message: string; jobId?: number } = { message: runner.error.value }
+  if (runner.progress.value && runner.jobId.value !== undefined) props.jobId = runner.jobId.value
+  return props
 }
 
-const namePattern = /^[a-z][a-z0-9_]+$/
-const nameError = 'Use lowercase letters, digits and underscores, starting with a letter.'
-
-// Dialog state
-const createAccountOpen = ref(false)
-const createDatabaseOpen = ref(false)
-const grantOpen = ref(false)
-const rotateTarget = ref<Account>()
-const revealTarget = ref<Account>()
-const restoreTarget = ref<RestorePoint>()
-const planDialog = ref<{ resource: SelectedResource; plan: Plan }>()
-const planRefreshing = ref(false)
-const planLoadingId = ref<string>()
-/** Set when approving a restore plan; applying waits for a type-to-confirm. */
-const applyRestoreConfirmOpen = ref(false)
-
-// Form state
-const accountName = ref('')
-const accountHost = ref('localhost')
-const accountNameError = ref('')
-const databaseName = ref('')
-const databaseNameError = ref('')
-const ownerAccountId = ref('')
-const grantDatabaseId = ref('')
-const grantAccountId = ref('')
-const access = ref<Access>('read_write')
-const dialogError = ref('')
-
-const credential = ref('')
-const credentialFor = ref<{ label: string; facts: Fact[] }>()
-const revealBusy = ref(false)
-const pageError = ref('')
-
-const runner = useJobRunner()
-const toasts = useToasts()
-
-const BUSY_MESSAGE = 'Another operation is still running. Wait for it to finish, then try again.'
-
-// Per-operation busy scoping: one runner, but each control only spins for its
-// own operation while everything else just disables.
-const pendingAction = ref<string>()
-watch(runner.busy, (busy) => {
-  if (!busy) pendingAction.value = undefined
-})
-const isBusy = (key: string) => runner.busy.value && pendingAction.value === key
-
-const failedJobId = computed(() =>
-  runner.progress.value && runner.jobId.value !== undefined ? runner.jobId.value : undefined,
-)
-
-const relativeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
-
-function relativeTime(timestamp: string): string {
-  const deltaMs = new Date(timestamp).getTime() - Date.now()
-  const units = [
-    ['day', 86_400_000],
-    ['hour', 3_600_000],
-    ['minute', 60_000],
-  ] as const
-  for (const [unit, size] of units) {
-    if (Math.abs(deltaMs) >= size) return relativeFormat.format(Math.round(deltaMs / size), unit)
-  }
-  return 'just now'
+function progressProps(runner: Runner): { messages: JobMessage[]; startedAtMs?: number } {
+  const props: { messages: JobMessage[]; startedAtMs?: number } = { messages: runner.messages.value }
+  if (runner.startedAtMs.value !== undefined) props.startedAtMs = runner.startedAtMs.value
+  return props
 }
 
-function verifiedText(timestamp?: string) {
-  return timestamp ? `${formatDateTime(timestamp)} (${relativeTime(timestamp)})` : 'Not verified yet'
+async function refreshAll() {
+  await Promise.all([enginesQuery.refetch(), accountsQuery.refetch(), databasesQuery.refetch()])
 }
 
-function databaseLabel(id: string) {
-  return databases.value.find((database) => database.id === id)?.name ?? id
-}
+const plans = usePlanReview(refreshAll)
 
+/** The host is part of an account's identity: `app_usr@localhost` ≠ `app_usr@%`. */
 function accountLabel(id: string) {
   const account = accounts.value.find((item) => item.id === id)
   return account ? `${account.name}@${account.host}` : id
 }
 
-// URL selection (?selected=<id>): restore on mount, highlight, scroll into view.
-const selectedId = computed(() => (typeof route.query.selected === 'string' ? route.query.selected : undefined))
-
-function select(id: string) {
-  if (selectedId.value !== id) void router.replace({ query: { ...route.query, selected: id } })
+function engineLabel(id: string) {
+  const item = engines.value.find((entry) => entry.id === id)
+  return item ? `${ENGINE_NAMES[item.kind]} ${item.version}` : id
 }
 
-function toggleSelected(id: string) {
-  if (selectedId.value === id) {
-    const query = { ...route.query }
-    delete query.selected
-    void router.replace({ query })
-  } else {
-    select(id)
-  }
+/** Just the major, so a full semver never overflows the version badge. */
+function engineMajor(item: Engine) {
+  return item.version.split('.')[0] ?? item.version
 }
 
-let selectionRestored = false
-watch(
-  [accounts, databases, grants, restorePoints],
-  async () => {
-    if (selectionRestored) return
-    const id = selectedId.value
-    if (!id) {
-      selectionRestored = true
-      return
-    }
-    await nextTick()
-    const row = document.querySelector(`[data-resource-id="${CSS.escape(id)}"]`)
-    if (row) {
-      row.scrollIntoView({ block: 'center' })
-      selectionRestored = true
-    }
-  },
-  { immediate: true },
+function detailLink(database: Database) {
+  return `/mysql/${encodeURIComponent(database.id)}`
+}
+
+/** Sizes are measured on read with a refresh interval, so say when, not just what. */
+function sizeTitle(database: Database) {
+  return database.sizeObservedAt ? `Measured ${formatDateTime(database.sizeObservedAt)}` : undefined
+}
+
+// --- The databases table ---
+
+const collection = useCollection(() => databases.value, {
+  searchText: (item) => `${item.name} ${accountLabel(item.ownerAccountId)}`,
+  pageSize: 10,
+})
+
+// --- Create dialogs ---
+
+const showAccountDialog = ref(false)
+const showDatabaseDialog = ref(false)
+
+const accountName = ref('')
+const accountHost = ref('localhost')
+const accountAttempted = ref(false)
+
+const databaseName = ref('')
+const ownerAccountId = ref('')
+const databaseAttempted = ref(false)
+
+const accountNameError = computed(() => (accountAttempted.value && !NAME_RULE.test(accountName.value) ? NAME_ERROR : ''))
+const accountHostError = computed(() =>
+  accountAttempted.value && !accountHost.value.trim() ? 'Enter a host, or % to allow any host.' : '',
 )
 
-function failureDetail(
-  items: { id: string; failure?: string; lastJobId?: number }[],
-): { message: string; jobId?: number } | undefined {
-  const item = items.find((entry) => entry.id === selectedId.value)
-  if (!item?.failure) return undefined
-  const detail: { message: string; jobId?: number } = { message: item.failure }
-  if (item.lastJobId !== undefined) detail.jobId = item.lastJobId
-  return detail
+const databaseNameError = computed(() =>
+  databaseAttempted.value && !NAME_RULE.test(databaseName.value) ? NAME_ERROR : '',
+)
+const ownerAccountError = computed(() =>
+  databaseAttempted.value && !ownerAccountId.value ? 'Select an owner account.' : '',
+)
+
+const ownerOptions = computed(() => activeAccounts.value.filter((item) => item.engineId === engine.value?.id))
+
+function openAccountDialog() {
+  accountAttempted.value = false
+  accountRunner.progress.value = undefined
+  accountRunner.error.value = ''
+  showAccountDialog.value = true
 }
 
-const accountFailure = computed(() => failureDetail(accounts.value))
-const databaseFailure = computed(() => failureDetail(databases.value))
-const grantFailure = computed(() => failureDetail(grants.value))
-const restorePointFailure = computed(() => failureDetail(restorePoints.value))
-
-async function refreshAll() {
-  await Promise.all([
-    enginesQuery.refetch(),
-    accountsQuery.refetch(),
-    databasesQuery.refetch(),
-    grantsQuery.refetch(),
-    restorePointsQuery.refetch(),
-  ])
+function openDatabaseDialog() {
+  databaseAttempted.value = false
+  databaseRunner.progress.value = undefined
+  databaseRunner.error.value = ''
+  showDatabaseDialog.value = true
+  // Round-trip the deep-link param so the URL always mirrors the dialog.
+  if (route.query.create !== '1') void router.replace({ query: { ...route.query, create: '1' } })
 }
 
-/** Queues an operation; resolves to undefined on success or a reason the caller can show. */
-async function queue(
-  key: string,
-  action: () => Promise<{ jobId: number; resource: SelectedResource }>,
-  opts: { failureMessage: string; successToast?: string; openPlanAfter?: boolean },
-): Promise<string | undefined> {
-  if (runner.busy.value) return BUSY_MESSAGE
-  pendingAction.value = key
-  let resource: SelectedResource | undefined
-  const options: FollowOptions = {
-    onSettled: refreshAll,
-    onSuccess: async () => {
-      if (!resource) return
-      select(resource.id)
-      if (opts.openPlanAfter) await openPlan(resource)
-    },
-    failureMessage: opts.failureMessage,
-  }
-  if (opts.successToast) options.successToast = opts.successToast
-  await runner.run(async () => {
-    const result = await action()
-    resource = result.resource
-    return result.jobId
-  }, options)
-  return runner.error.value || undefined
-}
-
-// Plan review
-async function openPlan(resource: SelectedResource) {
-  planRefreshing.value = true
-  try {
-    const plan = (await getPlan(resource.type, resource.id)).plan
-    planDialog.value = { resource, plan }
-  } catch (caught) {
-    planDialog.value = undefined
-    // A toast instead of the top-of-page error: the Review buttons live far
-    // down the page and would otherwise appear to do nothing.
-    toasts.push({
-      title: 'Could not load the plan',
-      body: caught instanceof Error ? caught.message : 'The plan is not ready yet.',
-      tone: 'danger',
-    })
-  } finally {
-    planRefreshing.value = false
+/** Awaitable so follow-up navigation sees the query without ?create. */
+async function closeDatabaseDialog() {
+  showDatabaseDialog.value = false
+  if ('create' in route.query) {
+    const query = { ...route.query }
+    delete query.create
+    await router.replace({ query })
   }
 }
 
-async function reviewPlan(resource: SelectedResource) {
-  select(resource.id)
-  planLoadingId.value = resource.id
-  try {
-    await openPlan(resource)
-  } finally {
-    planLoadingId.value = undefined
-  }
-}
-
-async function regeneratePlan() {
-  const current = planDialog.value
-  if (current) await openPlan(current.resource)
-}
-
-const planFacts = computed<Fact[]>(() => {
-  const current = planDialog.value
-  if (!current) return []
-  const { resource, plan } = current
-  const facts: Fact[] = [{ label: 'Operation', value: humanize(plan.operation) }]
-  if (resource.type === 'accounts') {
-    const account = accounts.value.find((item) => item.id === resource.id)
-    if (account) facts.push({ label: 'Account', value: `${account.name}@${account.host}`, mono: true })
-  } else if (resource.type === 'databases') {
-    const database = databases.value.find((item) => item.id === resource.id)
-    if (database) {
-      facts.push(
-        { label: 'Database', value: database.name, mono: true },
-        { label: 'Owner', value: accountLabel(database.ownerAccountId), mono: true },
-      )
-    }
-  } else if (resource.type === 'grants') {
-    const grant = grants.value.find((item) => item.id === resource.id)
-    if (grant) {
-      facts.push(
-        { label: 'Database', value: databaseLabel(grant.databaseId), mono: true },
-        { label: 'Account', value: accountLabel(grant.accountId), mono: true },
-        { label: 'Access', value: accessLabels[grant.access] },
-      )
-    }
-  } else {
-    const point = restorePoints.value.find((item) => item.id === resource.id)
-    if (point) {
-      facts.push(
-        { label: 'Database', value: databaseLabel(point.databaseId), mono: true },
-        { label: 'Verified', value: verifiedText(point.verifiedAt) },
-        { label: 'Size', value: formatBytes(point.sizeBytes) },
-      )
-      if (point.sha256) facts.push({ label: 'Checksum', value: point.sha256, mono: true })
-    }
-  }
-  const activeEngine = engine.value
-  if (activeEngine) facts.push({ label: 'Engine', value: `${activeEngine.kind} ${activeEngine.version}` })
-  return facts
-})
-
-const planDialogProps = computed(() => {
-  const current = planDialog.value
-  if (!current) return { open: false, title: '' }
-  return {
-    open: true,
-    title: `Review plan · ${current.resource.label}`,
-    steps: current.plan.agentPlan.steps,
-    facts: planFacts.value,
-    warnings: current.plan.agentPlan.warnings,
-    expiresAt: current.plan.expiresAt,
-  }
-})
-
-// Applying a restore replaces data; match the PostgreSQL page and require a
-// type-to-confirm at apply time, not only when the plan was prepared.
-const planIsRestore = computed(() => {
-  const current = planDialog.value
-  if (!current) return false
-  return (
-    current.resource.type === 'restore-points' &&
-    (current.plan.operation.toLowerCase().includes('restore') || current.plan.agentPlan.interruption)
-  )
-})
-
-const restorePlanDatabaseName = computed(() => {
-  const current = planDialog.value
-  if (!current || current.resource.type !== 'restore-points') return ''
-  const point = restorePoints.value.find((item) => item.id === current.resource.id)
-  return point ? databaseLabel(point.databaseId) : ''
-})
-
-function approvePlan() {
-  if (!planDialog.value || runner.busy.value) return
-  if (planIsRestore.value) {
-    applyRestoreConfirmOpen.value = true
-    return
-  }
-  void applyCurrentPlan()
-}
-
-async function applyCurrentPlan() {
-  const current = planDialog.value
-  if (!current || runner.busy.value) return
-  applyRestoreConfirmOpen.value = false
-  pendingAction.value = 'apply'
-  await runner.run(async () => (await applyPlan(current.resource.type, current.resource.id)).id, {
-    onSettled: async () => {
-      planDialog.value = undefined
-      await refreshAll()
-    },
-    failureMessage: 'The plan could not be applied',
-    successToast: 'Plan applied',
-  })
-  if (runner.error.value) planDialog.value = undefined
-}
-
-// Create account
-function openCreateAccount() {
+function resetAccountForm() {
   accountName.value = ''
   accountHost.value = 'localhost'
-  accountNameError.value = ''
-  dialogError.value = ''
-  createAccountOpen.value = true
+  accountAttempted.value = false
 }
 
-watch(accountName, () => (accountNameError.value = ''))
+function resetDatabaseForm() {
+  databaseName.value = ''
+  ownerAccountId.value = ''
+  databaseAttempted.value = false
+}
 
-async function submitCreateAccount() {
-  if (!namePattern.test(accountName.value)) {
-    accountNameError.value = nameError
-    return
-  }
+async function submitAccount() {
+  accountAttempted.value = true
+  if (accountNameError.value || accountHostError.value) return
   const activeEngine = engine.value
   if (!activeEngine) return
-  dialogError.value = ''
-  const failure = await queue(
-    'create-account',
+  let created: PlanTarget | undefined
+  await accountRunner.run(
     async () => {
       const result = await createAccount({
         engineId: activeEngine.id,
         name: accountName.value,
         host: accountHost.value,
       })
-      return {
-        jobId: result.job.id,
-        resource: { type: 'accounts', id: result.account.id, label: `${result.account.name}@${result.account.host}` },
-      }
+      created = { type: 'accounts', id: result.account.id, label: `${result.account.name}@${result.account.host}` }
+      return result.job.id
     },
-    { failureMessage: 'Account creation failed', openPlanAfter: true },
+    {
+      onSettled: refreshAll,
+      onSuccess: async () => {
+        showAccountDialog.value = false
+        resetAccountForm()
+        if (created) await plans.open(created)
+      },
+      failureMessage: 'Creating the account failed',
+    },
   )
-  if (failure) dialogError.value = failure
-  else createAccountOpen.value = false
 }
 
-// Create database (?create=1 deep link)
-function openCreateDatabase() {
-  databaseName.value = ''
-  databaseNameError.value = ''
-  ownerAccountId.value = ''
-  dialogError.value = ''
-  createDatabaseOpen.value = true
-  if (route.query.create !== '1') void router.replace({ query: { ...route.query, create: '1' } })
-}
-
-function closeCreateDatabase() {
-  createDatabaseOpen.value = false
-  if ('create' in route.query) {
-    const query = { ...route.query }
-    delete query.create
-    void router.replace({ query })
-  }
-}
-
-watch(databaseName, () => (databaseNameError.value = ''))
-
-async function submitCreateDatabase() {
-  if (!namePattern.test(databaseName.value)) {
-    databaseNameError.value = nameError
-    return
-  }
+async function submitDatabase() {
+  databaseAttempted.value = true
+  if (databaseNameError.value || ownerAccountError.value) return
   const activeEngine = engine.value
   if (!activeEngine) return
-  dialogError.value = ''
-  const failure = await queue(
-    'create-database',
+  let created: PlanTarget | undefined
+  await databaseRunner.run(
     async () => {
       const result = await createDatabase({
         engineId: activeEngine.id,
         name: databaseName.value,
         ownerAccountId: ownerAccountId.value,
       })
-      return {
-        jobId: result.job.id,
-        resource: { type: 'databases', id: result.database.id, label: result.database.name },
-      }
+      created = { type: 'databases', id: result.database.id, label: result.database.name }
+      return result.job.id
     },
-    { failureMessage: 'Database creation failed', openPlanAfter: true },
-  )
-  if (failure) dialogError.value = failure
-  else closeCreateDatabase()
-}
-
-// Grant access
-function openGrant() {
-  grantDatabaseId.value = ''
-  grantAccountId.value = ''
-  access.value = 'read_write'
-  dialogError.value = ''
-  grantOpen.value = true
-}
-
-async function submitGrant() {
-  dialogError.value = ''
-  const failure = await queue(
-    'create-grant',
-    async () => {
-      const result = await createGrant({
-        databaseId: grantDatabaseId.value,
-        accountId: grantAccountId.value,
-        access: access.value,
-      })
-      return {
-        jobId: result.job.id,
-        resource: {
-          type: 'grants',
-          id: result.grant.id,
-          label: `${databaseLabel(grantDatabaseId.value)} → ${accountLabel(grantAccountId.value)}`,
-        },
-      }
+    {
+      onSettled: refreshAll,
+      onSuccess: async () => {
+        await closeDatabaseDialog()
+        resetDatabaseForm()
+        if (created) await plans.open(created)
+      },
+      failureMessage: 'Creating the database failed',
     },
-    { failureMessage: 'Access grant failed', openPlanAfter: true },
-  )
-  if (failure) dialogError.value = failure
-  else grantOpen.value = false
-}
-
-// Backup
-function backup(databaseId: string, name: string) {
-  void queue(
-    `backup:${databaseId}`,
-    async () => {
-      const result = await createBackup(databaseId)
-      return { jobId: result.job.id, resource: { type: 'restore-points', id: result.restorePoint.id, label: name } }
-    },
-    { failureMessage: 'Backup failed', successToast: 'Backup created' },
   )
 }
 
-// Restore (type-to-confirm)
-const restoreFacts = computed<Fact[]>(() => {
-  const point = restoreTarget.value
-  if (!point) return []
-  return [
-    { label: 'Database', value: databaseLabel(point.databaseId), mono: true },
-    { label: 'Verified', value: verifiedText(point.verifiedAt) },
-    { label: 'Size', value: formatBytes(point.sizeBytes) },
-  ]
+// --- Plan facts ---
+
+const planFacts = computed<Fact[]>(() => {
+  const resource = plans.target.value
+  const plan = plans.plan.value
+  if (!resource || !plan) return []
+  const facts: Fact[] = [{ label: 'Operation', value: humanize(plan.operation) }]
+  switch (resource.type) {
+    case 'accounts': {
+      const account = accounts.value.find((item) => item.id === resource.id)
+      if (!account) return []
+      facts.push(
+        { label: 'Account', value: `${account.name}@${account.host}`, mono: true },
+        { label: 'Credential version', value: `v${account.credentialVersion}` },
+      )
+      break
+    }
+    case 'databases': {
+      const database = databases.value.find((item) => item.id === resource.id)
+      if (!database) return []
+      facts.push(
+        { label: 'Database', value: database.name, mono: true },
+        { label: 'Owner account', value: accountLabel(database.ownerAccountId), mono: true },
+      )
+      break
+    }
+    // Grants and restore points are only reviewed from the per-database page.
+    default:
+      return []
+  }
+  if (engine.value) facts.push({ label: 'Engine', value: engineLabel(engine.value.id) })
+  return facts
 })
 
-function confirmRestore() {
-  const point = restoreTarget.value
-  if (!point) return
-  restoreTarget.value = undefined
-  void queue(
-    `restore:${point.id}`,
-    async () => {
-      const result = await prepareRestore(point.id)
-      return {
-        jobId: result.job.id,
-        resource: {
-          type: 'restore-points',
-          id: result.restorePoint.id,
-          label: `Restore ${databaseLabel(point.databaseId)}`,
-        },
-      }
-    },
-    { failureMessage: 'Restore preparation failed', openPlanAfter: true },
-  )
-}
+// --- Row actions ---
 
-// Rotate (confirm first — the old password stops working once the plan applies)
+const rotateTarget = ref<Account>()
+const rotatePendingId = ref<string>()
+const backupPendingId = ref<string>()
+
+// Clear each pending row marker once its runner settles so a stale id can never
+// light up a row when the runner becomes busy again later.
+watch(rotateRunner.busy, (busy) => {
+  if (!busy) rotatePendingId.value = undefined
+})
+watch(backupRunner.busy, (busy) => {
+  if (!busy) backupPendingId.value = undefined
+})
+
 function confirmRotate() {
   const account = rotateTarget.value
   if (!account) return
   rotateTarget.value = undefined
-  credential.value = ''
-  credentialFor.value = undefined
-  void queue(
-    `rotate:${account.id}`,
-    async () => {
-      const result = await rotateAccount(account.id)
-      return {
-        jobId: result.job.id,
-        resource: { type: 'accounts', id: account.id, label: `${account.name}@${account.host}` },
-      }
-    },
-    { failureMessage: 'Password rotation failed', openPlanAfter: true },
-  )
+  rotatePendingId.value = account.id
+  clearCredential()
+  void rotateRunner.run(async () => (await rotateAccount(account.id)).job.id, {
+    onSettled: refreshAll,
+    onSuccess: () =>
+      plans.open({ type: 'accounts', id: account.id, label: `Rotate ${account.name}@${account.host}` }),
+    failureMessage: 'Rotating the credential failed',
+  })
 }
 
-// Reveal (confirm first — the credential is shown exactly once)
-function credentialFacts(account: Account): Fact[] {
-  const facts: Fact[] = [
-    { label: 'Account', value: account.name, mono: true },
-    { label: 'Host', value: account.host, mono: true },
-  ]
-  const activeEngine = engine.value
-  if (activeEngine) {
-    facts.push(
-      { label: 'Engine', value: `${activeEngine.kind} ${activeEngine.version}` },
-      { label: 'Port', value: String(activeEngine.port) },
-    )
-  }
-  return facts
+function backupDatabase(database: Database) {
+  backupPendingId.value = database.id
+  void backupRunner.run(async () => (await createBackup(database.id)).job.id, {
+    onSettled: refreshAll,
+    successToast: `Backed up ${database.name}`,
+    failureMessage: 'The backup failed',
+  })
+}
+
+// --- One-time credential reveal ---
+
+const revealTarget = ref<Account>()
+const revealBusy = ref(false)
+const revealError = ref('')
+const credential = ref('')
+const revealedAccount = ref<Account>()
+const credentialCardEl = ref<HTMLElement>()
+
+function askReveal(account: Account) {
+  revealError.value = ''
+  revealTarget.value = account
+}
+
+function clearCredential() {
+  credential.value = ''
+  revealedAccount.value = undefined
 }
 
 async function confirmReveal() {
   const account = revealTarget.value
   if (!account) return
   revealBusy.value = true
-  pageError.value = ''
+  revealError.value = ''
   try {
     credential.value = await revealCredential(account.id)
-    credentialFor.value = { label: `${account.name}@${account.host}`, facts: credentialFacts(account) }
-    select(account.id)
+    revealedAccount.value = account
+    revealTarget.value = undefined
     await accountsQuery.refetch()
+    credentialCardEl.value?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   } catch (caught) {
-    pageError.value = caught instanceof Error ? caught.message : 'The password could not be revealed.'
+    revealError.value = caught instanceof Error ? caught.message : 'The credential could not be revealed.'
   } finally {
     revealBusy.value = false
-    revealTarget.value = undefined
   }
 }
 
-function clearCredential() {
-  credential.value = ''
-  credentialFor.value = undefined
-}
+const revealFacts = computed<Fact[]>(() => {
+  const account = revealedAccount.value
+  if (!account) return []
+  const facts: Fact[] = [{ label: 'Host', value: account.host, mono: true }]
+  const item = engines.value.find((entry) => entry.id === account.engineId)
+  if (item) {
+    facts.push({ label: 'Engine', value: engineLabel(item.id) })
+    facts.push({ label: 'Port', value: String(item.port), mono: true })
+    facts.push({ label: 'Socket', value: item.socketPath, mono: true })
+  }
+  const owned = databases.value.filter((entry) => entry.ownerAccountId === account.id)
+  if (owned.length) {
+    facts.push({
+      label: owned.length === 1 ? 'Owns database' : 'Owns databases',
+      value: owned.map((database) => database.name).join(', '),
+    })
+  }
+  return facts
+})
 
-onMounted(() => {
-  if (route.query.create === '1') openCreateDatabase()
+watch(
+  () => route.query.create,
+  (value) => {
+    if (value === '1') openDatabaseDialog()
+  },
+  { immediate: true },
+)
+
+watch(engine, () => {
+  if (ownerAccountId.value && !ownerOptions.value.some((item) => item.id === ownerAccountId.value)) {
+    ownerAccountId.value = ''
+  }
 })
 </script>
 
 <template>
   <section class="space-y-6">
     <PageHeader
-      eyebrow="One native engine"
+      eyebrow="Managed data layer"
       title="MySQL & MariaDB"
-      description="Nexa manages the one active MySQL or MariaDB server on this host. Every change is planned first and only happens after you approve it."
+      description="Nexa manages the one native MySQL or MariaDB server on this host. Every change is planned first and runs only after you approve it. Passwords are shown exactly once after creation or rotation."
     >
-      <StatusPill
-        v-if="engine"
-        tone="success"
-        :label="`${engine.kind} ${engine.version}`"
-        description="Discovered through its local Unix socket"
-        :pulse="false"
-      />
+      <AppButton variant="primary" icon="plus" :disabled="!engine" @click="openDatabaseDialog">New database</AppButton>
     </PageHeader>
 
-    <AppAlert v-if="enginesQuery.isError.value" tone="danger">
-      <p>The MySQL and MariaDB engines could not be loaded.</p>
-      <AppButton size="sm" class="mt-2" @click="enginesQuery.refetch()">Retry</AppButton>
-    </AppAlert>
-    <AppAlert v-if="enginesQuery.isSuccess.value && !engine" tone="warning">
-      No active native MySQL or MariaDB server was discovered through its local Unix socket.
-    </AppAlert>
-    <JobFailureNotice
-      v-if="runner.error.value"
-      :message="runner.error.value"
-      v-bind="failedJobId !== undefined ? { jobId: failedJobId } : {}"
-    />
-    <AppAlert v-if="pageError" tone="danger">{{ pageError }}</AppAlert>
+    <JobFailureNotice v-if="plans.applyRunner.error.value" v-bind="failureProps(plans.applyRunner)" />
     <JobProgress
-      v-if="runner.progress.value"
-      :event="runner.progress.value"
-      :messages="runner.messages.value"
-      v-bind="runner.startedAtMs.value !== undefined ? { startedAtMs: runner.startedAtMs.value } : {}"
-    />
-    <CredentialReveal
-      v-if="credential && credentialFor"
-      :credential="credential"
-      :account-label="credentialFor.label"
-      :facts="credentialFor.facts"
-      @clear="clearCredential"
+      v-if="plans.applyRunner.progress.value"
+      :event="plans.applyRunner.progress.value"
+      v-bind="progressProps(plans.applyRunner)"
     />
 
-    <!-- Accounts and databases -->
-    <div class="grid gap-4 lg:grid-cols-2">
-      <AppCard eyebrow="Login identities" title="Accounts" flush>
-        <template #actions>
-          <AppButton size="sm" icon="plus" :disabled="!engine" @click="openCreateAccount">Create account</AppButton>
-        </template>
-        <div class="px-3 pb-3 sm:px-4 sm:pb-4">
-          <div v-if="accountsQuery.isPending.value" class="space-y-1">
-            <SkeletonRow v-for="n in 3" :key="n" />
-          </div>
-          <AppAlert v-else-if="accountsQuery.isError.value" tone="danger" class="m-2">
-            <p>Accounts could not be loaded.</p>
-            <AppButton size="sm" class="mt-2" @click="accountsQuery.refetch()">Retry</AppButton>
-          </AppAlert>
-          <EmptyState
-            v-else-if="accounts.length === 0"
-            icon="key"
-            title="No accounts yet"
-            description="Accounts are the logins apps use to connect. Create one, then give it access to a database."
-            class="m-2"
-          >
-            <template #action>
-              <AppButton size="sm" icon="plus" :disabled="!engine" @click="openCreateAccount">Create account</AppButton>
-            </template>
-          </EmptyState>
-          <div v-else class="space-y-1">
-            <ResourceRow
-              v-for="item in accounts"
-              :key="item.id"
-              :data-resource-id="item.id"
-              :title="`${item.name}@${item.host}`"
-              :subtitle="`Password v${item.credentialVersion}`"
-              icon="key"
-              clickable
-              :selected="selectedId === item.id"
-              @select="toggleSelected(item.id)"
-            >
-              <template #actions>
-                <AppButton
-                  v-if="item.status === 'plan_ready'"
-                  size="sm"
-                  :loading="planLoadingId === item.id"
-                  @click="reviewPlan({ type: 'accounts', id: item.id, label: `${item.name}@${item.host}` })"
-                >
-                  Review
-                </AppButton>
-                <AppButton
-                  v-if="item.credentialAvailable"
-                  size="sm"
-                  icon="eye"
-                  :disabled="revealBusy"
-                  @click="revealTarget = item"
-                >
-                  Reveal once
-                </AppButton>
-                <AppButton
-                  v-if="item.status === 'active'"
-                  size="sm"
-                  icon="refresh-cw"
-                  :loading="isBusy(`rotate:${item.id}`)"
-                  :disabled="runner.busy.value"
-                  @click="rotateTarget = item"
-                >
-                  Rotate
-                </AppButton>
-              </template>
-              <template #status>
-                <StatusPill :status="item.status" />
-              </template>
-            </ResourceRow>
-            <JobFailureNotice v-if="accountFailure" class="mt-2" v-bind="accountFailure" />
-          </div>
-        </div>
-      </AppCard>
-
-      <AppCard eyebrow="Owned resources" title="Databases" flush>
-        <template #actions>
-          <AppButton size="sm" icon="plus" :disabled="!engine" @click="openCreateDatabase">Create database</AppButton>
-        </template>
-        <div class="px-3 pb-3 sm:px-4 sm:pb-4">
-          <div v-if="databasesQuery.isPending.value" class="space-y-1">
-            <SkeletonRow v-for="n in 3" :key="n" />
-          </div>
-          <AppAlert v-else-if="databasesQuery.isError.value" tone="danger" class="m-2">
-            <p>Databases could not be loaded.</p>
-            <AppButton size="sm" class="mt-2" @click="databasesQuery.refetch()">Retry</AppButton>
-          </AppAlert>
-          <EmptyState
-            v-else-if="databases.length === 0"
-            icon="database"
-            title="No databases yet"
-            description="Each database is owned by one account. Create an account first, then create the database it owns."
-            class="m-2"
-          >
-            <template #action>
-              <AppButton size="sm" icon="plus" :disabled="!engine" @click="openCreateDatabase">
-                Create database
-              </AppButton>
-            </template>
-          </EmptyState>
-          <div v-else class="space-y-1">
-            <ResourceRow
-              v-for="item in databases"
-              :key="item.id"
-              :data-resource-id="item.id"
-              :title="item.name"
-              :subtitle="`Owned by ${accountLabel(item.ownerAccountId)}`"
-              icon="database"
-              clickable
-              :selected="selectedId === item.id"
-              @select="toggleSelected(item.id)"
-            >
-              <template #actions>
-                <AppButton
-                  v-if="item.status === 'plan_ready'"
-                  size="sm"
-                  :loading="planLoadingId === item.id"
-                  @click="reviewPlan({ type: 'databases', id: item.id, label: item.name })"
-                >
-                  Review
-                </AppButton>
-                <AppButton
-                  v-if="item.status === 'active'"
-                  size="sm"
-                  icon="archive"
-                  :loading="isBusy(`backup:${item.id}`)"
-                  :disabled="runner.busy.value"
-                  @click="backup(item.id, item.name)"
-                >
-                  Back up
-                </AppButton>
-              </template>
-              <template #status>
-                <StatusPill :status="item.status" />
-              </template>
-            </ResourceRow>
-            <JobFailureNotice v-if="databaseFailure" class="mt-2" v-bind="databaseFailure" />
-          </div>
-        </div>
-      </AppCard>
+    <div v-if="credential" ref="credentialCardEl" class="rounded-2xl">
+      <CredentialReveal
+        :credential="credential"
+        :account-label="revealedAccount ? `${revealedAccount.name}@${revealedAccount.host}` : ''"
+        :facts="revealFacts"
+        @clear="clearCredential"
+      />
     </div>
 
-    <!-- Grants and restore points -->
-    <div class="grid gap-4 lg:grid-cols-2">
-      <AppCard eyebrow="Scoped permissions" title="Access grants" flush>
-        <template #actions>
-          <AppButton size="sm" icon="plus" @click="openGrant">Grant access</AppButton>
-        </template>
-        <div class="px-3 pb-3 sm:px-4 sm:pb-4">
-          <div v-if="grantsQuery.isPending.value" class="space-y-1">
-            <SkeletonRow v-for="n in 3" :key="n" />
-          </div>
-          <AppAlert v-else-if="grantsQuery.isError.value" tone="danger" class="m-2">
-            <p>Access grants could not be loaded.</p>
-            <AppButton size="sm" class="mt-2" @click="grantsQuery.refetch()">Retry</AppButton>
-          </AppAlert>
-          <EmptyState
-            v-else-if="grants.length === 0"
-            icon="shield"
-            title="No access grants yet"
-            description="Grants let an account read or write a specific database, beyond the one it owns."
-            class="m-2"
-          >
-            <template #action>
-              <AppButton size="sm" icon="plus" @click="openGrant">Grant access</AppButton>
-            </template>
-          </EmptyState>
-          <div v-else class="space-y-1">
-            <ResourceRow
-              v-for="item in grants"
-              :key="item.id"
-              :data-resource-id="item.id"
-              :title="`${databaseLabel(item.databaseId)} → ${accountLabel(item.accountId)}`"
-              :subtitle="accessLabels[item.access]"
-              icon="shield"
-              clickable
-              :selected="selectedId === item.id"
-              @select="toggleSelected(item.id)"
-            >
-              <template #actions>
-                <AppButton
-                  v-if="item.status === 'plan_ready'"
-                  size="sm"
-                  :loading="planLoadingId === item.id"
-                  @click="
-                    reviewPlan({
-                      type: 'grants',
-                      id: item.id,
-                      label: `${databaseLabel(item.databaseId)} → ${accountLabel(item.accountId)}`,
-                    })
-                  "
-                >
-                  Review
-                </AppButton>
-              </template>
-              <template #status>
-                <StatusPill :status="item.status" />
-              </template>
-            </ResourceRow>
-            <JobFailureNotice v-if="grantFailure" class="mt-2" v-bind="grantFailure" />
-          </div>
-        </div>
-      </AppCard>
-
-      <AppCard eyebrow="Recovery" title="Restore points" flush>
-        <div class="px-3 pb-3 sm:px-4 sm:pb-4">
-          <div v-if="restorePointsQuery.isPending.value" class="space-y-1">
-            <SkeletonRow v-for="n in 3" :key="n" />
-          </div>
-          <AppAlert v-else-if="restorePointsQuery.isError.value" tone="danger" class="m-2">
-            <p>Restore points could not be loaded.</p>
-            <AppButton size="sm" class="mt-2" @click="restorePointsQuery.refetch()">Retry</AppButton>
-          </AppAlert>
-          <EmptyState
-            v-else-if="restorePoints.length === 0"
-            icon="rotate-ccw"
-            title="No restore points yet"
-            description="Back up an active database to create a verified restore point you can roll back to later."
-            class="m-2"
-          />
-          <div v-else class="space-y-1">
-            <ResourceRow
-              v-for="point in restorePoints"
-              :key="point.id"
-              :data-resource-id="point.id"
-              :title="databaseLabel(point.databaseId)"
-              :subtitle="
-                point.verifiedAt
-                  ? `Verified ${formatDateTime(point.verifiedAt)} · ${relativeTime(point.verifiedAt)} · ${formatBytes(point.sizeBytes)}`
-                  : `Not verified yet · ${formatBytes(point.sizeBytes)}`
-              "
-              icon="rotate-ccw"
-              clickable
-              :selected="selectedId === point.id"
-              @select="toggleSelected(point.id)"
-            >
-              <template #actions>
-                <AppButton
-                  v-if="point.status === 'plan_ready'"
-                  size="sm"
-                  :loading="planLoadingId === point.id"
-                  @click="
-                    reviewPlan({
-                      type: 'restore-points',
-                      id: point.id,
-                      label: `Restore ${databaseLabel(point.databaseId)}`,
-                    })
-                  "
-                >
-                  Review
-                </AppButton>
-                <AppButton
-                  v-if="point.status === 'verified'"
-                  size="sm"
-                  variant="danger"
-                  :loading="isBusy(`restore:${point.id}`)"
-                  :disabled="runner.busy.value"
-                  @click="restoreTarget = point"
-                >
-                  Restore
-                </AppButton>
-              </template>
-              <template #status>
-                <StatusPill :status="point.status" />
-              </template>
-            </ResourceRow>
-            <JobFailureNotice v-if="restorePointFailure" class="mt-2" v-bind="restorePointFailure" />
-          </div>
-        </div>
-      </AppCard>
+    <!-- The engine: a read-only summary strip. It is discovered through its
+         local Unix socket rather than provisioned, so there is nothing to
+         create here and the databases table below is what this page is for. -->
+    <div v-if="enginesQuery.isPending.value" class="space-y-1">
+      <SkeletonRow v-for="index in 2" :key="index" />
     </div>
-
-    <!-- Create account dialog -->
-    <AppDialog :open="createAccountOpen" title="Create account" @close="createAccountOpen = false">
-      <form class="space-y-4" @submit.prevent="submitCreateAccount">
-        <p class="text-[13px] leading-relaxed text-ink-secondary">
-          You'll review a plan before the account is created.
-        </p>
-        <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
-        <FormField
-          label="Name"
-          :error="accountNameError"
-          hint="Lowercase letters, digits and underscores, starting with a letter."
+    <AppAlert v-else-if="enginesQuery.isError.value" tone="danger">
+      <div class="flex flex-wrap items-center gap-3">
+        <span class="min-w-0 flex-1">The MySQL and MariaDB engines could not be loaded.</span>
+        <AppButton size="sm" @click="enginesQuery.refetch()">Retry</AppButton>
+      </div>
+    </AppAlert>
+    <EmptyState
+      v-else-if="!engines.length"
+      icon="server"
+      title="No engine discovered"
+      description="No active native MySQL or MariaDB server was discovered through its local Unix socket. Install one on this host and it appears here — Nexa does not provision it."
+    />
+    <div v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div
+        v-for="item in engines"
+        :key="item.id"
+        class="flex items-center gap-3 rounded-xl border border-outline bg-surface/80 px-3.5 py-3"
+      >
+        <span
+          class="grid size-9 shrink-0 place-items-center rounded-lg border border-outline bg-white/[0.03] text-[13px] font-bold text-accent-300"
         >
-          <AppInput
-            v-model="accountName"
-            :invalid="!!accountNameError"
-            required
-            autocomplete="off"
-            spellcheck="false"
+          {{ engineMajor(item) }}
+        </span>
+        <span class="min-w-0 flex-1">
+          <strong class="block truncate text-[13px] font-semibold text-ink">{{ engineLabel(item.id) }}</strong>
+          <small class="block truncate font-mono text-[11px] text-ink-muted" :title="item.socketPath">
+            Port {{ item.port }} · {{ item.socketPath }}
+          </small>
+        </span>
+        <StatusPill :status="item.status" />
+      </div>
+    </div>
+
+    <!-- Databases: the hero. -->
+    <AppCard flush eyebrow="Owned resources" title="Databases">
+      <template #actions>
+        <AppButton size="sm" icon="plus" :disabled="!engine" @click="openDatabaseDialog">New database</AppButton>
+      </template>
+      <div class="space-y-3 px-3 pb-3 sm:px-4 sm:pb-4">
+        <div v-if="backupRunner.error.value || backupRunner.progress.value" class="space-y-2">
+          <JobFailureNotice v-if="backupRunner.error.value" v-bind="failureProps(backupRunner)" />
+          <JobProgress
+            v-if="backupRunner.progress.value"
+            :event="backupRunner.progress.value"
+            v-bind="progressProps(backupRunner)"
           />
+        </div>
+        <div v-if="databasesQuery.isPending.value" class="space-y-1">
+          <SkeletonRow v-for="index in 3" :key="index" />
+        </div>
+        <AppAlert v-else-if="databasesQuery.isError.value" tone="danger">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="min-w-0 flex-1">Databases could not be loaded.</span>
+            <AppButton size="sm" @click="databasesQuery.refetch()">Retry</AppButton>
+          </div>
+        </AppAlert>
+        <EmptyState
+          v-else-if="!databases.length"
+          icon="database"
+          title="No databases yet"
+          description="Each database is owned by one account. Create an account first, then create the database it owns."
+        >
+          <template #action>
+            <AppButton icon="plus" :disabled="!engine" @click="openDatabaseDialog">New database</AppButton>
+          </template>
+        </EmptyState>
+        <template v-else>
+          <ListToolbar
+            v-model:search="collection.search.value"
+            :count="collection.matching.value"
+            count-label="databases"
+            placeholder="Search by name or owner"
+          />
+          <EmptyState
+            v-if="!collection.items.value.length"
+            icon="search"
+            title="No matching databases"
+            description="No databases match your search. Clear it to see every database."
+          />
+          <template v-else>
+            <div class="overflow-x-auto">
+              <table class="w-full border-collapse text-left">
+                <thead>
+                  <tr class="border-b border-outline">
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Name</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Owner</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Size</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Created</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Status</th>
+                    <th class="px-3 py-2.5"><span class="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-outline">
+                  <tr v-for="item in collection.items.value" :key="item.id">
+                    <td class="max-w-[14rem] px-3 py-2.5">
+                      <RouterLink
+                        :to="detailLink(item)"
+                        class="block truncate font-mono text-[13px] font-semibold text-ink transition-colors hover:text-accent-300"
+                        :title="item.name"
+                      >
+                        {{ item.name }}
+                      </RouterLink>
+                    </td>
+                    <td class="px-3 py-2.5 font-mono text-xs whitespace-nowrap text-ink-secondary">
+                      {{ accountLabel(item.ownerAccountId) }}
+                    </td>
+                    <td
+                      class="px-3 py-2.5 text-[13px] whitespace-nowrap text-ink-secondary tabular-nums"
+                      :class="item.sizeObservedAt ? 'cursor-help' : ''"
+                      :title="sizeTitle(item)"
+                    >
+                      {{ formatMeasuredBytes(item.sizeBytes) }}
+                    </td>
+                    <td class="px-3 py-2.5 text-[13px] whitespace-nowrap text-ink-secondary">
+                      {{ formatDateTime(item.createdAt) }}
+                    </td>
+                    <td class="px-3 py-2.5"><StatusPill :status="item.status" /></td>
+                    <td class="px-3 py-2.5 text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger as-child>
+                          <AppButton
+                            size="sm"
+                            variant="ghost"
+                            icon="more-horizontal"
+                            :aria-label="`Actions for ${item.name}`"
+                          />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            v-if="item.status === 'plan_ready'"
+                            @select="plans.open({ type: 'databases', id: item.id, label: item.name })"
+                          >
+                            Review plan…
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            v-if="item.status === 'active'"
+                            :disabled="backupRunner.busy.value"
+                            @select="backupDatabase(item)"
+                          >
+                            Back up now
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator v-if="item.status === 'plan_ready' || item.status === 'active'" />
+                          <DropdownMenuItem as-child>
+                            <RouterLink :to="detailLink(item)">Access and backups</RouterLink>
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <TablePager
+              v-model:page="collection.page.value"
+              v-model:page-size="collection.pageSize.value"
+              :page-count="collection.pageCount.value"
+              :total="collection.matching.value"
+              :range-start="collection.rangeStart.value"
+              :range-end="collection.rangeEnd.value"
+              label="databases"
+            />
+          </template>
+        </template>
+      </div>
+    </AppCard>
+
+    <!-- Accounts stay on this page rather than moving to the per-database
+         drill-down: a database cannot be created without an existing owner
+         account, so accounts reachable only from a database would deadlock the
+         very first one. -->
+    <AppCard flush eyebrow="Login identities" title="Accounts">
+      <template #actions>
+        <AppButton size="sm" icon="plus" :disabled="!engine" @click="openAccountDialog">Create account</AppButton>
+      </template>
+      <div class="space-y-3 px-3 pb-3 sm:px-4 sm:pb-4">
+        <div v-if="rotateRunner.error.value || rotateRunner.progress.value" class="space-y-2">
+          <JobFailureNotice v-if="rotateRunner.error.value" v-bind="failureProps(rotateRunner)" />
+          <JobProgress
+            v-if="rotateRunner.progress.value"
+            :event="rotateRunner.progress.value"
+            v-bind="progressProps(rotateRunner)"
+          />
+        </div>
+        <div v-if="accountsQuery.isPending.value" class="space-y-1">
+          <SkeletonRow v-for="index in 2" :key="index" />
+        </div>
+        <AppAlert v-else-if="accountsQuery.isError.value" tone="danger">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="min-w-0 flex-1">Accounts could not be loaded.</span>
+            <AppButton size="sm" @click="accountsQuery.refetch()">Retry</AppButton>
+          </div>
+        </AppAlert>
+        <EmptyState
+          v-else-if="!accounts.length"
+          icon="key"
+          title="No accounts yet"
+          description="Accounts are the logins apps use to connect. Create one, then create the database it owns."
+        >
+          <template #action>
+            <AppButton icon="plus" :disabled="!engine" @click="openAccountDialog">Create account</AppButton>
+          </template>
+        </EmptyState>
+        <div v-else class="overflow-x-auto">
+          <table class="w-full border-collapse text-left">
+            <thead>
+              <tr class="border-b border-outline">
+                <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Account</th>
+                <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Credential</th>
+                <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Created</th>
+                <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Status</th>
+                <th class="px-3 py-2.5"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-outline">
+              <tr v-for="account in accounts" :key="account.id">
+                <td class="px-3 py-2.5 font-mono text-[13px] font-medium whitespace-nowrap text-ink">
+                  {{ account.name }}@{{ account.host }}
+                </td>
+                <td class="px-3 py-2.5 text-[13px] whitespace-nowrap text-ink-secondary tabular-nums">
+                  v{{ account.credentialVersion }}
+                </td>
+                <td class="px-3 py-2.5 text-[13px] whitespace-nowrap text-ink-secondary">
+                  {{ formatDateTime(account.createdAt) }}
+                </td>
+                <td class="px-3 py-2.5"><StatusPill :status="account.status" /></td>
+                <td class="px-3 py-2.5 text-right">
+                  <span class="flex items-center justify-end gap-1">
+                    <AppButton
+                      v-if="account.status === 'plan_ready'"
+                      size="sm"
+                      :loading="plans.loadingId.value === account.id"
+                      @click="plans.open({ type: 'accounts', id: account.id, label: `${account.name}@${account.host}` })"
+                    >
+                      Review
+                    </AppButton>
+                    <AppButton
+                      v-if="account.credentialAvailable"
+                      size="sm"
+                      icon="key"
+                      :disabled="revealBusy"
+                      @click="askReveal(account)"
+                    >
+                      Reveal once
+                    </AppButton>
+                    <AppButton
+                      v-if="account.status === 'active'"
+                      size="sm"
+                      variant="ghost"
+                      icon="refresh-cw"
+                      :aria-label="`Rotate ${account.name}@${account.host}`"
+                      :loading="rotateRunner.busy.value && rotatePendingId === account.id"
+                      :disabled="rotateRunner.busy.value"
+                      @click="rotateTarget = account"
+                    />
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </AppCard>
+
+    <!-- Create dialogs -->
+    <AppDialog :open="showAccountDialog" title="Create account" @close="showAccountDialog = false">
+      <form class="space-y-4" novalidate @submit.prevent="submitAccount">
+        <FormField label="Account name" :hint="NAME_HINT" :error="accountNameError">
+          <AppInput v-model="accountName" autocomplete="off" spellcheck="false" :invalid="!!accountNameError" />
         </FormField>
-        <FormField label="Host" hint="Keep localhost for apps on this server, or use % to allow any host.">
-          <AppInput v-model="accountHost" required autocomplete="off" spellcheck="false" />
+        <FormField
+          label="Host"
+          hint="Keep localhost for apps on this server, or use % to allow any host."
+          :error="accountHostError"
+        >
+          <AppInput v-model="accountHost" autocomplete="off" spellcheck="false" :invalid="!!accountHostError" />
         </FormField>
-        <div class="flex justify-end gap-2 pt-1">
-          <AppButton :disabled="isBusy('create-account')" @click="createAccountOpen = false">Cancel</AppButton>
-          <AppButton
-            variant="primary"
-            type="submit"
-            :loading="isBusy('create-account')"
-            :disabled="runner.busy.value || !engine"
-          >
+        <JobFailureNotice v-if="accountRunner.error.value" v-bind="failureProps(accountRunner)" />
+        <JobProgress
+          v-if="accountRunner.progress.value"
+          :event="accountRunner.progress.value"
+          v-bind="progressProps(accountRunner)"
+        />
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+          <AppButton :disabled="accountRunner.busy.value" @click="showAccountDialog = false">Cancel</AppButton>
+          <AppButton variant="primary" type="submit" :loading="accountRunner.busy.value" :disabled="!engine">
             Create account
           </AppButton>
         </div>
       </form>
     </AppDialog>
 
-    <!-- Create database dialog (?create=1) -->
-    <AppDialog :open="createDatabaseOpen" title="Create database" @close="closeCreateDatabase">
-      <form class="space-y-4" @submit.prevent="submitCreateDatabase">
-        <p class="text-[13px] leading-relaxed text-ink-secondary">
-          You'll review a plan before the database is created.
-        </p>
-        <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
-        <FormField
-          label="Name"
-          :error="databaseNameError"
-          hint="Lowercase letters, digits and underscores, starting with a letter."
-        >
-          <AppInput
-            v-model="databaseName"
-            :invalid="!!databaseNameError"
-            required
-            autocomplete="off"
-            spellcheck="false"
-          />
+    <AppDialog :open="showDatabaseDialog" title="New database" @close="closeDatabaseDialog">
+      <form class="space-y-4" novalidate @submit.prevent="submitDatabase">
+        <FormField label="Database name" :hint="NAME_HINT" :error="databaseNameError">
+          <AppInput v-model="databaseName" autocomplete="off" spellcheck="false" :invalid="!!databaseNameError" />
         </FormField>
-        <FormField label="Owner account" hint="The account that owns this database and gets full access to it.">
-          <AppSelect v-model="ownerAccountId" required empty-message="No active accounts — create an account first">
-            <template v-if="activeAccounts.length">
-              <option disabled value="">Select account</option>
-              <option v-for="item in activeAccounts" :key="item.id" :value="item.id">
-                {{ item.name }}@{{ item.host }}
-              </option>
-            </template>
+        <FormField
+          label="Owner account"
+          hint="The account that owns this database and gets full access to it."
+          :error="ownerAccountError"
+        >
+          <AppSelect
+            v-model="ownerAccountId"
+            :invalid="!!ownerAccountError"
+            empty-message="No active accounts — create one first"
+          >
+            <option v-if="ownerOptions.length" disabled value="">Select owner</option>
+            <option v-for="item in ownerOptions" :key="item.id" :value="item.id">{{ item.name }}@{{ item.host }}</option>
           </AppSelect>
         </FormField>
-        <div class="flex justify-end gap-2 pt-1">
-          <AppButton :disabled="isBusy('create-database')" @click="closeCreateDatabase">Cancel</AppButton>
-          <AppButton
-            variant="primary"
-            type="submit"
-            :loading="isBusy('create-database')"
-            :disabled="runner.busy.value || !engine || activeAccounts.length === 0"
-          >
+        <JobFailureNotice v-if="databaseRunner.error.value" v-bind="failureProps(databaseRunner)" />
+        <JobProgress
+          v-if="databaseRunner.progress.value"
+          :event="databaseRunner.progress.value"
+          v-bind="progressProps(databaseRunner)"
+        />
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+          <AppButton :disabled="databaseRunner.busy.value" @click="closeDatabaseDialog">Cancel</AppButton>
+          <AppButton variant="primary" type="submit" :loading="databaseRunner.busy.value" :disabled="!engine">
             Create database
           </AppButton>
         </div>
       </form>
     </AppDialog>
 
-    <!-- Grant access dialog -->
-    <AppDialog :open="grantOpen" title="Grant access" @close="grantOpen = false">
-      <form class="space-y-4" @submit.prevent="submitGrant">
-        <p class="text-[13px] leading-relaxed text-ink-secondary">
-          You'll review a plan before the grant takes effect.
-        </p>
-        <AppAlert v-if="dialogError" tone="danger">{{ dialogError }}</AppAlert>
-        <FormField label="Database">
-          <AppSelect v-model="grantDatabaseId" required empty-message="No active databases — create a database first">
-            <template v-if="activeDatabases.length">
-              <option disabled value="">Select database</option>
-              <option v-for="item in activeDatabases" :key="item.id" :value="item.id">{{ item.name }}</option>
-            </template>
-          </AppSelect>
-        </FormField>
-        <FormField label="Account">
-          <AppSelect v-model="grantAccountId" required empty-message="No active accounts — create an account first">
-            <template v-if="activeAccounts.length">
-              <option disabled value="">Select account</option>
-              <option v-for="item in activeAccounts" :key="item.id" :value="item.id">
-                {{ item.name }}@{{ item.host }}
-              </option>
-            </template>
-          </AppSelect>
-        </FormField>
-        <FormField label="Access">
-          <AppSelect v-model="access">
-            <option value="connect">Connect only</option>
-            <option value="read_only">Read only</option>
-            <option value="read_write">Read and write</option>
-          </AppSelect>
-        </FormField>
-        <div class="flex justify-end gap-2 pt-1">
-          <AppButton :disabled="isBusy('create-grant')" @click="grantOpen = false">Cancel</AppButton>
-          <AppButton
-            variant="primary"
-            type="submit"
-            :loading="isBusy('create-grant')"
-            :disabled="runner.busy.value || activeDatabases.length === 0 || activeAccounts.length === 0"
-          >
-            Grant access
-          </AppButton>
-        </div>
-      </form>
-    </AppDialog>
-
-    <!-- Plan review -->
     <PlanReviewDialog
-      v-bind="planDialogProps"
-      :busy="runner.busy.value || planRefreshing"
-      approve-label="Approve and apply"
-      @approve="approvePlan"
-      @regenerate="regeneratePlan"
-      @close="planDialog = undefined"
-    >
-      <AppAlert v-if="runner.busy.value && !isBusy('apply')" tone="warning">
-        {{ BUSY_MESSAGE }}
-      </AppAlert>
-      <AppAlert v-if="planDialog?.plan.agentPlan.interruption" tone="danger">
-        Applying this plan briefly interrupts active connections.
-      </AppAlert>
-    </PlanReviewDialog>
+      :open="plans.dialogOpen.value"
+      :title="plans.target.value?.label ?? 'Review plan'"
+      :facts="planFacts"
+      :warnings="plans.warnings.value"
+      :busy="plans.busy.value || plans.applyRunner.busy.value"
+      approve-label="Approve and execute"
+      v-bind="plans.dialogProps.value"
+      @approve="plans.apply()"
+      @regenerate="plans.regenerate()"
+      @close="plans.dialogOpen.value = false"
+    />
 
-    <!-- Restore apply confirm (type-to-confirm at the moment data is replaced) -->
-    <AppConfirmDialog
-      :open="applyRestoreConfirmOpen"
-      :title="restorePlanDatabaseName ? `Restore ${restorePlanDatabaseName}?` : 'Restore database?'"
-      confirm-label="Restore database"
-      v-bind="restorePlanDatabaseName ? { typeToConfirm: restorePlanDatabaseName } : {}"
-      :busy="isBusy('apply')"
-      @confirm="applyCurrentPlan"
-      @close="applyRestoreConfirmOpen = false"
-    >
-      Restoring replaces the current data and terminates active connections. Anything written since this backup is
-      lost.
-    </AppConfirmDialog>
-
-    <!-- Rotate confirm -->
     <AppConfirmDialog
       :open="!!rotateTarget"
-      title="Rotate password"
-      confirm-label="Rotate password"
+      :title="rotateTarget ? `Rotate credential for ${rotateTarget.name}@${rotateTarget.host}?` : 'Rotate credential?'"
+      confirm-label="Rotate credential"
       @confirm="confirmRotate"
       @close="rotateTarget = undefined"
     >
-      This prepares a plan to replace the password for
-      <strong class="text-ink">{{ rotateTarget ? `${rotateTarget.name}@${rotateTarget.host}` : '' }}</strong
-      >. The current password keeps working until you approve and apply the plan — then it stops working everywhere and
-      the new one is shown exactly once.
+      Connected applications will fail until the new password is deployed. You review a plan before anything changes, and
+      the new password is shown exactly once.
     </AppConfirmDialog>
 
-    <!-- Reveal confirm -->
     <AppConfirmDialog
       :open="!!revealTarget"
-      title="Reveal password"
-      confirm-label="Reveal once"
+      :title="revealTarget ? `Reveal credential for ${revealTarget.name}@${revealTarget.host}?` : 'Reveal credential?'"
+      confirm-label="Reveal now"
       tone="accent"
       :busy="revealBusy"
       @confirm="confirmReveal"
       @close="revealTarget = undefined"
     >
-      The password for
-      <strong class="text-ink">{{ revealTarget ? `${revealTarget.name}@${revealTarget.host}` : '' }}</strong>
-      is shown exactly once. After you clear it, it cannot be revealed again — have your password manager ready.
-    </AppConfirmDialog>
-
-    <!-- Restore prepare confirm; the destructive apply step above requires typing the name -->
-    <AppConfirmDialog
-      :open="!!restoreTarget"
-      title="Restore database"
-      confirm-label="Prepare restore"
-      @confirm="confirmRestore"
-      @close="restoreTarget = undefined"
-    >
-      <div class="space-y-3">
-        <p>
-          Restoring replaces everything currently in
-          <strong class="text-ink">{{ restoreTarget ? databaseLabel(restoreTarget.databaseId) : '' }}</strong>
-          with the contents of this backup. You'll review a plan before anything changes.
-        </p>
-        <FactList :facts="restoreFacts" />
-      </div>
+      <p>This credential is shown exactly once. Copy or download it before leaving the page — it cannot be revealed again.</p>
+      <AppAlert v-if="revealError" tone="danger" class="mt-3">{{ revealError }}</AppAlert>
     </AppConfirmDialog>
   </section>
 </template>

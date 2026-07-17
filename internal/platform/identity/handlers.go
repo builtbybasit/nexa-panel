@@ -23,13 +23,16 @@ func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	response := map[string]any{
 		"bootstrapRequired": bootstrapRequired, "authenticated": false,
-		"mfaEnrollmentRequired": false, "mfaChallengeRequired": false,
+		"mfaEnabled": false, "mfaChallengeRequired": false,
 	}
 	if person, err := m.authenticate(r.Context(), r); err == nil {
 		response["user"] = person.User
-		if person.TOTPConfirmedAt == nil {
-			response["mfaEnrollmentRequired"] = true
-		} else if person.MFAVerifiedAt == nil {
+		enrolled := person.TOTPConfirmedAt != nil
+		response["mfaEnabled"] = enrolled
+		// Second-factor is optional: a session for an account without TOTP is
+		// authenticated straight away. Only an enrolled-but-unverified session
+		// still owes the challenge.
+		if enrolled && person.MFAVerifiedAt == nil {
 			response["mfaChallengeRequired"] = true
 		} else {
 			response["authenticated"] = true
@@ -125,9 +128,11 @@ func (m *Module) loginHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = m.database.NewUpdate().Model((*userModel)(nil)).
 		Set("last_login_at = ?", lastLogin).Where("id = ?", user.ID).Exec(r.Context())
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &user.ID, Action: "identity.password_accepted", Subject: "user:" + user.ID, RemoteAddress: remoteAddress(r)})
+	// Accounts that never enrolled a second factor sign straight in; only an
+	// enrolled account is challenged. Enrollment is offered later, in the panel.
 	next := "mfa_challenge"
 	if model.TOTPConfirmedAt == nil {
-		next = "mfa_enrollment"
+		next = "authenticated"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": user, "next": next})
 }
@@ -144,6 +149,74 @@ func (m *Module) sessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
+func (m *Module) changePasswordHTTP(w http.ResponseWriter, r *http.Request) {
+	person, ok := principalFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		return
+	}
+	var input changePasswordRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if input.CurrentPassword == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Your current password is required.")
+		return
+	}
+	if err := validatePassword(input.NewPassword); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_credentials", err.Error())
+		return
+	}
+	attemptKey := "password-change:" + person.ID
+	if !m.attempts.Allow(attemptKey, m.now()) {
+		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many attempts. Try again later.")
+		return
+	}
+	model := new(userModel)
+	if err := m.database.NewSelect().Model(model).Column("id", "password_hash").
+		Where("id = ?", person.ID).Scan(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_unavailable", "The password could not be updated.")
+		return
+	}
+	valid, err := verifyPassword(input.CurrentPassword, model.PasswordHash)
+	if err != nil || !valid {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The current password is incorrect.")
+		return
+	}
+	if same, _ := verifyPassword(input.NewPassword, model.PasswordHash); same {
+		writeError(w, http.StatusUnprocessableEntity, "password_unchanged", "The new password must be different from your current password.")
+		return
+	}
+	newHash, err := hashPassword(input.NewPassword, m.parameters)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_unavailable", "The password could not be updated.")
+		return
+	}
+	err = m.database.RunInTx(r.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewUpdate().Model((*userModel)(nil)).
+			Set("password_hash = ?", newHash).Where("id = ?", person.ID).Exec(ctx); err != nil {
+			return err
+		}
+		// A password change signs out every other session; the current one stays live.
+		_, err := tx.NewDelete().Model((*sessionModel)(nil)).
+			Where("user_id = ?", person.ID).Where("id != ?", person.SessionID).Exec(ctx)
+		return err
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_unavailable", "The password could not be updated.")
+		return
+	}
+	m.attempts.Reset(attemptKey)
+	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.password_changed", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r)})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m *Module) logoutHTTP(w http.ResponseWriter, r *http.Request) {

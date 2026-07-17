@@ -1,0 +1,80 @@
+node_probe_observe:
+  get:
+    operationId: observeManagedProbe
+    tags:
+    - Node Operations
+    x-permission: system.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Current state of the fixed Nexa-owned probe target.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/node.yaml#/NodeSnapshot
+      '503':
+        description: The privileged node agent is unavailable.
+node_probe_plan:
+  post:
+    operationId: planManagedProbe
+    tags:
+    - Node Operations
+    x-permission: operations.plan
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/node.yaml#/ProbeChange
+    responses:
+      '200':
+        description: A signed, time-limited plan issued by the privileged agent.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/node.yaml#/NodePlan
+node_probe_apply:
+  post:
+    operationId: applyManagedProbePlan
+    tags:
+    - Node Operations
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/node.yaml#/NodePlan
+    responses:
+      '202':
+        description: The signed plan was persisted as a durable job.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+node_probe_rollback:
+  post:
+    operationId: rollbackManagedProbePlan
+    tags:
+    - Node Operations
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/node.yaml#/NodePlan
+    responses:
+      '202':
+        description: A rollback of the signed plan was persisted as a durable job.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job

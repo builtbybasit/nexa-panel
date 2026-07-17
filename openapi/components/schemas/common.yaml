@@ -1,0 +1,58 @@
+Liveness:
+  type: object
+  required:
+  - status
+  - version
+  properties:
+    status:
+      type: string
+      const: ok
+    version:
+      type: string
+ModuleDescriptor:
+  type: object
+  required:
+  - id
+  - name
+  - version
+  - description
+  - dependencies
+  - requiredCapabilities
+  - estimatedIdleBytes
+  properties:
+    id:
+      type: string
+    name:
+      type: string
+    version:
+      type: string
+    description:
+      type: string
+    dependencies:
+      type: array
+      items:
+        type: string
+    requiredCapabilities:
+      type: array
+      items:
+        type: string
+    estimatedIdleBytes:
+      type: integer
+      format: int64
+      minimum: 0
+Error:
+  description: Shared error envelope returned by every non-2xx JSON response.
+  type: object
+  required:
+  - code
+  - message
+  properties:
+    code:
+      type: string
+    message:
+      type: string
+    offset:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Present on upload offset conflicts; the next byte offset the server expects.

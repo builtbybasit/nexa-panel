@@ -12,5 +12,11 @@ export const databasesModule: FeatureModule = {
       component: () => import('./views/DatabasesView.vue'),
       meta: { moduleId: 'databases' },
     },
+    {
+      path: '/databases/:databaseId',
+      name: 'database-detail',
+      component: () => import('./views/DatabaseDetailView.vue'),
+      meta: { moduleId: 'databases' },
+    },
   ],
 }

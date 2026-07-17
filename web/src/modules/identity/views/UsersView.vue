@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 
 import { useCollection } from '@/shared/composables/useCollection'
 import { formatDateTime } from '@/shared/formatters'
@@ -17,6 +17,7 @@ import {
   FormField,
   ListToolbar,
   PageHeader,
+  PasswordField,
   SkeletonRow,
   StatusPill,
 } from '@/shared/ui'
@@ -84,11 +85,6 @@ const editPassword = ref('')
 const draftSiteIds = ref<string[]>([])
 const siteFilter = ref('')
 
-// Password tooling shared by the create and edit dialogs.
-const passwordVisible = ref(false)
-const passwordCopied = ref(false)
-const passwordNotice = ref<{ text: string; tone: 'info' | 'error' }>()
-
 const scopingRole = computed(() => {
   if (dialog.value === 'create') return createRole.value
   if (dialog.value === 'edit') return editRole.value
@@ -127,67 +123,12 @@ function siteAccess(user: ManagedUser): { label: string; title?: string } {
   }
 }
 
-const PASSWORD_CLASSES = ['abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', '0123456789', '!@#$%^&*-_=+']
-
-function randomBelow(bound: number): number {
-  const buffer = new Uint32Array(1)
-  crypto.getRandomValues(buffer)
-  return (buffer[0] ?? 0) % bound
-}
-
-/** 20 random characters guaranteed to mix all four classes. */
-function generatePassword(length = 20): string {
-  const all = PASSWORD_CLASSES.join('')
-  const chars = PASSWORD_CLASSES.map((set) => set.charAt(randomBelow(set.length)))
-  while (chars.length < length) chars.push(all.charAt(randomBelow(all.length)))
-  for (let i = chars.length - 1; i > 0; i--) {
-    const j = randomBelow(i + 1)
-    ;[chars[i], chars[j]] = [chars[j] ?? '', chars[i] ?? '']
-  }
-  return chars.join('')
-}
-
-function fillGeneratedPassword(field: 'create' | 'edit') {
-  const generated = generatePassword()
-  if (field === 'create') createPassword.value = generated
-  else editPassword.value = generated
-  passwordVisible.value = true
-  passwordNotice.value = undefined
-}
-
-// Editing the password invalidates both the copied state and any copy notice.
-watch([createPassword, editPassword], () => {
-  passwordCopied.value = false
-  passwordNotice.value = undefined
-})
-
-async function copyPassword(value: string) {
-  try {
-    await navigator.clipboard.writeText(value)
-    passwordCopied.value = true
-    passwordNotice.value = { text: 'Password copied.', tone: 'info' }
-  } catch {
-    passwordCopied.value = false
-    passwordNotice.value = {
-      text: 'Copying was blocked by the browser. Show the password and copy it manually.',
-      tone: 'error',
-    }
-  }
-}
-
-function resetPasswordTools() {
-  passwordVisible.value = false
-  passwordCopied.value = false
-  passwordNotice.value = undefined
-}
-
 function openCreate() {
   createUsername.value = ''
   createPassword.value = ''
   createRole.value = 'viewer'
   draftSiteIds.value = []
   siteFilter.value = ''
-  resetPasswordTools()
   dialogError.value = ''
   dialog.value = 'create'
 }
@@ -198,7 +139,6 @@ function openEdit(user: ManagedUser) {
   editPassword.value = ''
   draftSiteIds.value = [...(user.siteIds ?? [])]
   siteFilter.value = ''
-  resetPasswordTools()
   dialogError.value = ''
   dialog.value = 'edit'
 }
@@ -401,44 +341,12 @@ const submitDelete = () =>
             required
           />
         </FormField>
-        <FormField label="Password" hint="At least 12 characters. The user enrolls MFA on first sign-in.">
-          <div class="flex gap-2">
-            <AppInput
-              v-model="createPassword"
-              :type="passwordVisible ? 'text' : 'password'"
-              class="flex-1"
-              minlength="12"
-              autocomplete="new-password"
-              required
-            />
-            <AppButton
-              icon="sparkles"
-              aria-label="Generate password"
-              title="Generate password"
-              @click="fillGeneratedPassword('create')"
-            />
-            <AppButton
-              :icon="passwordVisible ? 'eye-off' : 'eye'"
-              :aria-label="passwordVisible ? 'Hide password' : 'Show password'"
-              :title="passwordVisible ? 'Hide password' : 'Show password'"
-              @click="passwordVisible = !passwordVisible"
-            />
-            <AppButton
-              :icon="passwordCopied ? 'check' : 'copy'"
-              aria-label="Copy password"
-              title="Copy password"
-              :disabled="!createPassword"
-              @click="copyPassword(createPassword)"
-            />
-          </div>
-          <p
-            aria-live="polite"
-            class="mt-1.5 text-xs leading-relaxed"
-            :class="passwordNotice?.tone === 'error' ? 'text-rose-300' : 'text-ink-muted'"
-          >
-            {{ passwordNotice?.text }}
-          </p>
-        </FormField>
+        <PasswordField
+          v-model="createPassword"
+          :minimum-length="12"
+          hint="At least 12 characters. The user enrolls MFA on first sign-in."
+          required
+        />
         <FormField label="Role">
           <AppSelect v-model="createRole">
             <option v-for="option in roleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
@@ -490,44 +398,13 @@ const submitDelete = () =>
             <option v-for="option in roleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </AppSelect>
         </FormField>
-        <FormField label="New password" hint="Leave blank to keep the current password. Resetting revokes active sessions.">
-          <div class="flex gap-2">
-            <AppInput
-              v-model="editPassword"
-              :type="passwordVisible ? 'text' : 'password'"
-              class="flex-1"
-              minlength="12"
-              autocomplete="new-password"
-              placeholder="Unchanged"
-            />
-            <AppButton
-              icon="sparkles"
-              aria-label="Generate password"
-              title="Generate password"
-              @click="fillGeneratedPassword('edit')"
-            />
-            <AppButton
-              :icon="passwordVisible ? 'eye-off' : 'eye'"
-              :aria-label="passwordVisible ? 'Hide password' : 'Show password'"
-              :title="passwordVisible ? 'Hide password' : 'Show password'"
-              @click="passwordVisible = !passwordVisible"
-            />
-            <AppButton
-              :icon="passwordCopied ? 'check' : 'copy'"
-              aria-label="Copy password"
-              title="Copy password"
-              :disabled="!editPassword"
-              @click="copyPassword(editPassword)"
-            />
-          </div>
-          <p
-            aria-live="polite"
-            class="mt-1.5 text-xs leading-relaxed"
-            :class="passwordNotice?.tone === 'error' ? 'text-rose-300' : 'text-ink-muted'"
-          >
-            {{ passwordNotice?.text }}
-          </p>
-        </FormField>
+        <PasswordField
+          v-model="editPassword"
+          label="New password"
+          :minimum-length="12"
+          placeholder="Unchanged"
+          hint="Leave blank to keep the current password. Resetting revokes active sessions."
+        />
         <FormField
           v-if="editRole === 'developer'"
           label="Assigned sites"

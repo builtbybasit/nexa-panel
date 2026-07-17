@@ -129,6 +129,62 @@ func (m *Module) mfaConfirmHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"user": person.User, "recoveryCodes": codes})
 }
 
+type mfaDisableRequest struct {
+	Password string `json:"password"`
+}
+
+// mfaDisableHTTP turns off the second factor for the signed-in account. It is
+// registered as an authenticated route, so the identity middleware has already
+// required a completed MFA challenge for this session; the password below is a
+// second confirmation that the person at the keyboard owns the account.
+func (m *Module) mfaDisableHTTP(w http.ResponseWriter, r *http.Request) {
+	person, ok := UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		return
+	}
+	var input mfaDisableRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if input.Password == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Your current password is required to disable MFA.")
+		return
+	}
+	attemptKey := "mfa-disable:" + person.ID
+	if !m.attempts.Allow(attemptKey, m.now()) {
+		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many attempts. Try again later.")
+		return
+	}
+	model := new(userModel)
+	if err := m.database.NewSelect().Model(model).
+		Column("id", "password_hash", "totp_confirmed_at").Where("id = ?", person.ID).Scan(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA could not be updated.")
+		return
+	}
+	if model.TOTPConfirmedAt == nil {
+		writeError(w, http.StatusConflict, "mfa_not_enrolled", "Multi-factor authentication is not enabled.")
+		return
+	}
+	valid, err := verifyPassword(input.Password, model.PasswordHash)
+	if err != nil || !valid {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The password is incorrect.")
+		return
+	}
+	if _, err := m.database.NewUpdate().Model((*userModel)(nil)).
+		Set("totp_secret_encrypted = NULL").Set("totp_confirmed_at = NULL").
+		Set("totp_last_step = 0").Set("recovery_code_hashes = '[]'").
+		Where("id = ?", person.ID).Exec(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA could not be disabled.")
+		return
+	}
+	m.attempts.Reset(attemptKey)
+	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_disabled", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r)})
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"user": person, "mfaEnabled": false})
+}
+
 func (m *Module) mfaVerifyHTTP(w http.ResponseWriter, r *http.Request) {
 	person, ok := m.preAuthentication(w, r)
 	if !ok {

@@ -1,70 +1,90 @@
-# Disposable Ubuntu 24.04 test node with Nexa Panel installed the same way the
-# .deb would lay it out: /usr/bin/nexa, the packaged systemd units, sysusers,
-# and tmpfiles configs, plus Nginx, PHP-FPM 8.3, and cron so the site,
-# runtime-discovery, and scheduled-task flows work end to end. Not a
-# production deployment image — the container runs systemd and needs
+# Disposable Ubuntu 24.04 test node that installs Nexa Panel by running the real
+# installer, scripts/install.sh — the same script a real host runs. This image
+# deliberately does NOT reproduce the install steps: a Dockerfile that lays the
+# node out by hand drifts from the installer silently, and the drift surfaces as
+# a bug on someone's server rather than here. Everything below the installer is
+# either container-specific (systemd in a container, a published port) or test
+# seed data, and each carries the reason it cannot live in the installer.
+#
+# Not a production deployment image — the container runs systemd and needs
 # privileges, and the API is rebound to 0.0.0.0 so the published port works.
 #
-# Build:  docker build -t nexa-node .
+# Testing image only: it does not build anything. Build the binary first with
+# scripts/build-linux-release.sh, which runs `bun run build` for the embedded
+# web UI and compiles the Go binary with -tags embed, then bind-mount the
+# resulting dist/nexa-linux-${ARCH} into the container as /usr/bin/nexa —
+# it is not COPYed into the image, so re-testing a binary change only needs
+# a container restart, not a rebuild.
+#
+# Build:  ./scripts/build-linux-release.sh amd64
+#         docker build -t nexa-node .
 # Run:    docker run -d --name nexa-node --privileged --cgroupns=host \
-#           -v /sys/fs/cgroup:/sys/fs/cgroup:rw -p 8080:8080 nexa-node
-# Panel:  http://localhost:8080 (embedded production UI)
-
-FROM oven/bun:1.3 AS web
-WORKDIR /src
-COPY web/package.json web/bun.lock web/
-RUN cd web && bun install --frozen-lockfile
-COPY web web
-# vite.config.ts writes the production bundle to ../internal/platform/webui/dist.
-# Run vite directly: `bun run build` starts with vue-tsc, a Node program the
-# bun image cannot execute; typechecking belongs to `make check`, not this image.
-RUN cd web && bunx --bun vite build
-
-FROM golang:1.25 AS build
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY cmd cmd
-COPY internal internal
-COPY --from=web /src/internal/platform/webui/dist internal/platform/webui/dist
-ARG TARGETARCH
-# -ldflags="-s -w" strips the symbol table and DWARF debug info — unnecessary for
-# a deployed binary and worth several MB off the embedded-UI build.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
-    go build -tags embed -trimpath -ldflags="-s -w" -o /out/nexa ./cmd/nexa
+#           -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+#           -v $(pwd)/dist/nexa-linux-amd64:/usr/bin/nexa:ro \
+#           -p 8080:8080 nexa-node
 
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    systemd systemd-sysv dbus \
-    nginx php8.3-fpm php8.3-cli \
-    cron curl ca-certificates util-linux \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /out/nexa /usr/bin/nexa
-COPY packaging/systemd/nexa-agent.service packaging/systemd/nexa-api.service /usr/lib/systemd/system/
-COPY packaging/sysusers/nexa-panel.conf /usr/lib/sysusers.d/nexa-panel.conf
-COPY packaging/tmpfiles/nexa-panel.conf /usr/lib/tmpfiles.d/nexa-panel.conf
+# The real installer. It configures the ondrej/php and PGDG repositories, so the
+# Applications catalog can enumerate every PHP and PostgreSQL version from the
+# moment the node boots — with Ubuntu's archive alone it can only ever offer the
+# single PHP that noble ships. --no-start because systemd is not running in a
+# build layer; the units are enabled and start on first boot. No binary is passed:
+# compose bind-mounts dist/nexa-linux-${ARCH} onto /usr/bin/nexa at runtime, so
+# iterating on the binary needs a restart, not a rebuild.
+#
+# The apt lists are deliberately NOT cleaned afterwards: the catalog reads them
+# with apt-cache and never refreshes them itself, so an image that cleaned them
+# would boot showing a truncated catalog.
+COPY packaging/ /tmp/nexa-install/packaging/
+COPY scripts/install.sh /tmp/nexa-install/scripts/install.sh
+RUN /tmp/nexa-install/scripts/install.sh --no-start && rm -rf /tmp/nexa-install
+
+# Test seed data, not part of a node install: the panel installs PHP versions on
+# demand, but the site-rendering and runtime-discovery flows this node exercises
+# need one present from the start.
+RUN apt-get install -y --no-install-recommends php8.3-fpm php8.3-cli && \
+    systemctl enable php8.3-fpm
 
 # The packaged unit binds 127.0.0.1, which a published container port cannot
 # reach; rebind to 0.0.0.0 inside the container only.
 RUN mkdir -p /etc/systemd/system/nexa-api.service.d && \
     printf '[Service]\nExecStart=\nExecStart=/usr/bin/nexa api --address 0.0.0.0:8080 --state /var/lib/nexa-panel/control.db --master-key /var/lib/nexa-panel/master.key\n' \
-      > /etc/systemd/system/nexa-api.service.d/container.conf && \
-    systemctl enable nexa-agent nexa-api nginx php8.3-fpm cron
+      > /etc/systemd/system/nexa-api.service.d/container.conf
 
-# nexa-agent runs under ProtectSystem=strict and bind-mounts every ReadWritePaths
-# entry to make it writable; systemd aborts namespace setup (status=226/NAMESPACE)
-# if any entry is missing. The packaged list assumes a full host with PostgreSQL
-# and certbot installed, whose packages create /etc/postgresql, /var/lib/postgresql,
-# /run/postgresql, /etc/letsencrypt, /var/lib/letsencrypt, /var/log/{postgresql,letsencrypt}.
-# This test image installs none of them, so the agent crash-looped every 3s and,
-# via nexa-api's Requires=nexa-agent, dragged the API down with it — dropping the
-# UI's asset and /api/v1/jobs requests with ERR_EMPTY_RESPONSE. Scope the writable
-# paths to what this image actually provides (no PostgreSQL/certbot flows here).
+# The packaged agent runs under ProtectSystem=strict with a scoped ReadWritePaths
+# list. Two problems for this test image:
+#   1) The packaged list assumes PostgreSQL and certbot are installed (creating
+#      /etc/postgresql, /var/lib/postgresql, /run/postgresql, /etc/letsencrypt,
+#      /var/lib/letsencrypt, /var/log/{postgresql,letsencrypt}); missing entries
+#      abort namespace setup (226/NAMESPACE), crash-looping the agent and, via
+#      nexa-api's Requires=nexa-agent, the API too (ERR_EMPTY_RESPONSE).
+#   2) The Applications page installs OS packages with apt, which must write the
+#      dpkg database and files across /usr, /var, and /etc — impossible under
+#      ProtectSystem=strict (apt reports "Not using locking for read only lock
+#      file /var/lib/dpkg/lock" and installs nothing).
+# For this DISPOSABLE test node only, drop the filesystem sandbox so package
+# installs work end to end. Production package-install support is a deliberate
+# hardening decision (a package-management operation with a curated writable set),
+# NOT this blanket relaxation — do not copy this drop-in into the packaged unit.
+# ProtectHome=off matters too: add-apt-repository (for the ondrej/php PPA) spawns
+# gpg to store the signing key, which needs a writable $HOME (/root/.gnupg);
+# with ProtectHome=true /root is hidden and gpg throws a Python traceback.
 RUN mkdir -p /etc/systemd/system/nexa-agent.service.d && \
-    printf '[Service]\nReadWritePaths=\nReadWritePaths=/etc/nexa-panel /etc/containers/systemd /etc/cron.d /etc/nginx /etc/php /srv/nexa /var/lib/nexa-panel /run/nexa-panel /run/php\n' \
+    printf '[Service]\nProtectSystem=off\nProtectHome=off\nReadWritePaths=\nNoNewPrivileges=no\nPrivateTmp=no\n' \
       > /etc/systemd/system/nexa-agent.service.d/container.conf
+
+# Docker's ubuntu image ships /usr/sbin/policy-rc.d as `exit 101`, which makes
+# every package's postinst skip starting its service. That is right for a build
+# layer, where there is no systemd to start anything — so it stays in force for
+# the apt-get above — but wrong for this node at runtime: systemd is PID 1 here,
+# and the Applications page installs *services*. Left in place, installing
+# MariaDB reports success while leaving the server stopped, so the MySQL page
+# still finds no engine through its socket — precisely the end-to-end break this
+# node exists to catch. Removing it after the build-time installs gives runtime
+# installs the same behaviour as a real host.
+RUN rm -f /usr/sbin/policy-rc.d
 
 EXPOSE 8080
 STOPSIGNAL SIGRTMIN+3

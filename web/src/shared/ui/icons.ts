@@ -41,6 +41,8 @@ export const iconPaths: Record<string, string> = {
   menu: '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>',
   'chevron-right': '<polyline points="9 18 15 12 9 6"/>',
   'chevron-left': '<polyline points="15 18 9 12 15 6"/>',
+  'chevrons-right': '<path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/>',
+  'chevrons-left': '<path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/>',
   'chevron-down': '<polyline points="6 9 12 15 18 9"/>',
   'chevron-up': '<polyline points="18 15 12 9 6 15"/>',
   activity: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',

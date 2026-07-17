@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   bootstrap,
+  changePassword,
   confirmMFA,
   createUser,
   deleteUser,
+  disableMFA,
   enrollMFA,
   getIdentityStatus,
   IdentityRequestError,
@@ -24,7 +26,7 @@ describe('identity API', () => {
     const status = {
       bootstrapRequired: true,
       authenticated: false,
-      mfaEnrollmentRequired: false,
+      mfaEnabled: false,
       mfaChallengeRequired: false,
     }
     const fetchMock = vi.fn().mockResolvedValue(Response.json(status))
@@ -68,6 +70,33 @@ describe('identity API', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/v1/auth/mfa/verify', {
       method: 'POST',
       body: JSON.stringify({ recoveryCode: 'AAAA-BBBB-CCCC-DDDD' }),
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    })
+  })
+
+  it('disables MFA with the current password', async () => {
+    const user = { id: 'user-1', username: 'admin', role: 'admin' }
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ user, mfaEnabled: false }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(disableMFA('a-strong-password')).resolves.toEqual({ user, mfaEnabled: false })
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/mfa/disable', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'a-strong-password' }),
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    })
+  })
+
+  it('changes the account password with the current and new passwords', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(changePassword('old-password-1', 'new-password-1')).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword: 'old-password-1', newPassword: 'new-password-1' }),
       credentials: 'same-origin',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     })

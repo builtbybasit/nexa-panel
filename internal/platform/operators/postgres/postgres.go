@@ -103,6 +103,7 @@ type Observation struct {
 
 type Operator interface {
 	Discover(context.Context) ([]Instance, error)
+	Sizes(ctx context.Context, instanceID string) (map[string]int64, error)
 	Plan(context.Context, Change) (Plan, error)
 	Apply(context.Context, Execution) (Observation, error)
 }

@@ -1,0 +1,218 @@
+sites_id_logs:
+  get:
+    operationId: listSiteLogs
+    tags:
+    - Logs
+    x-permission: logs.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    responses:
+      '200':
+        description: Discovered log files under the site logs directory.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/logs.yaml#/LogFile
+      '404':
+        description: The site does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Logs are not available until the site has been provisioned.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_logs_read:
+  get:
+    operationId: readSiteLog
+    tags:
+    - Logs
+    x-permission: logs.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - name: name
+      in: query
+      required: true
+      schema:
+        type: string
+      description: Log file name slash-relative to the site logs directory.
+    - name: tail
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 2000
+        default: 200
+      description: Trailing lines to return in tail mode; values above the maximum are capped.
+    - name: max
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 262144
+        default: 65536
+      description: Read window in bytes; values above the maximum are capped.
+    - name: offset
+      in: query
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+      description: Return complete lines appended since this byte offset instead of tailing.
+    - name: filter
+      in: query
+      schema:
+        type: string
+      description: Case-insensitive substring filter applied per line.
+    responses:
+      '200':
+        description: One bounded window of log lines with the offset to poll from next.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/logs.yaml#/LogReadResult
+      '400':
+        description: A query parameter is malformed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '404':
+        description: The site or log file does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Logs are not available until the site has been provisioned.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The log name is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_logs_stream:
+  get:
+    operationId: streamSiteLog
+    tags:
+    - Logs
+    x-permission: logs.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - name: name
+      in: query
+      required: true
+      schema:
+        type: string
+    - name: filter
+      in: query
+      schema:
+        type: string
+    - name: Last-Event-ID
+      in: header
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+      description: Resume the tail from this byte offset.
+    responses:
+      '200':
+        description: Replayable Server-Sent Events live tail; each lines event carries appended lines and rotation state as JSON and its event ID is the next byte offset.
+        content:
+          text/event-stream:
+            schema:
+              type: string
+      '400':
+        description: Last-Event-ID must be a non-negative integer.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '404':
+        description: The site or log file does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Logs are not available until the site has been provisioned.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The log name is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_logs_download:
+  get:
+    operationId: downloadSiteLog
+    tags:
+    - Logs
+    x-permission: logs.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - name: name
+      in: query
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: The log file streamed as an attachment.
+        headers:
+          Content-Disposition:
+            schema:
+              type: string
+          Content-Length:
+            schema:
+              type: integer
+              format: int64
+              minimum: 0
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      '404':
+        description: The site or log file does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Logs are not available until the site has been provisioned.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The log name is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error

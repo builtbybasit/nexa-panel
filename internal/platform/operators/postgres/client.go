@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
@@ -32,6 +33,14 @@ func (c *UnixClient) Discover(ctx context.Context) ([]Instance, error) {
 	}
 	err := c.call(ctx, http.MethodGet, "/v1/postgresql/instances", nil, &result)
 	return result.Items, err
+}
+
+func (c *UnixClient) Sizes(ctx context.Context, instanceID string) (map[string]int64, error) {
+	var result struct {
+		Sizes map[string]int64 `json:"sizes"`
+	}
+	err := c.call(ctx, http.MethodGet, "/v1/postgresql/sizes?instanceId="+url.QueryEscape(instanceID), nil, &result)
+	return result.Sizes, err
 }
 
 func (c *UnixClient) Plan(ctx context.Context, change Change) (Plan, error) {

@@ -1,6 +1,7 @@
 .git
 bin
 dist
+screenshots
 web/node_modules
 internal/platform/webui/dist
 *.log

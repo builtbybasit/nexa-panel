@@ -12,5 +12,11 @@ export const mysqlModule: FeatureModule = {
       component: () => import('./views/MySQLView.vue'),
       meta: { moduleId: 'mysql-databases' },
     },
+    {
+      path: '/mysql/:databaseId',
+      name: 'mysql-database-detail',
+      component: () => import('./views/MySQLDatabaseDetailView.vue'),
+      meta: { moduleId: 'mysql-databases' },
+    },
   ],
 }

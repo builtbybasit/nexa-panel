@@ -1,0 +1,78 @@
+ManagedRole:
+  type: string
+  enum:
+  - admin
+  - operator
+  - developer
+  - viewer
+ManagedUser:
+  type: object
+  required:
+  - id
+  - username
+  - role
+  - createdAt
+  - mfaConfirmed
+  - siteIds
+  properties:
+    id:
+      type: string
+    username:
+      type: string
+      minLength: 3
+      maxLength: 64
+    role:
+      $ref: '#/ManagedRole'
+    createdAt:
+      type: string
+      format: date-time
+    lastLoginAt:
+      type: string
+      format: date-time
+    mfaConfirmed:
+      type: boolean
+    siteIds:
+      type: array
+      items:
+        type: string
+      description: Sites granted to a developer; empty for unscoped roles.
+CreateUser:
+  type: object
+  additionalProperties: false
+  required:
+  - username
+  - password
+  - role
+  properties:
+    username:
+      type: string
+      pattern: ^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$
+    password:
+      type: string
+      format: password
+      minLength: 12
+      maxLength: 1024
+    role:
+      $ref: '#/ManagedRole'
+UpdateUser:
+  type: object
+  additionalProperties: false
+  minProperties: 1
+  properties:
+    role:
+      $ref: '#/ManagedRole'
+    password:
+      type: string
+      format: password
+      minLength: 12
+      maxLength: 1024
+UserSiteGrants:
+  type: object
+  additionalProperties: false
+  required:
+  - siteIds
+  properties:
+    siteIds:
+      type: array
+      items:
+        type: string

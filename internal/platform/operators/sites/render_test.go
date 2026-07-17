@@ -43,6 +43,23 @@ func TestRendererRejectsClientControlledPathsAndPHP7(t *testing.T) {
 	}
 }
 
+// A PHP branch published after this code was written must be usable by a site;
+// the renderer enforces the floor, not a list of known branches.
+func TestRendererAcceptsAnyPHPBranchAtOrAboveTheFloor(t *testing.T) {
+	for _, version := range []string{"7.4", "8.0", "8.5", "8.10", "9.0", "10.2"} {
+		site := Site{ID: "site-1", Slug: "demo-site", PrimaryDomain: "demo.example.com", PHPVersion: version, UnixUser: "nexa_demo_site", RootPath: "/srv/nexa/sites/demo-site", SocketPath: "/run/php/nexa-demo-site.sock"}
+		if _, err := (Renderer{}).Render(site); err != nil {
+			t.Fatalf("PHP %s should be renderable: %v", version, err)
+		}
+	}
+	for _, version := range []string{"7.3", "5.6", "8", "8.3.1", "8.x", "8.3; rm -rf /", ""} {
+		site := Site{ID: "site-1", Slug: "demo-site", PrimaryDomain: "demo.example.com", PHPVersion: version, UnixUser: "nexa_demo_site", RootPath: "/srv/nexa/sites/demo-site", SocketPath: "/run/php/nexa-demo-site.sock"}
+		if _, err := (Renderer{}).Render(site); err == nil {
+			t.Fatalf("PHP %q should be rejected below the %s floor or as malformed", version, phpFloor)
+		}
+	}
+}
+
 func TestRendererAllowsLegacyPHP74(t *testing.T) {
 	site := Site{ID: "site-1", Slug: "legacy-site", PrimaryDomain: "legacy.example.com", PHPVersion: "7.4", UnixUser: "nexa_legacy_site", RootPath: "/srv/nexa/sites/legacy-site", SocketPath: "/run/php/nexa-legacy-site.sock"}
 	if _, err := (Renderer{}).Render(site); err != nil {
@@ -57,7 +74,23 @@ func TestRendererSeparatesHTTPRoutesFromCertificateSANs(t *testing.T) {
 		t.Fatal(err)
 	}
 	nginx := plan.Artifacts[2].Content
-	if !strings.Contains(nginx, "server_name demo.example.com www.demo.example.com;") || !strings.Contains(nginx, "server_name demo.example.com;\n    ssl_certificate") || !strings.Contains(nginx, "return 301 https://demo.example.com$request_uri;") {
+	// The alias is served over HTTP but is not a certificate SAN, so only the
+	// bare primary domain may appear on the TLS block's server_name.
+	if !strings.Contains(nginx, "server_name demo.example.com www.demo.example.com;") || !strings.Contains(nginx, "server_name demo.example.com;") || !strings.Contains(nginx, "ssl_certificate /etc/letsencrypt/live/demo.example.com/fullchain.pem;") || !strings.Contains(nginx, "return 301 https://demo.example.com$request_uri;") {
 		t.Fatalf("unexpected routing config:\n%s", nginx)
+	}
+}
+
+// Verification identifies the serving block by header, so every block that
+// answers for the site must carry it; otherwise a healthy site is rolled back.
+func TestRendererLabelsServerBlocksWithTheSiteHeader(t *testing.T) {
+	site := Site{ID: "site-1", Slug: "demo-site", PrimaryDomain: "demo.example.com", PHPVersion: "8.4", UnixUser: "nexa_demo_site", RootPath: "/srv/nexa/sites/demo-site", SocketPath: "/run/php/nexa-demo-site.sock", TLS: &TLS{CertificatePath: "/etc/letsencrypt/live/demo.example.com/fullchain.pem", PrivateKeyPath: "/etc/letsencrypt/live/demo.example.com/privkey.pem"}, TLSDomains: []string{"demo.example.com"}}
+	plan, err := (Renderer{}).Render(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nginx := plan.Artifacts[2].Content
+	if got := strings.Count(nginx, "add_header X-Nexa-Site demo-site always;"); got != 2 {
+		t.Fatalf("site header appears %d times, want it on both the HTTP and TLS blocks:\n%s", got, nginx)
 	}
 }

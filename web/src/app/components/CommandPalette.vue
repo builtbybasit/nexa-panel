@@ -126,7 +126,7 @@ const resourceItems = computed<PaletteItem[]>(() => {
       group: 'PostgreSQL',
       label: database.name,
       icon: 'database',
-      to: `/databases?selected=${database.id}`,
+      to: `/databases/${encodeURIComponent(database.id)}`,
     })
   }
   for (const database of mysqlQuery.data.value ?? []) {
@@ -135,7 +135,7 @@ const resourceItems = computed<PaletteItem[]>(() => {
       group: 'MySQL / MariaDB',
       label: database.name,
       icon: 'server',
-      to: `/mysql?selected=${database.id}`,
+      to: `/mysql/${encodeURIComponent(database.id)}`,
     })
   }
   return items

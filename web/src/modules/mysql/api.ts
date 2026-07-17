@@ -38,6 +38,8 @@ export interface Account {
   credentialVersion: number
   lastJobId?: number
   failure?: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Database {
@@ -46,8 +48,17 @@ export interface Database {
   name: string
   ownerAccountId: string
   status: Status
+  /**
+   * Measured on read and absent until first measured; zero means an empty
+   * database, not an unknown one — render it with `formatMeasuredBytes`.
+   * `sizeObservedAt` says when the measurement was taken.
+   */
+  sizeBytes?: number
+  sizeObservedAt?: string
   lastJobId?: number
   failure?: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Grant {
@@ -58,6 +69,8 @@ export interface Grant {
   status: Status
   lastJobId?: number
   failure?: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface RestorePoint {
@@ -69,6 +82,8 @@ export interface RestorePoint {
   verifiedAt?: string
   lastJobId?: number
   failure?: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Plan {
