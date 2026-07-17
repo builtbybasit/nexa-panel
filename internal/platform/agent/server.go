@@ -113,6 +113,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		mux.HandleFunc("POST /v1/admin-tools/apply", s.adminToolsApplyHTTP)
 	}
 	if s.packages != nil {
+		mux.HandleFunc("GET /v1/packages/available", s.packagesCatalogHTTP)
 		mux.HandleFunc("GET /v1/packages/installed", s.packagesDiscoverHTTP)
 		mux.HandleFunc("POST /v1/packages/plan", s.packagesPlanHTTP)
 		mux.HandleFunc("POST /v1/packages/apply", s.packagesApplyHTTP)

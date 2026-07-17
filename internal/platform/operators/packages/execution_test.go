@@ -3,6 +3,8 @@ package packages
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -13,17 +15,41 @@ import (
 type fakeRunner struct {
 	installed map[string]string // apt packages -> version
 	nodes     map[string]string // node major -> full version
-	calls     [][]string
+	// phpRepo/pgRepo are the versions the fake apt index offers, standing in for
+	// the ondrej PPA and PGDG. Both include a version below the catalog floor so
+	// the floor is actually exercised.
+	phpRepo []string
+	pgRepo  []string
+	calls   [][]string
 }
 
 func newFakeRunner() *fakeRunner {
-	return &fakeRunner{installed: map[string]string{}, nodes: map[string]string{}}
+	return &fakeRunner{
+		installed: map[string]string{},
+		nodes:     map[string]string{},
+		phpRepo:   []string{"5.6", "7.4", "8.1", "8.3", "8.4", "8.5"},
+		pgRepo:    []string{"9.6", "16", "17", "18"},
+	}
 }
 
 func (f *fakeRunner) Run(_ context.Context, c Command) ([]byte, error) {
 	record := append([]string{c.Name}, c.Args...)
 	f.calls = append(f.calls, record)
 	switch {
+	case c.Name == "apt-cache" && len(c.Args) > 0 && c.Args[0] == "search":
+		var builder strings.Builder
+		pattern := c.Args[len(c.Args)-1]
+		if strings.Contains(pattern, "php") {
+			for _, version := range f.phpRepo {
+				builder.WriteString("php" + version + "-fpm - server-side scripting language (FPM-CGI binary)\n")
+			}
+		}
+		if strings.Contains(pattern, "postgresql") {
+			for _, version := range f.pgRepo {
+				builder.WriteString("postgresql-" + version + " - object-relational SQL database\n")
+			}
+		}
+		return []byte(builder.String()), nil
 	case c.Name == "dpkg-query":
 		var builder strings.Builder
 		for _, arg := range c.Args {
@@ -91,11 +117,40 @@ func (f *fakeRunner) findInstallContaining(token string) []string {
 	return nil
 }
 
-func newOperator(runner Runner) *HostOperator {
-	return &HostOperator{runner: runner, now: func() time.Time { return time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC) }}
+// fakeNodeIndex serves a cut-down nodejs.org release index: LTS lines 18/20/22/24
+// plus non-LTS 23/25/26, so both the LTS filter and the newest-N window matter.
+const fakeNodeIndex = `[
+	{"version":"v26.5.0","lts":false},
+	{"version":"v25.1.0","lts":false},
+	{"version":"v24.4.0","lts":"Krypton"},
+	{"version":"v23.9.0","lts":false},
+	{"version":"v22.11.0","lts":"Jod"},
+	{"version":"v20.18.0","lts":"Iron"},
+	{"version":"v18.20.0","lts":"Hydrogen"}
+]`
+
+func newOperator(t *testing.T, runner Runner) *HostOperator {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(fakeNodeIndex))
+	}))
+	t.Cleanup(server.Close)
+	return newOperatorWithIndex(t, runner, server.URL)
+}
+
+func newOperatorWithIndex(t *testing.T, runner Runner, indexURL string) *HostOperator {
+	t.Helper()
+	return &HostOperator{
+		runner:       runner,
+		now:          func() time.Time { return time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC) },
+		client:       &http.Client{Timeout: 5 * time.Second},
+		nodeIndexURL: indexURL,
+		catalogTTL:   time.Minute,
+	}
 }
 
 func TestNormalizeRejectsUnknownApplication(t *testing.T) {
+	operator := newOperator(t, newFakeRunner())
 	cases := []Change{
 		{Action: ActionInstall, App: "php", Version: "9.9"},
 		{Action: ActionInstall, App: "redis", Version: "7"},
@@ -103,14 +158,14 @@ func TestNormalizeRejectsUnknownApplication(t *testing.T) {
 		{Action: "package.frobnicate", App: "php", Version: "8.3"},
 	}
 	for _, change := range cases {
-		if _, _, err := normalize(change); err == nil {
+		if _, _, err := operator.normalize(context.Background(), change); err == nil {
 			t.Fatalf("expected rejection for %+v", change)
 		}
 	}
 }
 
 func TestPlanDerivesAllowlistedPackages(t *testing.T) {
-	operator := newOperator(newFakeRunner())
+	operator := newOperator(t, newFakeRunner())
 	plan, err := operator.Plan(context.Background(), Change{Action: ActionInstall, App: "php", Version: "8.3"})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -130,7 +185,7 @@ func TestPlanDerivesAllowlistedPackages(t *testing.T) {
 
 func TestApplyInstallRunsAllowlistedAptCommand(t *testing.T) {
 	runner := newFakeRunner()
-	operator := newOperator(runner)
+	operator := newOperator(t, runner)
 	plan, err := operator.Plan(context.Background(), Change{Action: ActionInstall, App: "php", Version: "8.3"})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -153,7 +208,7 @@ func TestApplyInstallRunsAllowlistedAptCommand(t *testing.T) {
 }
 
 func TestApplyRejectsExpiredOrTamperedPlan(t *testing.T) {
-	operator := newOperator(newFakeRunner())
+	operator := newOperator(t, newFakeRunner())
 	plan, _ := operator.Plan(context.Background(), Change{Action: ActionInstall, App: "php", Version: "8.3"})
 
 	expired := plan
@@ -171,7 +226,7 @@ func TestApplyRejectsExpiredOrTamperedPlan(t *testing.T) {
 
 func TestApplyRejectsFingerprintDrift(t *testing.T) {
 	runner := newFakeRunner()
-	operator := newOperator(runner)
+	operator := newOperator(t, runner)
 	plan, _ := operator.Plan(context.Background(), Change{Action: ActionInstall, App: "php", Version: "8.3"})
 	// Something else installed a managed package between plan and apply.
 	runner.installed["php8.1-fpm"] = "8.1-test"
@@ -185,7 +240,7 @@ func TestApplyRemoveMapsToPurge(t *testing.T) {
 	for _, pkg := range phpPackages("8.3") {
 		runner.installed[pkg] = "8.3-test"
 	}
-	operator := newOperator(runner)
+	operator := newOperator(t, runner)
 	plan, err := operator.Plan(context.Background(), Change{Action: ActionRemove, App: "php", Version: "8.3"})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -204,7 +259,7 @@ func TestApplyRemoveMapsToPurge(t *testing.T) {
 
 func TestNodeInstallUsesNvmNotApt(t *testing.T) {
 	runner := newFakeRunner()
-	operator := newOperator(runner)
+	operator := newOperator(t, runner)
 	plan, err := operator.Plan(context.Background(), Change{Action: ActionInstall, App: "nodejs", Version: "22"})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -237,8 +292,11 @@ func TestNodeInstallUsesNvmNotApt(t *testing.T) {
 	}
 }
 
+// Node.js 23 is published but never an LTS line, so it must stay uninstallable
+// even though enumeration now decides the version list.
 func TestNodeVersionRejectedOutsideCatalog(t *testing.T) {
-	if _, _, err := normalize(Change{Action: ActionInstall, App: "nodejs", Version: "23"}); err == nil {
+	operator := newOperator(t, newFakeRunner())
+	if _, _, err := operator.normalize(context.Background(), Change{Action: ActionInstall, App: "nodejs", Version: "23"}); err == nil {
 		t.Fatal("expected rejection for an uncatalogued Node.js version")
 	}
 }

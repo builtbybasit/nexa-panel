@@ -9,10 +9,18 @@ package packages
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
+	"sync"
 	"time"
 )
+
+// errUnexpectedNodeIndex reports a non-2xx response from the Node.js release index.
+func errUnexpectedNodeIndex(status int) error {
+	return fmt.Errorf("node.js release index returned status %d", status)
+}
 
 // PlanKind identifies plans issued by this operator; the agent binds its HMAC
 // signature to a plan of this kind.
@@ -68,6 +76,10 @@ type Observation struct {
 // Operator is the interface the control plane depends on (via a Unix-socket
 // client) and the agent serves.
 type Operator interface {
+	// Catalog reports what this node's repositories can install. It is a node
+	// call rather than a local table because only the node knows which versions
+	// its configured repositories actually offer.
+	Catalog(context.Context) ([]CatalogEntry, error)
 	Discover(context.Context) ([]InstalledPackage, error)
 	Plan(context.Context, Change) (Plan, error)
 	Apply(context.Context, Plan) (Observation, error)
@@ -101,6 +113,16 @@ func (execRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 type HostOperator struct {
 	runner Runner
 	now    func() time.Time
+	// client and nodeIndexURL fetch the Node.js release index; the URL is a
+	// field so tests can point it at a local server.
+	client       *http.Client
+	nodeIndexURL string
+	// The catalog is enumerated from apt and nodejs.org, so it is cached: it is
+	// read on every list, plan, and apply.
+	catalogMu     sync.Mutex
+	cachedCatalog []catalogEntry
+	cachedAt      time.Time
+	catalogTTL    time.Duration
 }
 
 // NewHostOperator builds the operator; a nil runner uses the real exec runner.
@@ -108,7 +130,13 @@ func NewHostOperator(runner Runner) (*HostOperator, error) {
 	if runner == nil {
 		runner = execRunner{}
 	}
-	return &HostOperator{runner: runner, now: time.Now}, nil
+	return &HostOperator{
+		runner:       runner,
+		now:          time.Now,
+		client:       &http.Client{Timeout: 15 * time.Second},
+		nodeIndexURL: NodeIndexURL,
+		catalogTTL:   5 * time.Minute,
+	}, nil
 }
 
 // command builds a non-interactive apt-safe invocation.

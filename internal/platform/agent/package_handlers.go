@@ -16,6 +16,18 @@ func WithPackagesOperator(operator packagesoperator.Operator) Option {
 	return func(server *Server) { server.packages = operator }
 }
 
+// Reports what the node's repositories offer and mutates nothing, so it needs no
+// signed plan — the bearer token that reached this handler is the whole
+// authorization story, as with packagesDiscoverHTTP.
+func (s *Server) packagesCatalogHTTP(w http.ResponseWriter, r *http.Request) {
+	entries, err := s.packages.Catalog(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "packages_catalog_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+}
+
 func (s *Server) packagesDiscoverHTTP(w http.ResponseWriter, r *http.Request) {
 	items, err := s.packages.Discover(r.Context())
 	if err != nil {

@@ -11,17 +11,39 @@ import (
 // packages is expected and ignored); nvm-managed Node.js versions come from the
 // nvm directory. The two are merged into one installed set.
 func (o *HostOperator) Discover(ctx context.Context) ([]InstalledPackage, error) {
-	names := aptPackageNames()
+	names, err := o.aptPackageNames(ctx)
+	if err != nil {
+		return nil, err
+	}
 	args := append([]string{"-W", "-f", "${binary:Package}|${Version}|${db:Status-Status}\n"}, names...)
 	output, _ := o.runner.Run(ctx, Command{Name: "dpkg-query", Args: args})
 	result := parseDpkg(string(output), names)
-	return append(result, o.discoverNode(ctx)...), nil
+	nodeVersions, err := o.nodeCatalogVersions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(result, o.discoverNode(ctx, nodeVersions)...), nil
+}
+
+// nodeCatalogVersions lists the Node.js majors the catalog currently offers.
+func (o *HostOperator) nodeCatalogVersions(ctx context.Context) ([]string, error) {
+	entries, err := o.catalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	versions := []string{}
+	for _, entry := range entries {
+		if entry.Method == methodNVM {
+			versions = append(versions, entry.Version)
+		}
+	}
+	return versions, nil
 }
 
 // discoverNode lists the Node.js majors nvm has installed under nvmDir and maps
 // each to its synthetic catalog identifier. Runs through the command runner so
 // tests can inject the directory listing.
-func (o *HostOperator) discoverNode(ctx context.Context) []InstalledPackage {
+func (o *HostOperator) discoverNode(ctx context.Context, nodeVersions []string) []InstalledPackage {
 	command := command("sh", "-c", `ls -1 "$NVM_DIR/versions/node" 2>/dev/null || true`)
 	command.Env = append(command.Env, "NVM_DIR="+nvmDir)
 	output, err := o.runner.Run(ctx, command)

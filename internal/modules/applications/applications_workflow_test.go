@@ -19,9 +19,27 @@ import (
 type fakePackages struct {
 	installed map[string]string
 	lastApply packagesoperator.Plan
+	// catalog stands in for what the node's repositories offer; catalogError
+	// simulates a node whose apt index cannot be read.
+	catalog      []packagesoperator.CatalogEntry
+	catalogError error
 }
 
-func newFakePackages() *fakePackages { return &fakePackages{installed: map[string]string{}} }
+func newFakePackages() *fakePackages {
+	return &fakePackages{
+		installed: map[string]string{},
+		catalog: []packagesoperator.CatalogEntry{
+			{App: "php", Version: "8.3", Label: "PHP 8.3", Category: "php", Packages: []string{"php8.3-fpm"}},
+		},
+	}
+}
+
+func (f *fakePackages) Catalog(context.Context) ([]packagesoperator.CatalogEntry, error) {
+	if f.catalogError != nil {
+		return nil, f.catalogError
+	}
+	return f.catalog, nil
+}
 
 func (f *fakePackages) Discover(context.Context) ([]packagesoperator.InstalledPackage, error) {
 	items := []packagesoperator.InstalledPackage{}

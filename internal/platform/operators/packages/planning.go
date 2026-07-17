@@ -16,7 +16,7 @@ const planExpiry = 10 * time.Minute
 // catalog, and returns a reviewable, human-readable plan. Signing happens in
 // the agent handler, not here.
 func (o *HostOperator) Plan(ctx context.Context, change Change) (Plan, error) {
-	change, entry, err := normalize(change)
+	change, entry, err := o.normalize(ctx, change)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -66,8 +66,8 @@ func planNarrative(change Change, entry catalogEntry) ([]string, []string) {
 		fmt.Sprintf("Install %d %s package(s): %s.", len(entry.Packages), entry.Label, strings.Join(entry.Packages, ", ")),
 		"Verify the packages report as installed.",
 	)
-	if entry.App == "php" && entry.Version == "7.4" {
-		warnings = append(warnings, "PHP 7.4 is end of life and receives no upstream security fixes.")
+	if entry.App == "php" && entry.Version == phpFloor {
+		warnings = append(warnings, "PHP "+phpFloor+" is end of life and receives no upstream security fixes.")
 	}
 	if entry.Category == "database" {
 		warnings = append(warnings, "A database engine has an ongoing memory cost; review the node's capacity profile before installing on a compact server.")
@@ -94,9 +94,11 @@ func nodeNarrative(change Change, entry catalogEntry) ([]string, []string) {
 		}
 }
 
-// nodeMajor returns the numeric major for a validated Node.js catalog version.
+// nodeMajor returns the numeric major for a Node.js catalog version. The entry
+// already came from the catalog, but the shape is re-checked here because this
+// value is what reaches nvm's command line.
 func nodeMajor(version string) (int, error) {
-	if !nodeMajorPattern.MatchString(version) {
+	if !majorPattern.MatchString(version) {
 		return 0, fmt.Errorf("unsupported Node.js version %q", version)
 	}
 	return strconv.Atoi(version)

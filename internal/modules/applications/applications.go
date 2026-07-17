@@ -70,9 +70,13 @@ func (m *Module) List(ctx context.Context) ([]Application, error) {
 	for _, item := range installed {
 		installedByName[item.Name] = item
 	}
+	catalog, err := m.operator.Catalog(ctx)
+	if err != nil {
+		return nil, err
+	}
 	now := m.now().UTC()
 	apps := []Application{}
-	for _, entry := range packagesoperator.Catalog() {
+	for _, entry := range catalog {
 		id := catalogID(entry.App, entry.Version)
 		model, err := m.getOrCreate(ctx, id, entry, now)
 		if err != nil {
@@ -121,7 +125,10 @@ func displayStatus(status Status, installed bool) string {
 
 // RequestChange queues a plan job for an install or remove of a catalog app.
 func (m *Module) RequestChange(ctx context.Context, id string, action packagesoperator.Action, actor *string) (Application, jobs.Job, error) {
-	entry, ok := catalogByID(id)
+	entry, ok, err := m.catalogByID(ctx, id)
+	if err != nil {
+		return Application{}, jobs.Job{}, err
+	}
 	if !ok {
 		return Application{}, jobs.Job{}, errors.New("application is not installable from this page")
 	}
@@ -233,7 +240,10 @@ func (m *Module) planJob(ctx context.Context, raw json.RawMessage, report func(i
 	if json.Unmarshal(raw, &request) != nil || request.ID == "" {
 		return nil, errors.New("invalid applications planning request")
 	}
-	entry, ok := catalogByID(request.ID)
+	entry, ok, err := m.catalogByID(ctx, request.ID)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, errors.New("unknown application")
 	}

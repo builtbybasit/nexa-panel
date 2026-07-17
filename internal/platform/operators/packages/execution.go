@@ -16,7 +16,7 @@ func (o *HostOperator) Apply(ctx context.Context, plan Plan) (Observation, error
 	if plan.ID == "" || plan.Kind != PlanKind || o.now().UTC().After(plan.ExpiresAt) {
 		return Observation{}, errors.New("application plan is invalid or expired")
 	}
-	change, entry, err := normalize(plan.Change)
+	change, entry, err := o.normalize(ctx, plan.Change)
 	if err != nil {
 		return Observation{}, err
 	}
@@ -48,6 +48,9 @@ func (o *HostOperator) install(ctx context.Context, change Change, entry catalog
 	if err := o.ensureRepo(ctx, entry); err != nil {
 		return Observation{}, err
 	}
+	// Adding a repository changes what this node can install, so the enumerated
+	// catalog is stale from here on.
+	o.invalidateCatalog()
 	// Always refresh the index before installing: the package list may be empty
 	// or stale (e.g. a minimal image that cleaned /var/lib/apt/lists), which
 	// otherwise surfaces as "Unable to locate package" even for base-repo apps.

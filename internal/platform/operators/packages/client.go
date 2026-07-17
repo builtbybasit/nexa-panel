@@ -29,6 +29,14 @@ func NewUnixClient(socketPath, tokenPath string) *UnixClient {
 	return &UnixClient{tokenPath: tokenPath, client: &http.Client{Transport: transport, Timeout: 30 * time.Minute}}
 }
 
+func (c *UnixClient) Catalog(ctx context.Context) ([]CatalogEntry, error) {
+	var result struct {
+		Entries []CatalogEntry `json:"entries"`
+	}
+	err := c.call(ctx, http.MethodGet, "/v1/packages/available", nil, &result)
+	return result.Entries, err
+}
+
 func (c *UnixClient) Discover(ctx context.Context) ([]InstalledPackage, error) {
 	var result struct {
 		Items []InstalledPackage `json:"items"`

@@ -43,6 +43,23 @@ func TestRendererRejectsClientControlledPathsAndPHP7(t *testing.T) {
 	}
 }
 
+// A PHP branch published after this code was written must be usable by a site;
+// the renderer enforces the floor, not a list of known branches.
+func TestRendererAcceptsAnyPHPBranchAtOrAboveTheFloor(t *testing.T) {
+	for _, version := range []string{"7.4", "8.0", "8.5", "8.10", "9.0", "10.2"} {
+		site := Site{ID: "site-1", Slug: "demo-site", PrimaryDomain: "demo.example.com", PHPVersion: version, UnixUser: "nexa_demo_site", RootPath: "/srv/nexa/sites/demo-site", SocketPath: "/run/php/nexa-demo-site.sock"}
+		if _, err := (Renderer{}).Render(site); err != nil {
+			t.Fatalf("PHP %s should be renderable: %v", version, err)
+		}
+	}
+	for _, version := range []string{"7.3", "5.6", "8", "8.3.1", "8.x", "8.3; rm -rf /", ""} {
+		site := Site{ID: "site-1", Slug: "demo-site", PrimaryDomain: "demo.example.com", PHPVersion: version, UnixUser: "nexa_demo_site", RootPath: "/srv/nexa/sites/demo-site", SocketPath: "/run/php/nexa-demo-site.sock"}
+		if _, err := (Renderer{}).Render(site); err == nil {
+			t.Fatalf("PHP %q should be rejected below the %s floor or as malformed", version, phpFloor)
+		}
+	}
+}
+
 func TestRendererAllowsLegacyPHP74(t *testing.T) {
 	site := Site{ID: "site-1", Slug: "legacy-site", PrimaryDomain: "legacy.example.com", PHPVersion: "7.4", UnixUser: "nexa_legacy_site", RootPath: "/srv/nexa/sites/legacy-site", SocketPath: "/run/php/nexa-legacy-site.sock"}
 	if _, err := (Renderer{}).Render(site); err != nil {

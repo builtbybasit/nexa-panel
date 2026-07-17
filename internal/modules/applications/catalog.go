@@ -21,14 +21,20 @@ func catalogID(app, version string) string {
 	return app + "-" + version
 }
 
-// catalogByID resolves a UI identifier back to its packages catalog entry.
-func catalogByID(id string) (packagesoperator.CatalogEntry, bool) {
-	for _, entry := range packagesoperator.Catalog() {
+// catalogByID resolves a UI identifier back to its packages catalog entry. The
+// catalog lives on the node (only it knows what its repositories offer), so this
+// is an agent call rather than a table lookup.
+func (m *Module) catalogByID(ctx context.Context, id string) (packagesoperator.CatalogEntry, bool, error) {
+	entries, err := m.operator.Catalog(ctx)
+	if err != nil {
+		return packagesoperator.CatalogEntry{}, false, err
+	}
+	for _, entry := range entries {
 		if catalogID(entry.App, entry.Version) == id {
-			return entry, true
+			return entry, true, nil
 		}
 	}
-	return packagesoperator.CatalogEntry{}, false
+	return packagesoperator.CatalogEntry{}, false, nil
 }
 
 // webClientApplication maps an admin-tools container into an Applications card.
