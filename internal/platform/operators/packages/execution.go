@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 )
 
 // Apply installs or removes a catalog application after re-validating the plan.
@@ -41,13 +42,17 @@ func (o *HostOperator) Apply(ctx context.Context, plan Plan) (Observation, error
 }
 
 func (o *HostOperator) install(ctx context.Context, change Change, entry catalogEntry) (Observation, error) {
+	if entry.Method == methodNVM {
+		return o.installNode(ctx, change, entry)
+	}
 	if err := o.ensureRepo(ctx, entry); err != nil {
 		return Observation{}, err
 	}
-	if entry.Repo != repoNone {
-		if output, err := o.runner.Run(ctx, command("apt-get", "update")); err != nil {
-			return Observation{}, commandError("update the apt package index", output, err)
-		}
+	// Always refresh the index before installing: the package list may be empty
+	// or stale (e.g. a minimal image that cleaned /var/lib/apt/lists), which
+	// otherwise surfaces as "Unable to locate package" even for base-repo apps.
+	if output, err := o.runner.Run(ctx, command("apt-get", "update")); err != nil {
+		return Observation{}, commandError("update the apt package index", output, err)
 	}
 	args := append([]string{"install", "-y", "--no-install-recommends"}, entry.Packages...)
 	if output, err := o.runner.Run(ctx, command("apt-get", args...)); err != nil {
@@ -57,6 +62,9 @@ func (o *HostOperator) install(ctx context.Context, change Change, entry catalog
 }
 
 func (o *HostOperator) remove(ctx context.Context, change Change, entry catalogEntry) (Observation, error) {
+	if entry.Method == methodNVM {
+		return o.removeNode(ctx, change, entry)
+	}
 	args := append([]string{"purge", "-y"}, entry.Packages...)
 	if output, err := o.runner.Run(ctx, command("apt-get", args...)); err != nil {
 		return Observation{}, commandError("remove "+entry.Label, output, err)
@@ -65,9 +73,8 @@ func (o *HostOperator) remove(ctx context.Context, change Change, entry catalogE
 	return o.verify(ctx, change, entry)
 }
 
-// ensureRepo configures the fixed repository an entry requires. Every command
-// is typed with fixed arguments; only the validated Node.js major is
-// interpolated, and only after re-validation.
+// ensureRepo configures the fixed repository an apt entry requires. Every
+// command is typed with fixed arguments; nothing from the request reaches it.
 func (o *HostOperator) ensureRepo(ctx context.Context, entry catalogEntry) error {
 	switch entry.Repo {
 	case repoNone:
@@ -88,34 +95,72 @@ func (o *HostOperator) ensureRepo(ctx context.Context, entry catalogEntry) error
 			return commandError("add the PostgreSQL PGDG repository", output, err)
 		}
 		return nil
-	case repoNodeSource:
-		return o.ensureNodeSource(ctx, entry)
 	default:
 		return fmt.Errorf("unknown repository for %q", entry.App)
 	}
 }
 
-const nodeKeyringPath = "/etc/apt/keyrings/nodesource.asc"
+const (
+	// nvmDir is the node-wide nvm home the agent manages. nvmVersion pins the
+	// nvm release so the installer is reproducible and not a live curl|bash.
+	nvmDir     = "/opt/nvm"
+	nvmVersion = "v0.40.3"
+	// nvmLoad sources nvm; the validated major is passed as $1 (never
+	// interpolated into the script) to keep the shell call injection-safe.
+	nvmLoad = `export NVM_DIR="` + nvmDir + `"; . "$NVM_DIR/nvm.sh"`
+)
 
-func (o *HostOperator) ensureNodeSource(ctx context.Context, entry catalogEntry) error {
+func (o *HostOperator) installNode(ctx context.Context, change Change, entry catalogEntry) (Observation, error) {
 	major, err := nodeMajor(entry.Version)
 	if err != nil {
-		return err
+		return Observation{}, err
 	}
-	if output, err := o.runner.Run(ctx, command("apt-get", "install", "-y", "--no-install-recommends", "curl", "ca-certificates", "gnupg")); err != nil {
-		return commandError("install repository tooling", output, err)
+	if err := o.ensureNVM(ctx); err != nil {
+		return Observation{}, err
 	}
-	if output, err := o.runner.Run(ctx, command("install", "-d", "-m", "0755", "/etc/apt/keyrings")); err != nil {
-		return commandError("prepare the apt keyring directory", output, err)
+	script := nvmLoad + ` && nvm install "$1"`
+	if output, err := o.runner.Run(ctx, nvmCommand(script, strconv.Itoa(major))); err != nil {
+		return Observation{}, commandError("install "+entry.Label+" via nvm", output, err)
 	}
-	if output, err := o.runner.Run(ctx, command("curl", "-fsSL", "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key", "-o", nodeKeyringPath)); err != nil {
-		return commandError("download the NodeSource signing key", output, err)
+	return o.verify(ctx, change, entry)
+}
+
+func (o *HostOperator) removeNode(ctx context.Context, change Change, entry catalogEntry) (Observation, error) {
+	major, err := nodeMajor(entry.Version)
+	if err != nil {
+		return Observation{}, err
 	}
-	list := fmt.Sprintf("deb [signed-by=%s] https://deb.nodesource.com/node_%d.x nodistro main\n", nodeKeyringPath, major)
-	if err := secureWrite("/etc/apt/sources.list.d/nodesource.list", []byte(list), 0o644); err != nil {
-		return fmt.Errorf("write the NodeSource repository: %w", err)
+	script := nvmLoad + ` && v="$(nvm version "$1")" && [ "$v" != "N/A" ] && nvm uninstall "$v"`
+	if output, err := o.runner.Run(ctx, nvmCommand(script, strconv.Itoa(major))); err != nil {
+		return Observation{}, commandError("remove "+entry.Label+" via nvm", output, err)
+	}
+	return o.verify(ctx, change, entry)
+}
+
+// ensureNVM installs the pinned nvm release into nvmDir if absent, after its
+// git/curl prerequisites. nvm then downloads prebuilt Node.js runtimes.
+func (o *HostOperator) ensureNVM(ctx context.Context) error {
+	if _, err := o.runner.Run(ctx, command("test", "-s", nvmDir+"/nvm.sh")); err == nil {
+		return nil
+	}
+	if output, err := o.runner.Run(ctx, command("apt-get", "update")); err != nil {
+		return commandError("update the apt package index", output, err)
+	}
+	if output, err := o.runner.Run(ctx, command("apt-get", "install", "-y", "--no-install-recommends", "git", "curl", "ca-certificates")); err != nil {
+		return commandError("install nvm prerequisites", output, err)
+	}
+	if output, err := o.runner.Run(ctx, command("git", "clone", "--depth", "1", "--branch", nvmVersion, "https://github.com/nvm-sh/nvm.git", nvmDir)); err != nil {
+		return commandError("install nvm", output, err)
 	}
 	return nil
+}
+
+// nvmCommand builds a bash invocation that sources nvm and runs script with the
+// given positional argument as $1.
+func nvmCommand(script, arg string) Command {
+	cmd := command("bash", "-c", script, "nvm", arg)
+	cmd.Env = append(cmd.Env, "NVM_DIR="+nvmDir)
+	return cmd
 }
 
 // verify re-discovers state and confirms the entry's packages reached the

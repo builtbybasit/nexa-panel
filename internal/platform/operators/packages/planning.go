@@ -39,6 +39,9 @@ func (o *HostOperator) Plan(ctx context.Context, change Change) (Plan, error) {
 
 // planNarrative builds the operator-facing step list and warnings.
 func planNarrative(change Change, entry catalogEntry) ([]string, []string) {
+	if entry.Method == methodNVM {
+		return nodeNarrative(change, entry)
+	}
 	steps := []string{}
 	warnings := []string{}
 	if change.Action == ActionRemove {
@@ -57,13 +60,8 @@ func planNarrative(change Change, entry catalogEntry) ([]string, []string) {
 	case repoPGDG:
 		steps = append(steps, "Ensure the PostgreSQL PGDG apt repository is configured.")
 		warnings = append(warnings, "This adds the official PostgreSQL PGDG repository to apt sources.")
-	case repoNodeSource:
-		steps = append(steps, fmt.Sprintf("Ensure the NodeSource node_%s.x apt repository is configured.", entry.Version))
-		warnings = append(warnings, "This adds the third-party NodeSource repository and signing key to apt sources.")
 	}
-	if entry.Repo != repoNone {
-		steps = append(steps, "Update the apt package index.")
-	}
+	steps = append(steps, "Update the apt package index.")
 	steps = append(steps,
 		fmt.Sprintf("Install %d %s package(s): %s.", len(entry.Packages), entry.Label, strings.Join(entry.Packages, ", ")),
 		"Verify the packages report as installed.",
@@ -75,6 +73,25 @@ func planNarrative(change Change, entry catalogEntry) ([]string, []string) {
 		warnings = append(warnings, "A database engine has an ongoing memory cost; review the node's capacity profile before installing on a compact server.")
 	}
 	return steps, warnings
+}
+
+// nodeNarrative describes the nvm-based Node.js install/remove flow.
+func nodeNarrative(change Change, entry catalogEntry) ([]string, []string) {
+	if change.Action == ActionRemove {
+		return []string{
+				fmt.Sprintf("Uninstall %s via nvm.", entry.Label),
+				"Verify the version is no longer available.",
+			}, []string{
+				fmt.Sprintf("Removing %s affects anything using that Node.js version.", entry.Label),
+			}
+	}
+	return []string{
+			"Ensure nvm (Node Version Manager) is installed.",
+			fmt.Sprintf("Install %s via nvm (downloads the prebuilt runtime from nodejs.org).", entry.Label),
+			"Verify the version is available.",
+		}, []string{
+			"Node.js versions are managed per-node with nvm under " + nvmDir + ".",
+		}
 }
 
 // nodeMajor returns the numeric major for a validated Node.js catalog version.

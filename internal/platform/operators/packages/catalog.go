@@ -14,16 +14,25 @@ import (
 type repoKind string
 
 const (
-	repoNone       repoKind = ""
-	repoOndrejPHP  repoKind = "ondrej-php"
-	repoNodeSource repoKind = "nodesource"
-	repoPGDG       repoKind = "pgdg"
+	repoNone      repoKind = ""
+	repoOndrejPHP repoKind = "ondrej-php"
+	repoPGDG      repoKind = "pgdg"
 )
 
-// catalogEntry is one installable (app, version) with its derived apt packages
-// and the repository it requires. This table is the allowlist: normalize()
+// installMethod selects how an entry is installed. The default (apt) covers PHP,
+// PostgreSQL, and Composer; Node.js uses nvm so several major versions can
+// coexist (apt's single `nodejs` package cannot).
+type installMethod string
+
+const (
+	methodAPT installMethod = ""
+	methodNVM installMethod = "nvm"
+)
+
+// catalogEntry is one installable (app, version) with its derived packages and
+// the repository/method it requires. This table is the allowlist: normalize()
 // refuses anything not present here, so no attacker-controlled string ever
-// reaches the package-install command line.
+// reaches an install command line.
 type catalogEntry struct {
 	App      string
 	Version  string
@@ -31,8 +40,13 @@ type catalogEntry struct {
 	Summary  string
 	Category string
 	Repo     repoKind
+	Method   installMethod
 	Packages []string
 }
+
+// nodePackageName is the synthetic per-major identifier used to track an
+// nvm-installed Node.js version (there is no apt package for it).
+func nodePackageName(version string) string { return "nodejs-" + version }
 
 var (
 	phpVersions  = []string{"7.4", "8.1", "8.2", "8.3", "8.4"}
@@ -77,8 +91,8 @@ func catalog() []catalogEntry {
 	for _, version := range nodeVersions {
 		entries = append(entries, catalogEntry{
 			App: "nodejs", Version: version, Label: "Node.js " + version,
-			Summary:  "Node.js " + version + " LTS runtime and npm",
-			Category: "runtime", Repo: repoNodeSource, Packages: []string{"nodejs"},
+			Summary:  "Node.js " + version + " LTS runtime and npm (installed with nvm)",
+			Category: "runtime", Method: methodNVM, Packages: []string{nodePackageName(version)},
 		})
 	}
 	entries = append(entries, catalogEntry{
@@ -124,12 +138,16 @@ func lookup(app, version string) (catalogEntry, bool) {
 	return catalogEntry{}, false
 }
 
-// allPackageNames returns the deduplicated set of every package the catalog can
-// manage — the exact set discovery queries.
-func allPackageNames() []string {
+// aptPackageNames returns the deduplicated set of apt package names the catalog
+// manages — the exact set dpkg-query discovery inspects. nvm-managed entries
+// (Node.js) are excluded; they are discovered from the nvm directory instead.
+func aptPackageNames() []string {
 	seen := map[string]struct{}{}
 	names := []string{}
 	for _, entry := range catalog() {
+		if entry.Method != methodAPT {
+			continue
+		}
 		for _, name := range entry.Packages {
 			if _, exists := seen[name]; exists {
 				continue

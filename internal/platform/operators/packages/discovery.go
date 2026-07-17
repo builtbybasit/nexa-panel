@@ -6,16 +6,48 @@ import (
 	"strings"
 )
 
-// Discover reports the installed state of every package the catalog manages,
-// using a single dpkg-query. dpkg-query exits non-zero when some queried
-// packages are unknown; that is expected here (most catalog packages are
-// usually absent), so the exit status is ignored and the output is parsed
-// defensively against the known package names.
+// Discover reports the installed state of every package the catalog manages.
+// apt packages come from a single dpkg-query (its non-zero exit for unknown
+// packages is expected and ignored); nvm-managed Node.js versions come from the
+// nvm directory. The two are merged into one installed set.
 func (o *HostOperator) Discover(ctx context.Context) ([]InstalledPackage, error) {
-	names := allPackageNames()
+	names := aptPackageNames()
 	args := append([]string{"-W", "-f", "${binary:Package}|${Version}|${db:Status-Status}\n"}, names...)
 	output, _ := o.runner.Run(ctx, Command{Name: "dpkg-query", Args: args})
-	return parseDpkg(string(output), names), nil
+	result := parseDpkg(string(output), names)
+	return append(result, o.discoverNode(ctx)...), nil
+}
+
+// discoverNode lists the Node.js majors nvm has installed under nvmDir and maps
+// each to its synthetic catalog identifier. Runs through the command runner so
+// tests can inject the directory listing.
+func (o *HostOperator) discoverNode(ctx context.Context) []InstalledPackage {
+	command := command("sh", "-c", `ls -1 "$NVM_DIR/versions/node" 2>/dev/null || true`)
+	command.Env = append(command.Env, "NVM_DIR="+nvmDir)
+	output, err := o.runner.Run(ctx, command)
+	if err != nil {
+		return nil
+	}
+	byMajor := map[string]string{}
+	for _, line := range strings.Split(string(output), "\n") {
+		name := strings.TrimSpace(line)
+		if !strings.HasPrefix(name, "v") {
+			continue
+		}
+		full := strings.TrimPrefix(name, "v")
+		major := full
+		if dot := strings.Index(full, "."); dot > 0 {
+			major = full[:dot]
+		}
+		byMajor[major] = full
+	}
+	items := []InstalledPackage{}
+	for _, version := range nodeVersions {
+		if full, ok := byMajor[version]; ok {
+			items = append(items, InstalledPackage{Name: nodePackageName(version), Version: full, Installed: true})
+		}
+	}
+	return items
 }
 
 // parseDpkg extracts pipe-delimited entries for known package names. Any stderr

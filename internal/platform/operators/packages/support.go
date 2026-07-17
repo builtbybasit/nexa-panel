@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -38,27 +37,12 @@ func randomID() string {
 	return hex.EncodeToString(value)
 }
 
-// secureWrite writes a file atomically (temp + rename) with the given mode.
-func secureWrite(path string, value []byte, mode os.FileMode) error {
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, value, mode); err != nil {
-		return err
-	}
-	if err := os.Chmod(temporary, mode); err != nil {
-		_ = os.Remove(temporary)
-		return err
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		_ = os.Remove(temporary)
-		return err
-	}
-	return nil
-}
-
 func commandError(action string, output []byte, err error) error {
 	message := strings.TrimSpace(string(output))
-	if len(message) > 500 {
-		message = message[:500]
+	// apt/dpkg/add-apt-repository failures (e.g. a Python traceback from a PPA
+	// handler) carry the real cause in their tail; keep enough to diagnose it.
+	if len(message) > 2000 {
+		message = message[len(message)-2000:]
 	}
 	if message == "" {
 		return fmt.Errorf("%s: %w", action, err)

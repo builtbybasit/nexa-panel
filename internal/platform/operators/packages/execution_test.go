@@ -2,20 +2,22 @@ package packages
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 )
 
-// fakeRunner records every command and simulates dpkg/apt against an in-memory
-// installed set so tests never touch the real system.
+// fakeRunner records every command and simulates dpkg/apt/nvm against in-memory
+// state so tests never touch the real system.
 type fakeRunner struct {
-	installed map[string]string
+	installed map[string]string // apt packages -> version
+	nodes     map[string]string // node major -> full version
 	calls     [][]string
 }
 
 func newFakeRunner() *fakeRunner {
-	return &fakeRunner{installed: map[string]string{}}
+	return &fakeRunner{installed: map[string]string{}, nodes: map[string]string{}}
 }
 
 func (f *fakeRunner) Run(_ context.Context, c Command) ([]byte, error) {
@@ -43,6 +45,22 @@ func (f *fakeRunner) Run(_ context.Context, c Command) ([]byte, error) {
 				continue
 			}
 			delete(f.installed, arg)
+		}
+	case c.Name == "test":
+		// nvm is never pre-installed in tests, so ensureNVM always runs.
+		return nil, errors.New("not found")
+	case c.Name == "sh" && len(c.Args) >= 2 && strings.Contains(c.Args[1], "versions/node"):
+		var builder strings.Builder
+		for _, full := range f.nodes {
+			builder.WriteString("v" + full + "\n")
+		}
+		return []byte(builder.String()), nil
+	case c.Name == "bash" && len(c.Args) >= 4 && c.Args[0] == "-c":
+		script, major := c.Args[1], c.Args[3]
+		if strings.Contains(script, "nvm install") {
+			f.nodes[major] = major + ".1.0"
+		} else if strings.Contains(script, "nvm uninstall") {
+			delete(f.nodes, major)
 		}
 	}
 	return nil, nil
@@ -181,6 +199,47 @@ func TestApplyRemoveMapsToPurge(t *testing.T) {
 	}
 	if runner.findCall("apt-get", "purge") == nil {
 		t.Fatal("expected an apt-get purge call")
+	}
+}
+
+func TestNodeInstallUsesNvmNotApt(t *testing.T) {
+	runner := newFakeRunner()
+	operator := newOperator(runner)
+	plan, err := operator.Plan(context.Background(), Change{Action: ActionInstall, App: "nodejs", Version: "22"})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	observation, err := operator.Apply(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !observation.Installed || !observation.Verified || observation.Version != "22.1.0" {
+		t.Fatalf("expected verified node 22.1.0, got %+v", observation)
+	}
+	// It must go through nvm, never `apt-get install nodejs`.
+	for _, call := range runner.calls {
+		if len(call) >= 2 && call[0] == "apt-get" && call[1] == "install" {
+			for _, arg := range call {
+				if arg == "nodejs" {
+					t.Fatalf("node install used apt for nodejs: %v", call)
+				}
+			}
+		}
+	}
+	nvm := false
+	for _, call := range runner.calls {
+		if call[0] == "bash" && len(call) >= 4 && strings.Contains(call[2], "nvm install") && call[4] == "22" {
+			nvm = true
+		}
+	}
+	if !nvm {
+		t.Fatal("expected a bash nvm install call with major 22")
+	}
+}
+
+func TestNodeVersionRejectedOutsideCatalog(t *testing.T) {
+	if _, _, err := normalize(Change{Action: ActionInstall, App: "nodejs", Version: "23"}); err == nil {
+		t.Fatal("expected rejection for an uncatalogued Node.js version")
 	}
 }
 
