@@ -92,6 +92,12 @@ func (m *Module) eventsHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "streaming_unavailable", "Progress streaming is unavailable.")
 		return
 	}
+	// A job can run for minutes (e.g. an apt/nvm package install), far longer
+	// than the server's WriteTimeout; extend the per-connection write deadline
+	// on every flush so the SSE stream is not severed mid-job. Other endpoints
+	// keep the timeout. Mirrors the logs live-tail handler.
+	controller := http.NewResponseController(w)
+	_ = controller.SetWriteDeadline(time.Now().Add(time.Minute))
 	sequence := int64(0)
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
@@ -126,6 +132,7 @@ func (m *Module) eventsHTTP(w http.ResponseWriter, r *http.Request) {
 			sequence = event.Sequence
 		}
 		if len(events) > 0 {
+			_ = controller.SetWriteDeadline(time.Now().Add(time.Minute))
 			flusher.Flush()
 		}
 		job, err := m.Get(r.Context(), id)
@@ -137,6 +144,7 @@ func (m *Module) eventsHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-poll.C:
 		case <-heartbeat.C:
+			_ = controller.SetWriteDeadline(time.Now().Add(time.Minute))
 			_, _ = io.WriteString(w, ": keep-alive\n\n")
 			flusher.Flush()
 		}
