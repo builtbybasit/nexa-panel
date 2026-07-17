@@ -134,6 +134,14 @@ func UserFromContext(ctx context.Context) (User, bool) {
 	return value.User, ok
 }
 
+// principalFromContext returns the full authenticated principal, including the
+// session identifier, for handlers that need to act on the current session
+// (e.g. keeping it alive while revoking the account's other sessions).
+func principalFromContext(ctx context.Context) (principal, bool) {
+	value, ok := ctx.Value(principalContextKey{}).(principal)
+	return value, ok
+}
+
 type Module struct {
 	database      *bun.DB
 	audit         audit.Recorder
@@ -204,6 +212,14 @@ func (m *Module) Register(registry module.Registry) error {
 		{"POST /api/v1/auth/mfa/enroll", http.HandlerFunc(m.mfaEnrollHTTP), false},
 		{"POST /api/v1/auth/mfa/confirm", http.HandlerFunc(m.mfaConfirmHTTP), false},
 		{"POST /api/v1/auth/mfa/verify", http.HandlerFunc(m.mfaVerifyHTTP), false},
+		// Disabling requires a fully authenticated session (the middleware enforces
+		// a completed MFA challenge when one is enrolled), so a stolen password
+		// alone can never strip the second factor.
+		{"POST /api/v1/auth/mfa/disable", http.HandlerFunc(m.mfaDisableHTTP), true},
+		// Self-service password change: authenticated, and re-confirmed with the
+		// current password. A fully authenticated session is required (the
+		// middleware enforces a completed MFA challenge when one is enrolled).
+		{"POST /api/v1/auth/password", http.HandlerFunc(m.changePasswordHTTP), true},
 		{"GET /api/v1/auth/session", http.HandlerFunc(m.sessionHTTP), true},
 		{"POST /api/v1/auth/logout", http.HandlerFunc(m.logoutHTTP), false},
 	}
@@ -244,7 +260,10 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 			return
 		}
-		if person.MFAVerifiedAt == nil {
+		// MFA is optional: only sessions belonging to a user who has enrolled a
+		// second factor must complete the challenge. Accounts without TOTP pass
+		// straight through, and can enable it later from account security.
+		if person.TOTPConfirmedAt != nil && person.MFAVerifiedAt == nil {
 			writeError(w, http.StatusUnauthorized, "mfa_required", "Complete multi-factor authentication to continue.")
 			return
 		}

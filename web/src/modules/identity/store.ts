@@ -22,6 +22,8 @@ export const useIdentityStore = defineStore('identity', {
     loading: false,
     phase: 'login' as AuthenticationPhase,
     user: undefined as User | undefined,
+    /** Whether the signed-in account has a confirmed second factor. */
+    mfaEnabled: false,
     enrollment: undefined as MFAEnrollment | undefined,
     recoveryCodes: [] as string[],
     error: '',
@@ -36,12 +38,13 @@ export const useIdentityStore = defineStore('identity', {
       try {
         const status = await getIdentityStatus()
         this.user = status.user
+        this.mfaEnabled = status.mfaEnabled
+        // Second-factor setup is optional, so we never force the enroll phase on
+        // load: an account without MFA is simply authenticated.
         if (status.bootstrapRequired) this.phase = 'bootstrap'
-        else if (status.mfaEnrollmentRequired) this.phase = 'enroll'
         else if (status.mfaChallengeRequired) this.phase = 'challenge'
         else if (status.authenticated) this.phase = 'authenticated'
         else this.phase = 'login'
-        if (this.phase === 'enroll') await this.prepareEnrollment()
       } catch (error) {
         this.error = error instanceof Error ? error.message : 'The control plane is unavailable.'
       } finally {
@@ -71,7 +74,19 @@ export const useIdentityStore = defineStore('identity', {
       }
     },
     setNextPhase(next: AuthenticationNext) {
-      this.phase = next === 'mfa_enrollment' ? 'enroll' : 'challenge'
+      if (next === 'mfa_enrollment') this.phase = 'enroll'
+      else if (next === 'mfa_challenge') this.phase = 'challenge'
+      else this.phase = 'authenticated'
+    },
+    /** Bootstrap offers MFA setup, but the operator may defer it and enable it later. */
+    skipEnrollment() {
+      this.enrollment = undefined
+      this.error = ''
+      this.phase = 'authenticated'
+    },
+    /** Reflect an enable/disable performed from the in-panel account security page. */
+    setMfaEnabled(enabled: boolean) {
+      this.mfaEnabled = enabled
     },
     async prepareEnrollment() {
       this.loading = true
@@ -91,6 +106,7 @@ export const useIdentityStore = defineStore('identity', {
         this.user = response.user
         this.recoveryCodes = response.recoveryCodes
         this.enrollment = undefined
+        this.mfaEnabled = true
         this.phase = 'recovery'
       })
     },
@@ -122,6 +138,7 @@ export const useIdentityStore = defineStore('identity', {
       try {
         await logoutRequest()
         this.user = undefined
+        this.mfaEnabled = false
         this.phase = 'login'
         this.enrollment = undefined
         this.recoveryCodes = []

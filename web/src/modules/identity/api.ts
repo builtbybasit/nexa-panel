@@ -7,12 +7,13 @@ export interface User {
 export interface IdentityStatus {
   bootstrapRequired: boolean
   authenticated: boolean
-  mfaEnrollmentRequired: boolean
+  /** Whether the signed-in account has a confirmed second factor. */
+  mfaEnabled: boolean
   mfaChallengeRequired: boolean
   user?: User
 }
 
-export type AuthenticationNext = 'mfa_enrollment' | 'mfa_challenge'
+export type AuthenticationNext = 'mfa_enrollment' | 'mfa_challenge' | 'authenticated'
 
 export interface PasswordResponse {
   user: User
@@ -91,6 +92,17 @@ export async function verifyMFA(value: string, recovery: boolean): Promise<User>
     body: JSON.stringify(recovery ? { recoveryCode: value } : { code: value }),
   })
   return response.user
+}
+
+export function disableMFA(password: string): Promise<{ user: User; mfaEnabled: false }> {
+  return request('/api/v1/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password }) })
+}
+
+export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  return request('/api/v1/auth/password', {
+    method: 'POST',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  })
 }
 
 export function logout(): Promise<void> {

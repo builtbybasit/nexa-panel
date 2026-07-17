@@ -162,7 +162,7 @@ function downloadRecoveryCodes() {
             <p class="mt-1.5 text-sm text-ink-secondary">
               {{
                 isBootstrap
-                  ? 'Use at least 12 characters. Authenticator enrollment follows next.'
+                  ? 'Use at least 12 characters. Two-factor authentication is offered next, and optional.'
                   : 'Enter your username and password to continue.'
               }}
             </p>
@@ -201,11 +201,12 @@ function downloadRecoveryCodes() {
 
         <form v-else-if="identity.phase === 'enroll'" class="space-y-4" @submit.prevent="submitMFA">
           <div class="mb-6">
-            <p class="text-[11px] font-bold tracking-[0.14em] text-accent-400 uppercase">Required second factor</p>
+            <p class="text-[11px] font-bold tracking-[0.14em] text-accent-400 uppercase">Recommended second factor</p>
             <h2 class="mt-1.5 text-2xl font-semibold tracking-tight text-ink">Connect an authenticator</h2>
             <p class="mt-1.5 text-sm text-ink-secondary">
               A code from your authenticator means a stolen password alone can never reach your servers. Scan the QR
-              code with any authenticator app, then enter its six-digit code.
+              code with any authenticator app, then enter its six-digit code. You can also skip this and enable it later
+              from account security.
             </p>
           </div>
 
@@ -244,8 +245,16 @@ function downloadRecoveryCodes() {
             {{ errorMessage }} Codes change every 30 seconds — enter the newest one and try again.
           </AppAlert>
           <AppButton variant="primary" type="submit" :loading="identity.loading" :disabled="!identity.enrollment" class="w-full">
-            Verify and enable MFA
+            Verify and enable two-factor authentication
           </AppButton>
+          <button
+            type="button"
+            class="w-full text-center text-[13px] font-medium text-ink-secondary transition-colors hover:text-ink"
+            :disabled="identity.loading"
+            @click="identity.skipEnrollment()"
+          >
+            Skip for now — set this up later
+          </button>
           <button
             type="button"
             class="w-full text-center text-[13px] font-medium text-ink-muted transition-colors hover:text-ink"

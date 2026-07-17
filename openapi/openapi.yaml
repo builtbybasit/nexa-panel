@@ -24,6 +24,10 @@ paths:
     $ref: ./paths/identity.yaml#/auth_mfa_confirm
   /auth/mfa/verify:
     $ref: ./paths/identity.yaml#/auth_mfa_verify
+  /auth/mfa/disable:
+    $ref: ./paths/identity.yaml#/auth_mfa_disable
+  /auth/password:
+    $ref: ./paths/identity.yaml#/auth_password
   /auth/session:
     $ref: ./paths/identity.yaml#/auth_session
   /auth/logout:

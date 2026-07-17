@@ -34,23 +34,30 @@ PasswordResponse:
       $ref: '#/User'
     next:
       type: string
+      description: >-
+        Where the client should go next. `mfa_enrollment` offers optional
+        second-factor setup after the first-administrator bootstrap;
+        `mfa_challenge` is required only for accounts that enrolled a second
+        factor; `authenticated` means no further step is needed.
       enum:
       - mfa_enrollment
       - mfa_challenge
+      - authenticated
 IdentityStatus:
   type: object
   required:
   - bootstrapRequired
   - authenticated
-  - mfaEnrollmentRequired
+  - mfaEnabled
   - mfaChallengeRequired
   properties:
     bootstrapRequired:
       type: boolean
     authenticated:
       type: boolean
-    mfaEnrollmentRequired:
+    mfaEnabled:
       type: boolean
+      description: Whether the current session's account has a confirmed second factor.
     mfaChallengeRequired:
       type: boolean
     user:
@@ -83,6 +90,46 @@ MFAConfirmation:
       maxItems: 10
       items:
         type: string
+MFADisableRequest:
+  type: object
+  additionalProperties: false
+  required:
+  - password
+  properties:
+    password:
+      type: string
+      format: password
+      minLength: 1
+      maxLength: 1024
+MFADisableResponse:
+  type: object
+  required:
+  - user
+  - mfaEnabled
+  properties:
+    user:
+      $ref: '#/User'
+    mfaEnabled:
+      type: boolean
+      enum:
+      - false
+ChangePasswordRequest:
+  type: object
+  additionalProperties: false
+  required:
+  - currentPassword
+  - newPassword
+  properties:
+    currentPassword:
+      type: string
+      format: password
+      minLength: 1
+      maxLength: 1024
+    newPassword:
+      type: string
+      format: password
+      minLength: 12
+      maxLength: 1024
 Credentials:
   type: object
   additionalProperties: false

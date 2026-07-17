@@ -36,7 +36,7 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBootstrapMandatoryMFARecoveryAndLogin(t *testing.T) {
+func TestBootstrapOptionalMFAEnableDisableAndLogin(t *testing.T) {
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
@@ -81,14 +81,26 @@ func TestBootstrapMandatoryMFARecoveryAndLogin(t *testing.T) {
 		t.Fatalf("unexpected bootstrap cookies: %+v", bootstrapCookies)
 	}
 
+	// Bootstrap offers enrollment but no longer forces it: the session works
+	// immediately, and the account can reach protected routes without a second
+	// factor.
 	if !strings.Contains(bootstrap.Body.String(), `"next":"mfa_enrollment"`) {
-		t.Fatalf("bootstrap did not require enrollment: %s", bootstrap.Body.String())
+		t.Fatalf("bootstrap did not offer enrollment: %s", bootstrap.Body.String())
 	}
-	blockedSession := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/session", "", bootstrapCookies[0])
-	if blockedSession.Code != http.StatusUnauthorized || !strings.Contains(blockedSession.Body.String(), `"mfa_required"`) {
-		t.Fatalf("session before MFA = %d %s", blockedSession.Code, blockedSession.Body.String())
+	openSession := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/session", "", bootstrapCookies[0])
+	if openSession.Code != http.StatusOK || !strings.Contains(openSession.Body.String(), `"username":"admin"`) {
+		t.Fatalf("session without MFA = %d %s", openSession.Code, openSession.Body.String())
+	}
+	openModules := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", bootstrapCookies[0])
+	if openModules.Code != http.StatusOK {
+		t.Fatalf("protected route without MFA = %d %s", openModules.Code, openModules.Body.String())
+	}
+	openStatus := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/status", "", bootstrapCookies[0])
+	if !strings.Contains(openStatus.Body.String(), `"authenticated":true`) || !strings.Contains(openStatus.Body.String(), `"mfaEnabled":false`) {
+		t.Fatalf("status without MFA = %s", openStatus.Body.String())
 	}
 
+	// Enable MFA later, from within an already-authenticated session.
 	enrollment := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/enroll", "", bootstrapCookies[0])
 	if enrollment.Code != http.StatusOK {
 		t.Fatalf("enrollment = %d %s", enrollment.Code, enrollment.Body.String())
@@ -123,13 +135,9 @@ func TestBootstrapMandatoryMFARecoveryAndLogin(t *testing.T) {
 		t.Fatalf("recovery code count = %d, want 10", len(confirmationBody.RecoveryCodes))
 	}
 
-	session := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/session", "", bootstrapCookies[0])
-	if session.Code != http.StatusOK || !strings.Contains(session.Body.String(), `"username":"admin"`) {
-		t.Fatalf("session after MFA = %d %s", session.Code, session.Body.String())
-	}
-	modules := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", bootstrapCookies[0])
-	if modules.Code != http.StatusOK {
-		t.Fatalf("authenticated modules = %d %s", modules.Code, modules.Body.String())
+	enabledStatus := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/status", "", bootstrapCookies[0])
+	if !strings.Contains(enabledStatus.Body.String(), `"authenticated":true`) || !strings.Contains(enabledStatus.Body.String(), `"mfaEnabled":true`) {
+		t.Fatalf("status after enabling MFA = %s", enabledStatus.Body.String())
 	}
 
 	duplicate := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/bootstrap",
@@ -159,7 +167,18 @@ func TestBootstrapMandatoryMFARecoveryAndLogin(t *testing.T) {
 	}
 	loginCookie := login.Result().Cookies()[0]
 	if !strings.Contains(login.Body.String(), `"next":"mfa_challenge"`) {
-		t.Fatalf("login did not require MFA: %s", login.Body.String())
+		t.Fatalf("enrolled login did not require MFA: %s", login.Body.String())
+	}
+	// An enrolled account that has not answered the challenge cannot reach
+	// protected routes, and cannot short-circuit MFA by disabling it.
+	blockedModules := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", loginCookie)
+	if blockedModules.Code != http.StatusUnauthorized || !strings.Contains(blockedModules.Body.String(), `"mfa_required"`) {
+		t.Fatalf("protected route before challenge = %d %s", blockedModules.Code, blockedModules.Body.String())
+	}
+	blockedDisable := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/disable",
+		`{"password":"a-strong-password"}`, loginCookie)
+	if blockedDisable.Code != http.StatusUnauthorized || !strings.Contains(blockedDisable.Body.String(), `"mfa_required"`) {
+		t.Fatalf("disable before challenge = %d %s", blockedDisable.Code, blockedDisable.Body.String())
 	}
 	reusedCode := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/verify",
 		`{"code":"`+confirmationCode+`"}`, loginCookie)
@@ -187,12 +206,144 @@ func TestBootstrapMandatoryMFARecoveryAndLogin(t *testing.T) {
 		t.Fatalf("recovery challenge = %d %s", recovery.Code, recovery.Body.String())
 	}
 
-	events, err := auditModule.List(ctx, 20)
+	// Disabling requires the current password; a wrong one is rejected.
+	wrongDisable := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/disable",
+		`{"password":"not-my-password"}`, secondCookie)
+	if wrongDisable.Code != http.StatusUnauthorized || !strings.Contains(wrongDisable.Body.String(), `"invalid_credentials"`) {
+		t.Fatalf("disable with wrong password = %d %s", wrongDisable.Code, wrongDisable.Body.String())
+	}
+	disable := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/disable",
+		`{"password":"a-strong-password"}`, secondCookie)
+	if disable.Code != http.StatusOK || !strings.Contains(disable.Body.String(), `"mfaEnabled":false`) {
+		t.Fatalf("disable MFA = %d %s", disable.Code, disable.Body.String())
+	}
+
+	// After disabling, the next sign-in skips the challenge entirely.
+	thirdLogout := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/logout", "", secondCookie)
+	if thirdLogout.Code != http.StatusNoContent {
+		t.Fatalf("third logout = %d %s", thirdLogout.Code, thirdLogout.Body.String())
+	}
+	finalLogin := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/login",
+		`{"username":"admin","password":"a-strong-password"}`, nil)
+	if finalLogin.Code != http.StatusOK || !strings.Contains(finalLogin.Body.String(), `"next":"authenticated"`) {
+		t.Fatalf("login after disabling MFA = %d %s", finalLogin.Code, finalLogin.Body.String())
+	}
+	finalCookie := finalLogin.Result().Cookies()[0]
+	finalModules := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", finalCookie)
+	if finalModules.Code != http.StatusOK {
+		t.Fatalf("protected route after disabling MFA = %d %s", finalModules.Code, finalModules.Body.String())
+	}
+
+	events, err := auditModule.List(ctx, 30)
 	if err != nil {
 		t.Fatalf("list audit events: %v", err)
 	}
 	if len(events) < 9 {
 		t.Fatalf("audit event count = %d, want at least 9", len(events))
+	}
+}
+
+func TestSelfServicePasswordChange(t *testing.T) {
+	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	auditModule, err := audit.New(ctx, database)
+	if err != nil {
+		t.Fatalf("create audit module: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	secretBox, err := secrets.New(bytes.Repeat([]byte{5}, 32))
+	if err != nil {
+		t.Fatalf("create secret box: %v", err)
+	}
+	identityModule, err := NewWithConfig(ctx, database, auditModule, secretBox, logger, Config{
+		SessionTTL: time.Hour, PasswordMemoryKiB: 64, PasswordIterations: 1, PasswordThreads: 1,
+	})
+	if err != nil {
+		t.Fatalf("create identity module: %v", err)
+	}
+	server, err := controlplane.New("test", []module.Module{identityModule, auditModule}, logger,
+		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(testAuthorization{}))
+	if err != nil {
+		t.Fatalf("create control plane: %v", err)
+	}
+
+	bootstrap := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/bootstrap",
+		`{"username":"admin","password":"first-password"}`, nil)
+	if bootstrap.Code != http.StatusCreated {
+		t.Fatalf("bootstrap = %d %s", bootstrap.Code, bootstrap.Body.String())
+	}
+	cookie := bootstrap.Result().Cookies()[0]
+
+	// A wrong current password is rejected.
+	wrong := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/password",
+		`{"currentPassword":"nope","newPassword":"second-password"}`, cookie)
+	if wrong.Code != http.StatusUnauthorized || !strings.Contains(wrong.Body.String(), `"invalid_credentials"`) {
+		t.Fatalf("wrong current password = %d %s", wrong.Code, wrong.Body.String())
+	}
+	// A too-short new password is rejected before anything changes.
+	weak := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/password",
+		`{"currentPassword":"first-password","newPassword":"short"}`, cookie)
+	if weak.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("weak new password = %d %s", weak.Code, weak.Body.String())
+	}
+	// A no-op change is rejected.
+	unchanged := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/password",
+		`{"currentPassword":"first-password","newPassword":"first-password"}`, cookie)
+	if unchanged.Code != http.StatusUnprocessableEntity || !strings.Contains(unchanged.Body.String(), `"password_unchanged"`) {
+		t.Fatalf("unchanged password = %d %s", unchanged.Code, unchanged.Body.String())
+	}
+
+	// Open a second session that the change should revoke.
+	otherLogin := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/login",
+		`{"username":"admin","password":"first-password"}`, nil)
+	if otherLogin.Code != http.StatusOK {
+		t.Fatalf("second login = %d %s", otherLogin.Code, otherLogin.Body.String())
+	}
+	otherCookie := otherLogin.Result().Cookies()[0]
+
+	change := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/password",
+		`{"currentPassword":"first-password","newPassword":"second-password"}`, cookie)
+	if change.Code != http.StatusNoContent {
+		t.Fatalf("password change = %d %s", change.Code, change.Body.String())
+	}
+	// The current session stays live; the other session is revoked.
+	keptSession := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/session", "", cookie)
+	if keptSession.Code != http.StatusOK {
+		t.Fatalf("current session after change = %d %s", keptSession.Code, keptSession.Body.String())
+	}
+	revokedSession := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/session", "", otherCookie)
+	if revokedSession.Code != http.StatusUnauthorized {
+		t.Fatalf("other session after change = %d %s", revokedSession.Code, revokedSession.Body.String())
+	}
+
+	// The old password no longer works; the new one does.
+	oldLogin := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/login",
+		`{"username":"admin","password":"first-password"}`, nil)
+	if oldLogin.Code != http.StatusUnauthorized {
+		t.Fatalf("old password login = %d %s", oldLogin.Code, oldLogin.Body.String())
+	}
+	newLogin := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/login",
+		`{"username":"admin","password":"second-password"}`, nil)
+	if newLogin.Code != http.StatusOK || !strings.Contains(newLogin.Body.String(), `"next":"authenticated"`) {
+		t.Fatalf("new password login = %d %s", newLogin.Code, newLogin.Body.String())
+	}
+
+	changed := false
+	events, err := auditModule.List(ctx, 30)
+	if err != nil {
+		t.Fatalf("list audit events: %v", err)
+	}
+	for _, event := range events {
+		if event.Action == "identity.password_changed" {
+			changed = true
+		}
+	}
+	if !changed {
+		t.Fatal("expected an identity.password_changed audit event")
 	}
 }
 

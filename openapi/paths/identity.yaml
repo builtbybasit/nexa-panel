@@ -141,6 +141,62 @@ auth_mfa_verify:
         description: The TOTP or recovery code was invalid or already consumed.
       '429':
         description: Too many verification attempts were made.
+auth_mfa_disable:
+  post:
+    operationId: disableMFA
+    tags:
+    - Identity
+    description: >-
+      Turn off the second factor for the signed-in account. Requires a fully
+      authenticated session (a completed MFA challenge) and the account password,
+      so a stolen password alone cannot strip MFA.
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/identity.yaml#/MFADisableRequest
+    responses:
+      '200':
+        description: The second factor was removed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/identity.yaml#/MFADisableResponse
+      '401':
+        description: The session is not fully authenticated, or the password is incorrect.
+      '409':
+        description: Multi-factor authentication is not enabled.
+      '429':
+        description: Too many attempts were made.
+auth_password:
+  post:
+    operationId: changePassword
+    tags:
+    - Identity
+    description: >-
+      Change the signed-in account's password. Requires a fully authenticated
+      session and the current password. On success the current session stays
+      valid and the account's other sessions are revoked.
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/identity.yaml#/ChangePasswordRequest
+    responses:
+      '204':
+        description: The password was changed.
+      '401':
+        description: The session is not fully authenticated, or the current password is incorrect.
+      '422':
+        description: The new password is invalid or unchanged.
+      '429':
+        description: Too many attempts were made.
 auth_session:
   get:
     operationId: getSession
