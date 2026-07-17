@@ -1,0 +1,73 @@
+package agent
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/json"
+	"fmt"
+	"net/http"
+
+	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
+)
+
+// WithPackagesOperator attaches the apt package operator to the agent.
+func WithPackagesOperator(operator packagesoperator.Operator) Option {
+	return func(server *Server) { server.packages = operator }
+}
+
+func (s *Server) packagesDiscoverHTTP(w http.ResponseWriter, r *http.Request) {
+	items, err := s.packages.Discover(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "packages_discovery_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) packagesPlanHTTP(w http.ResponseWriter, r *http.Request) {
+	var change packagesoperator.Change
+	if err := decodeJSON(w, r, &change); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	plan, err := s.packages.Plan(r.Context(), change)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "package_plan_failed", err.Error())
+		return
+	}
+	plan.Signature = s.signPackagePlan(plan)
+	writeJSON(w, http.StatusOK, plan)
+}
+
+func (s *Server) packagesApplyHTTP(w http.ResponseWriter, r *http.Request) {
+	var plan packagesoperator.Plan
+	if err := decodeJSON(w, r, &plan); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if !s.verifyPackagePlan(plan) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_package_plan_signature", "The application plan was not issued by this agent.")
+		return
+	}
+	observation, err := s.packages.Apply(r.Context(), plan)
+	if err != nil {
+		writeError(w, http.StatusConflict, "package_operation_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, observation)
+}
+
+func (s *Server) signPackagePlan(plan packagesoperator.Plan) string {
+	plan.Signature = ""
+	encoded, _ := json.Marshal(plan)
+	mac := hmac.New(sha256.New, []byte(s.token))
+	_, _ = mac.Write(encoded)
+	return fmt.Sprintf("%x", mac.Sum(nil))
+}
+
+func (s *Server) verifyPackagePlan(plan packagesoperator.Plan) bool {
+	provided := plan.Signature
+	expected := s.signPackagePlan(plan)
+	return len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+}

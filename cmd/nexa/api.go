@@ -45,6 +45,8 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/adapters/podman"
 	"github.com/nexa-panel/nexa-panel/internal/modules/admintools"
+	"github.com/nexa-panel/nexa-panel/internal/modules/applications"
+	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/files"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
@@ -163,6 +165,10 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize schedules module: %w", err)
 	}
+	applicationsModule, err := applications.New(setupCtx, database, jobsModule, packagesoperator.NewUnixClient(*agentSocket, *agentToken), adminToolsModule)
+	if err != nil {
+		return fmt.Errorf("initialize applications module: %w", err)
+	}
 
 	jobsModule.Start(context.Background())
 	defer jobsModule.Close()
@@ -182,6 +188,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		filesModule,
 		logsModule,
 		schedulesModule,
+		applicationsModule,
 		system.New(capacity.NewProcReader(), podman.NewInspector()),
 	}
 

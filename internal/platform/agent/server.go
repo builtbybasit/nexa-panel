@@ -12,6 +12,8 @@ import (
 
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 
+	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
+
 	"crypto/subtle"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 
@@ -45,6 +47,7 @@ type Server struct {
 	postgres     postgresoperator.Operator
 	mysql        mysqloperator.Operator
 	adminTools   admintooloperator.Operator
+	packages     packagesoperator.Operator
 	files        filesoperator.Operator
 	logs         logsoperator.Operator
 	schedules    scheduleoperator.Operator
@@ -108,6 +111,11 @@ func (s *Server) Serve(ctx context.Context) error {
 		mux.HandleFunc("GET /v1/admin-tools", s.adminToolsDiscoverHTTP)
 		mux.HandleFunc("POST /v1/admin-tools/plan", s.adminToolsPlanHTTP)
 		mux.HandleFunc("POST /v1/admin-tools/apply", s.adminToolsApplyHTTP)
+	}
+	if s.packages != nil {
+		mux.HandleFunc("GET /v1/packages/installed", s.packagesDiscoverHTTP)
+		mux.HandleFunc("POST /v1/packages/plan", s.packagesPlanHTTP)
+		mux.HandleFunc("POST /v1/packages/apply", s.packagesApplyHTTP)
 	}
 	if s.files != nil {
 		mux.HandleFunc("POST /v1/files/list", s.filesListHTTP)
