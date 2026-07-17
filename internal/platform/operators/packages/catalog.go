@@ -19,6 +19,9 @@ const (
 	repoNone      repoKind = ""
 	repoOndrejPHP repoKind = "ondrej-php"
 	repoPGDG      repoKind = "pgdg"
+	// repoDeclaredDB is the MySQL/MariaDB family, whose repository is pinned
+	// per-series in dbCatalog rather than added by a vendor helper script.
+	repoDeclaredDB repoKind = "declared-db"
 )
 
 // installMethod selects how an entry is installed. The default (apt) covers PHP,
@@ -42,6 +45,24 @@ type catalogEntry struct {
 	Repo     repoKind
 	Method   installMethod
 	Packages []string
+	// Identity is the name Discover reports this entry as installed under, when
+	// the first package name cannot serve as one. MySQL/MariaDB need it because
+	// every series ships the same package name; Node.js needs it because nvm has
+	// no apt package at all.
+	Identity string
+}
+
+// identity is the name to join observed state against. It defaults to the first
+// package, which is self-identifying for PHP (php8.3-fpm), PostgreSQL
+// (postgresql-16), and Composer.
+func (e catalogEntry) identity() string {
+	if e.Identity != "" {
+		return e.Identity
+	}
+	if len(e.Packages) > 0 {
+		return e.Packages[0]
+	}
+	return ""
 }
 
 // The version literals below are deliberate product floors, not a version list:
@@ -143,6 +164,16 @@ func (o *HostOperator) enumerate(ctx context.Context) ([]catalogEntry, error) {
 		})
 	}
 
+	// MySQL/MariaDB are declared, not enumerated (see databases.go), but still
+	// filtered by what this node can actually install: MySQL's vendor repository
+	// publishes no arm64, and offering a card that apt would silently satisfy from
+	// the base repo's 8.0 is worse than not offering it.
+	arch, err := o.architecture(ctx)
+	if err != nil {
+		return nil, err
+	}
+	entries = append(entries, dbEntries(arch)...)
+
 	for _, version := range o.nodeLTSVersions(ctx) {
 		entries = append(entries, catalogEntry{
 			App: "nodejs", Version: version, Label: "Node.js " + version,
@@ -232,6 +263,10 @@ type CatalogEntry struct {
 	Summary  string   `json:"summary"`
 	Category string   `json:"category"`
 	Packages []string `json:"packages"`
+	// Identity is the name to look this entry up by in Discover's output. It is
+	// not always Packages[0]: MySQL/MariaDB series all share one package name, so
+	// the operator reports them under a synthetic per-series identity instead.
+	Identity string `json:"identity"`
 }
 
 // Catalog returns the installable catalog this node's repositories offer.
@@ -246,6 +281,7 @@ func (o *HostOperator) Catalog(ctx context.Context) ([]CatalogEntry, error) {
 			App: entry.App, Version: entry.Version, Label: entry.Label,
 			Summary: entry.Summary, Category: entry.Category,
 			Packages: append([]string(nil), entry.Packages...),
+			Identity: entry.identity(),
 		})
 	}
 	return entries, nil
@@ -265,14 +301,12 @@ func (o *HostOperator) lookup(ctx context.Context, app, version string) (catalog
 	return catalogEntry{}, false, nil
 }
 
-// aptPackageNames returns the deduplicated set of apt package names the catalog
+// aptNames returns the deduplicated set of apt package names the catalog
 // manages — the exact set dpkg-query discovery inspects. nvm-managed entries
 // (Node.js) are excluded; they are discovered from the nvm directory instead.
-func (o *HostOperator) aptPackageNames(ctx context.Context) ([]string, error) {
-	entries, err := o.catalog(ctx)
-	if err != nil {
-		return nil, err
-	}
+// Every MySQL/MariaDB series contributes the same package name, which dedupes to
+// one probe here; the series they belong to is resolved from the version.
+func aptNames(entries []catalogEntry) []string {
 	seen := map[string]struct{}{}
 	names := []string{}
 	for _, entry := range entries {
@@ -288,7 +322,7 @@ func (o *HostOperator) aptPackageNames(ctx context.Context) ([]string, error) {
 		}
 	}
 	sort.Strings(names)
-	return names, nil
+	return names
 }
 
 // normalize validates the request against the catalog. It is the security

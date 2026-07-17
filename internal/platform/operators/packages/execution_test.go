@@ -20,7 +20,18 @@ type fakeRunner struct {
 	// the floor is actually exercised.
 	phpRepo []string
 	pgRepo  []string
-	calls   [][]string
+	// arch is the node's dpkg architecture, which gates the database series whose
+	// vendor repositories do not publish for it. Defaults to amd64 so the full
+	// catalog is offered; tests override it to exercise the gate.
+	arch string
+	// files stands in for the node's filesystem where the operator writes apt
+	// sources, so tests can assert which repository was configured.
+	files map[string]string
+	// repoAddsNothing simulates a vendor repository that publishes nothing for
+	// this node's architecture: the sources file lands, apt reports success, and
+	// the server still comes from Ubuntu's archive at an older series.
+	repoAddsNothing bool
+	calls           [][]string
 }
 
 func newFakeRunner() *fakeRunner {
@@ -29,6 +40,8 @@ func newFakeRunner() *fakeRunner {
 		nodes:     map[string]string{},
 		phpRepo:   []string{"5.6", "7.4", "8.1", "8.3", "8.4", "8.5"},
 		pgRepo:    []string{"9.6", "16", "17", "18"},
+		arch:      "amd64",
+		files:     map[string]string{},
 	}
 }
 
@@ -58,9 +71,21 @@ func (f *fakeRunner) Run(_ context.Context, c Command) ([]byte, error) {
 			}
 		}
 		return []byte(builder.String()), nil
+	case c.Name == "dpkg" && len(c.Args) > 0 && c.Args[0] == "--print-architecture":
+		return []byte(f.arch + "\n"), nil
+	case c.Name == "sh" && len(c.Args) >= 2 && strings.Contains(c.Args[1], "/etc/os-release"):
+		return []byte("noble"), nil
+	case c.Name == "sh" && len(c.Args) >= 10 && strings.Contains(c.Args[1], "want_fpr"):
+		f.addRepo(c.Args[6], c.Args[8], c.Args[9])
+	case c.Name == "rm" && len(c.Args) == 2 && c.Args[0] == "-f":
+		f.removeRepo(c.Args[1])
 	case c.Name == "apt-get" && len(c.Args) > 0 && c.Args[0] == "install":
 		for _, arg := range c.Args[1:] {
 			if strings.HasPrefix(arg, "-") {
+				continue
+			}
+			if version, ok := f.databaseVersion(arg); ok {
+				f.installed[arg] = version
 				continue
 			}
 			f.installed[arg] = "9.9-test"
@@ -90,6 +115,52 @@ func (f *fakeRunner) Run(_ context.Context, c Command) ([]byte, error) {
 		}
 	}
 	return nil, nil
+}
+
+// addRepo/removeRepo record which series the operator pointed apt at. The fake
+// keeps only the series because that is what apt's resolution turns on.
+func (f *fakeRunner) addRepo(repoURL, component, listPath string) {
+	if f.repoAddsNothing {
+		return
+	}
+	f.files[listPath] = "deb " + repoURL + " " + component
+}
+
+func (f *fakeRunner) removeRepo(listPath string) { delete(f.files, listPath) }
+
+// databaseVersion models apt resolving a database server package against
+// whatever repository is configured right now: the vendor series if its sources
+// file is present, otherwise the version Ubuntu's own archive carries. That
+// fallback is the real hazard this operator has to catch — on an architecture
+// the vendor does not publish, apt quietly satisfies the request from the base
+// repo and reports success.
+func (f *fakeRunner) databaseVersion(pkg string) (string, bool) {
+	switch pkg {
+	case "mysql-server":
+		return configuredSeries(f.files, "mysql", "8.0") + ".10-1ubuntu24.04", true
+	case "mariadb-server":
+		return "1:" + configuredSeries(f.files, "mariadb", "10.11") + ".12+maria~ubu2404", true
+	}
+	return "", false
+}
+
+// configuredSeries reads the series back out of the sources line the operator
+// wrote — MySQL puts it in the component, MariaDB in the URL path.
+func configuredSeries(files map[string]string, app, base string) string {
+	line, ok := files[dbVendors[app].listPath]
+	if !ok {
+		return base
+	}
+	if app == "mysql" {
+		fields := strings.Fields(line)
+		return strings.TrimSuffix(strings.TrimPrefix(fields[len(fields)-1], "mysql-"), "-lts")
+	}
+	for _, part := range strings.Split(line, "/") {
+		if dbVersionPattern.MatchString(part) {
+			return part
+		}
+	}
+	return base
 }
 
 func (f *fakeRunner) findCall(name, firstArg string) []string {

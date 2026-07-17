@@ -8,36 +8,57 @@ import (
 
 // Discover reports the installed state of every package the catalog manages.
 // apt packages come from a single dpkg-query (its non-zero exit for unknown
-// packages is expected and ignored); nvm-managed Node.js versions come from the
-// nvm directory. The two are merged into one installed set.
+// packages is expected and ignored); MySQL/MariaDB series are resolved from the
+// observed version; nvm-managed Node.js versions come from the nvm directory.
+// All three are merged into one installed set.
 func (o *HostOperator) Discover(ctx context.Context) ([]InstalledPackage, error) {
-	names, err := o.aptPackageNames(ctx)
-	if err != nil {
-		return nil, err
-	}
-	args := append([]string{"-W", "-f", "${binary:Package}|${Version}|${db:Status-Status}\n"}, names...)
-	output, _ := o.runner.Run(ctx, Command{Name: "dpkg-query", Args: args})
-	result := parseDpkg(string(output), names)
-	nodeVersions, err := o.nodeCatalogVersions(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return append(result, o.discoverNode(ctx, nodeVersions)...), nil
-}
-
-// nodeCatalogVersions lists the Node.js majors the catalog currently offers.
-func (o *HostOperator) nodeCatalogVersions(ctx context.Context) ([]string, error) {
 	entries, err := o.catalog(ctx)
 	if err != nil {
 		return nil, err
 	}
+	names := aptNames(entries)
+	args := append([]string{"-W", "-f", "${binary:Package}|${Version}|${db:Status-Status}\n"}, names...)
+	output, _ := o.runner.Run(ctx, Command{Name: "dpkg-query", Args: args})
+	result := parseDpkg(string(output), names)
+	result = append(result, discoverDatabases(entries, result)...)
+	return append(result, o.discoverNode(ctx, nvmVersions(entries))...), nil
+}
+
+// discoverDatabases reports which declared MySQL/MariaDB series is installed.
+// It cannot go by package name: every series of a vendor ships the same
+// `mysql-server`/`mariadb-server`, so the name says only that *some* series is
+// present. The installed version is the only thing that identifies which, and
+// mapping it back to a series is what keeps one card lit instead of all of them.
+// This also picks up a server the panel did not install, whatever its origin.
+func discoverDatabases(entries []catalogEntry, observed []InstalledPackage) []InstalledPackage {
+	byName := make(map[string]InstalledPackage, len(observed))
+	for _, item := range observed {
+		byName[item.Name] = item
+	}
+	items := []InstalledPackage{}
+	for _, entry := range entries {
+		vendor, ok := dbVendors[entry.App]
+		if !ok {
+			continue
+		}
+		probe, ok := byName[vendor.probePackage]
+		if !ok || !probe.Installed || dbSeriesOf(probe.Version) != entry.Version {
+			continue
+		}
+		items = append(items, InstalledPackage{Name: entry.identity(), Version: probe.Version, Installed: true})
+	}
+	return items
+}
+
+// nvmVersions lists the Node.js majors the catalog currently offers.
+func nvmVersions(entries []catalogEntry) []string {
 	versions := []string{}
 	for _, entry := range entries {
 		if entry.Method == methodNVM {
 			versions = append(versions, entry.Version)
 		}
 	}
-	return versions, nil
+	return versions
 }
 
 // discoverNode lists the Node.js majors nvm has installed under nvmDir and maps

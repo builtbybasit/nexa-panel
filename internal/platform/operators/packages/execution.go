@@ -45,6 +45,16 @@ func (o *HostOperator) install(ctx context.Context, change Change, entry catalog
 	if entry.Method == methodNVM {
 		return o.installNode(ctx, change, entry)
 	}
+	// Configuring a repository needs tooling of its own — gpg and curl, or
+	// software-properties-common — and on a minimal image that cleaned
+	// /var/lib/apt/lists there is no index to install it from ("Package 'gnupg'
+	// has no installation candidate"). Refresh before touching the repository,
+	// not only before the install below.
+	if entry.Repo != repoNone {
+		if err := o.aptUpdate(ctx); err != nil {
+			return Observation{}, err
+		}
+	}
 	if err := o.ensureRepo(ctx, entry); err != nil {
 		return Observation{}, err
 	}
@@ -54,8 +64,8 @@ func (o *HostOperator) install(ctx context.Context, change Change, entry catalog
 	// Always refresh the index before installing: the package list may be empty
 	// or stale (e.g. a minimal image that cleaned /var/lib/apt/lists), which
 	// otherwise surfaces as "Unable to locate package" even for base-repo apps.
-	if output, err := o.runner.Run(ctx, command("apt-get", "update")); err != nil {
-		return Observation{}, commandError("update the apt package index", output, err)
+	if err := o.aptUpdate(ctx); err != nil {
+		return Observation{}, err
 	}
 	args := append([]string{"install", "-y", "--no-install-recommends"}, entry.Packages...)
 	if output, err := o.runner.Run(ctx, command("apt-get", args...)); err != nil {
@@ -73,7 +83,24 @@ func (o *HostOperator) remove(ctx context.Context, change Change, entry catalogE
 		return Observation{}, commandError("remove "+entry.Label, output, err)
 	}
 	_, _ = o.runner.Run(ctx, command("apt-get", "autoremove", "-y"))
+	// A vendor repository outlives the server it was added for unless it is
+	// dropped here: nothing else on the node uses it, but every apt-get update
+	// would keep fetching from a third-party mirror, and it would still be sitting
+	// there offering packages if a different engine were installed later.
+	if entry.Repo == repoDeclaredDB {
+		if err := o.removeDatabaseRepo(ctx, entry); err != nil {
+			return Observation{}, err
+		}
+	}
 	return o.verify(ctx, change, entry)
+}
+
+// aptUpdate refreshes the package index.
+func (o *HostOperator) aptUpdate(ctx context.Context) error {
+	if output, err := o.runner.Run(ctx, command("apt-get", "update")); err != nil {
+		return commandError("update the apt package index", output, err)
+	}
+	return nil
 }
 
 // ensureRepo configures the fixed repository an apt entry requires. Every
@@ -98,10 +125,94 @@ func (o *HostOperator) ensureRepo(ctx context.Context, entry catalogEntry) error
 			return commandError("add the PostgreSQL PGDG repository", output, err)
 		}
 		return nil
+	case repoDeclaredDB:
+		return o.ensureDatabaseRepo(ctx, entry)
 	default:
 		return fmt.Errorf("unknown repository for %q", entry.App)
 	}
 }
+
+// ensureDatabaseRepo configures exactly the repository the requested series
+// needs. The vendor's sources file is rewritten — or removed, for a series
+// Ubuntu itself ships — so that it always names a single series: leaving another
+// series' repository configured would let a later `apt upgrade` walk the server
+// across a major version on its own.
+func (o *HostOperator) ensureDatabaseRepo(ctx context.Context, entry catalogEntry) error {
+	vendor, ok := dbVendors[entry.App]
+	if !ok {
+		return fmt.Errorf("unknown database vendor %q", entry.App)
+	}
+	series, ok := dbSeriesFor(entry.App, entry.Version)
+	if !ok {
+		return fmt.Errorf("unknown %s series %q", entry.App, entry.Version)
+	}
+	if series.repoURL == "" {
+		return o.removeDatabaseRepo(ctx, entry)
+	}
+	codename, err := o.codename(ctx)
+	if err != nil {
+		return err
+	}
+	if output, err := o.runner.Run(ctx, command("apt-get", "install", "-y", "--no-install-recommends", "curl", "ca-certificates", "gnupg")); err != nil {
+		return commandError("install repository tooling", output, err)
+	}
+	script := command("sh", "-c", addRepoScript, "nexa-add-repo",
+		vendor.keyURL, vendor.fingerprint, vendor.keyringPath,
+		series.repoURL, codename, series.component, vendor.listPath)
+	if output, err := o.runner.Run(ctx, script); err != nil {
+		return commandError("configure the "+entry.Label+" repository", output, err)
+	}
+	return nil
+}
+
+// removeDatabaseRepo drops nexa's sources file for a vendor, leaving the node
+// with only Ubuntu's own archive for that engine.
+func (o *HostOperator) removeDatabaseRepo(ctx context.Context, entry catalogEntry) error {
+	vendor, ok := dbVendors[entry.App]
+	if !ok {
+		return fmt.Errorf("unknown database vendor %q", entry.App)
+	}
+	if output, err := o.runner.Run(ctx, command("rm", "-f", vendor.listPath)); err != nil {
+		return commandError("remove the "+entry.App+" vendor repository", output, err)
+	}
+	return nil
+}
+
+// addRepoScript fetches a vendor signing key and refuses it unless it matches the
+// pinned fingerprint and has not expired, then writes the keyring and a sources
+// file naming exactly one series. The fingerprint check is the trust anchor —
+// everything apt subsequently accepts from this repository rests on it, so the
+// key is verified before it is dearmored, never after. The expiry check is
+// separate and equally load-bearing: a key can match the pin and still be
+// expired (MySQL's published key has been), and apt reports that only as the
+// misleading "the repository is not signed".
+//
+// Every value is either compiled in or the node's own codename; nothing from the
+// caller reaches this script, and each is passed positionally rather than
+// interpolated.
+const addRepoScript = `
+set -eu
+key_url="$1"; want_fpr="$2"; keyring="$3"; repo_url="$4"; codename="$5"; component="$6"; list="$7"
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp" "$key_url"
+got_fpr="$(gpg --show-keys --with-colons --with-fingerprint "$tmp" | awk -F: '/^fpr/{print $10; exit}')"
+if [ "$got_fpr" != "$want_fpr" ]; then
+  echo "signing key fingerprint mismatch: downloaded ${got_fpr:-none}, pinned ${want_fpr}" >&2
+  exit 1
+fi
+if [ "$(gpg --show-keys --with-colons "$tmp" | awk -F: '/^pub/{print $2; exit}')" = "e" ]; then
+  echo "signing key ${want_fpr} has expired; the vendor renews it under a new URL" >&2
+  exit 1
+fi
+install -d -m 0755 "$(dirname "$keyring")"
+rm -f "$keyring"
+gpg --batch --yes --dearmor -o "$keyring" "$tmp"
+chmod 0644 "$keyring"
+install -d -m 0755 "$(dirname "$list")"
+printf 'deb [signed-by=%s] %s %s %s\n' "$keyring" "$repo_url" "$codename" "$component" > "$list"
+chmod 0644 "$list"
+`
 
 const (
 	// nvmDir is the node-wide nvm home the agent manages. nvmVersion pins the
@@ -146,8 +257,8 @@ func (o *HostOperator) ensureNVM(ctx context.Context) error {
 	if _, err := o.runner.Run(ctx, command("test", "-s", nvmDir+"/nvm.sh")); err == nil {
 		return nil
 	}
-	if output, err := o.runner.Run(ctx, command("apt-get", "update")); err != nil {
-		return commandError("update the apt package index", output, err)
+	if err := o.aptUpdate(ctx); err != nil {
+		return err
 	}
 	if output, err := o.runner.Run(ctx, command("apt-get", "install", "-y", "--no-install-recommends", "git", "curl", "ca-certificates")); err != nil {
 		return commandError("install nvm prerequisites", output, err)
@@ -196,6 +307,20 @@ func (o *HostOperator) verify(ctx context.Context, change Change, entry catalogE
 	case ActionInstall:
 		if !allInstalled {
 			return Observation{}, fmt.Errorf("%s did not report all packages installed after apt", entry.Label)
+		}
+		// For MySQL/MariaDB the package name proves nothing: every series ships
+		// the same one, so apt can report success having installed a different
+		// series entirely — which is exactly what happens when the vendor
+		// repository contributes nothing (it may not publish this architecture)
+		// and the base repo's older server satisfies the request instead. Only
+		// the landed version distinguishes them, and Discover reports the
+		// identity solely when that version is in this series.
+		if entry.Repo == repoDeclaredDB {
+			if _, ok := byName[entry.identity()]; !ok {
+				return Observation{}, fmt.Errorf(
+					"%s reported installed, but the server is version %q, which is not the %s series",
+					entry.Label, installedVersion, entry.Version)
+			}
 		}
 		if installedVersion != "" {
 			observation.Version = installedVersion

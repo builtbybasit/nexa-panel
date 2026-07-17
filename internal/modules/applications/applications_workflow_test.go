@@ -29,7 +29,7 @@ func newFakePackages() *fakePackages {
 	return &fakePackages{
 		installed: map[string]string{},
 		catalog: []packagesoperator.CatalogEntry{
-			{App: "php", Version: "8.3", Label: "PHP 8.3", Category: "php", Packages: []string{"php8.3-fpm"}},
+			{App: "php", Version: "8.3", Label: "PHP 8.3", Category: "php", Packages: []string{"php8.3-fpm"}, Identity: "php8.3-fpm"},
 		},
 	}
 }

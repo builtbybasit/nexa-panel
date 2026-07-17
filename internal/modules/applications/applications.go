@@ -82,11 +82,10 @@ func (m *Module) List(ctx context.Context) ([]Application, error) {
 		if err != nil {
 			return nil, err
 		}
-		primary := ""
-		if len(entry.Packages) > 0 {
-			primary = entry.Packages[0]
-		}
-		observed, ok := installedByName[primary]
+		// Join on the operator's identity, not the first package name: MySQL and
+		// MariaDB ship one package name across every series, so a name-based join
+		// would report all of a vendor's versions installed at once.
+		observed, ok := installedByName[entry.Identity]
 		isInstalled := ok && observed.Installed
 		app := Application{
 			ID: id, App: entry.App, Version: entry.Version, Label: entry.Label,
