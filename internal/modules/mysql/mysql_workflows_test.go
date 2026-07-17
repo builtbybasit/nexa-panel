@@ -19,14 +19,24 @@ import (
 )
 
 type fakeMySQLOperator struct {
-	engine   mysqloperator.Engine
-	failNext bool
-	secrets  []string
+	engine    mysqloperator.Engine
+	failNext  bool
+	secrets   []string
+	sizes     map[string]int64
+	sizeError error
+	sizeCalls int
 }
 
 func (f *fakeMySQLOperator) Discover(context.Context) (*mysqloperator.Engine, error) {
 	engine := f.engine
 	return &engine, nil
+}
+func (f *fakeMySQLOperator) Sizes(context.Context) (map[string]int64, error) {
+	f.sizeCalls++
+	if f.sizeError != nil {
+		return nil, f.sizeError
+	}
+	return f.sizes, nil
 }
 func (f *fakeMySQLOperator) Plan(_ context.Context, change mysqloperator.Change) (mysqloperator.Plan, error) {
 	now := time.Now().UTC()

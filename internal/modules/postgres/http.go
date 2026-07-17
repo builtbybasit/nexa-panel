@@ -117,7 +117,7 @@ func (m *Module) credentialHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"credential": credential})
 }
 func (m *Module) databasesHTTP(w http.ResponseWriter, r *http.Request) {
-	items, err := m.ListDatabases(r.Context(), r.URL.Query().Get("instanceId"))
+	items, err := m.SyncDatabaseSizes(r.Context(), r.URL.Query().Get("instanceId"))
 	if err != nil {
 		writeError(w, 500, "postgresql_databases_unavailable", "PostgreSQL databases could not be loaded.")
 		return

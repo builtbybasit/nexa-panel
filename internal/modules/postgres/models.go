@@ -93,6 +93,17 @@ const schema = `
 	CREATE INDEX postgresql_plans_resource_idx ON postgresql_plans(resource_type, resource_id, created_at DESC);
 `
 
+// Appended rather than folded into schema: persistence.Migrate versions
+// migrations by slice index, so editing an already-applied element would skip
+// this column on every existing install while fresh databases got it.
+// size_observed_at drives both the refresh interval and the "measured at"
+// hint in the UI; both columns stay nullable because a database that has never
+// been probed is not the same as one measured at zero bytes.
+const databaseSizeSchema = `
+	ALTER TABLE managed_databases ADD COLUMN size_bytes INTEGER;
+	ALTER TABLE managed_databases ADD COLUMN size_observed_at TIMESTAMP;
+`
+
 type Status string
 
 const (
@@ -128,15 +139,20 @@ type Role struct {
 }
 
 type Database struct {
-	ID          string    `json:"id"`
-	InstanceID  string    `json:"instanceId"`
-	Name        string    `json:"name"`
-	OwnerRoleID string    `json:"ownerRoleId"`
-	Status      Status    `json:"status"`
-	LastJobID   *int64    `json:"lastJobId,omitempty"`
-	Failure     string    `json:"failure,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID          string `json:"id"`
+	InstanceID  string `json:"instanceId"`
+	Name        string `json:"name"`
+	OwnerRoleID string `json:"ownerRoleId"`
+	Status      Status `json:"status"`
+	// A pointer rather than the int64-with-omitempty used for backup sizes: an
+	// empty database really does measure zero bytes, and callers must be able
+	// to tell that apart from one that has never been probed.
+	SizeBytes      *int64     `json:"sizeBytes,omitempty"`
+	SizeObservedAt *time.Time `json:"sizeObservedAt,omitempty"`
+	LastJobID      *int64     `json:"lastJobId,omitempty"`
+	Failure        string     `json:"failure,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 type Grant struct {
@@ -212,16 +228,18 @@ type roleModel struct {
 }
 
 type databaseModel struct {
-	bun.BaseModel `bun:"table:managed_databases,alias:database"`
-	ID            string `bun:",pk"`
-	InstanceID    string
-	Name          string
-	OwnerRoleID   string
-	Status        string
-	LastJobID     *int64
-	Failure       *string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	bun.BaseModel  `bun:"table:managed_databases,alias:database"`
+	ID             string `bun:",pk"`
+	InstanceID     string
+	Name           string
+	OwnerRoleID    string
+	Status         string
+	SizeBytes      *int64
+	SizeObservedAt *time.Time
+	LastJobID      *int64
+	Failure        *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type grantModel struct {
@@ -271,7 +289,7 @@ func (m roleModel) toRole() Role {
 	return Role{ID: m.ID, InstanceID: m.InstanceID, Name: m.Name, Status: Status(m.Status), CredentialAvailable: m.CredentialCiphertext != nil && !m.CredentialRevealed, CredentialVersion: m.CredentialVersion, LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 func (m databaseModel) toDatabase() Database {
-	return Database{ID: m.ID, InstanceID: m.InstanceID, Name: m.Name, OwnerRoleID: m.OwnerRoleID, Status: Status(m.Status), LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+	return Database{ID: m.ID, InstanceID: m.InstanceID, Name: m.Name, OwnerRoleID: m.OwnerRoleID, Status: Status(m.Status), SizeBytes: m.SizeBytes, SizeObservedAt: m.SizeObservedAt, LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 func (m grantModel) toGrant() Grant {
 	return Grant{ID: m.ID, DatabaseID: m.DatabaseID, RoleID: m.RoleID, Access: postgresoperator.AccessLevel(m.Access), Status: Status(m.Status), LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}

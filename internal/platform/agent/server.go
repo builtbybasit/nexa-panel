@@ -99,11 +99,13 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	if s.postgres != nil {
 		mux.HandleFunc("GET /v1/postgresql/instances", s.postgresDiscoverHTTP)
+		mux.HandleFunc("GET /v1/postgresql/sizes", s.postgresSizesHTTP)
 		mux.HandleFunc("POST /v1/postgresql/plan", s.postgresPlanHTTP)
 		mux.HandleFunc("POST /v1/postgresql/apply", s.postgresApplyHTTP)
 	}
 	if s.mysql != nil {
 		mux.HandleFunc("GET /v1/mysql-family/engine", s.mysqlDiscoverHTTP)
+		mux.HandleFunc("GET /v1/mysql-family/sizes", s.mysqlSizesHTTP)
 		mux.HandleFunc("POST /v1/mysql-family/plan", s.mysqlPlanHTTP)
 		mux.HandleFunc("POST /v1/mysql-family/apply", s.mysqlApplyHTTP)
 	}

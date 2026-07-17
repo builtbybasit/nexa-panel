@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 
@@ -51,6 +52,74 @@ func (m *Module) CreateDatabase(ctx context.Context, request CreateDatabaseReque
 	model.LastJobID = &job.ID
 	_, err = m.attachJob(ctx, resourceDatabase, model.ID, job.ID, StatusPlanning)
 	return model.toDatabase(), job, err
+}
+
+// sizeRefreshInterval bounds how often a list request re-measures databases.
+// The information_schema aggregate is not free on an engine with many tables
+// and the databases page polls this endpoint, so a served size may lag reality
+// by up to this long. sizeObservedAt travels with the row so callers can say
+// how fresh the number is rather than implying it is live.
+const sizeRefreshInterval = time.Minute
+
+// SyncDatabaseSizes re-measures databases whose size has gone stale and then
+// reports the stored rows, following the SyncEngines read-path convention:
+// observe the host, persist, return what was persisted.
+//
+// A probe failure is deliberately not fatal: the engine can be down or
+// restarting while its databases still need to render, so a failed probe keeps
+// the last known size and the list still serves.
+func (m *Module) SyncDatabaseSizes(ctx context.Context, engineID string) ([]Database, error) {
+	models := []databaseModel{}
+	query := m.database.NewSelect().Model(&models)
+	if engineID != "" {
+		query = query.Where("engine_id = ?", engineID)
+	}
+	if err := query.Scan(ctx); err != nil {
+		return nil, err
+	}
+	// One probe covers every schema on the node's single engine, so this is a
+	// question of whether to probe at all rather than which engines to probe.
+	if anyDatabaseSizeStale(models, m.now().UTC()) {
+		if sizes, err := m.operator.Sizes(ctx); err == nil {
+			if err := m.storeDatabaseSizes(ctx, models, sizes, m.now().UTC()); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return m.ListDatabases(ctx, engineID)
+}
+
+func anyDatabaseSizeStale(models []databaseModel, now time.Time) bool {
+	for _, model := range models {
+		if Status(model.Status) != StatusActive {
+			continue
+		}
+		if model.SizeObservedAt == nil || now.Sub(*model.SizeObservedAt) >= sizeRefreshInterval {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Module) storeDatabaseSizes(ctx context.Context, models []databaseModel, sizes map[string]int64, now time.Time) error {
+	for _, model := range models {
+		if Status(model.Status) != StatusActive {
+			continue
+		}
+		// A managed row with no matching schema on the host was dropped out of
+		// band; leave its last known size rather than recording a zero.
+		size, measured := sizes[model.Name]
+		if !measured {
+			continue
+		}
+		_, err := m.database.NewUpdate().Model((*databaseModel)(nil)).
+			Set("size_bytes = ?", size).Set("size_observed_at = ?", now).
+			Where("id = ?", model.ID).Exec(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Module) getDatabaseModel(ctx context.Context, id string) (databaseModel, error) {

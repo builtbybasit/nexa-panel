@@ -87,6 +87,14 @@ const schema = `
 	CREATE INDEX mysql_family_plans_resource_idx ON mysql_family_plans(resource_type, resource_id, created_at DESC);
 `
 
+// Appended rather than folded into schema: persistence.Migrate versions
+// migrations by slice index, so editing an already-applied element would skip
+// this column on every existing install while fresh databases got it.
+const databaseSizeSchema = `
+	ALTER TABLE mysql_databases ADD COLUMN size_bytes INTEGER;
+	ALTER TABLE mysql_databases ADD COLUMN size_observed_at TIMESTAMP;
+`
+
 type Status string
 
 const (
@@ -123,15 +131,20 @@ type Account struct {
 }
 
 type Database struct {
-	ID             string    `json:"id"`
-	EngineID       string    `json:"engineId"`
-	Name           string    `json:"name"`
-	OwnerAccountID string    `json:"ownerAccountId"`
-	Status         Status    `json:"status"`
-	LastJobID      *int64    `json:"lastJobId,omitempty"`
-	Failure        string    `json:"failure,omitempty"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID             string `json:"id"`
+	EngineID       string `json:"engineId"`
+	Name           string `json:"name"`
+	OwnerAccountID string `json:"ownerAccountId"`
+	Status         Status `json:"status"`
+	// A pointer rather than the int64-with-omitempty used for backup sizes: an
+	// empty database really does measure zero bytes, and callers must be able
+	// to tell that apart from one that has never been probed.
+	SizeBytes      *int64     `json:"sizeBytes,omitempty"`
+	SizeObservedAt *time.Time `json:"sizeObservedAt,omitempty"`
+	LastJobID      *int64     `json:"lastJobId,omitempty"`
+	Failure        string     `json:"failure,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 type Grant struct {
@@ -208,6 +221,8 @@ type databaseModel struct {
 	Name           string
 	OwnerAccountID string
 	Status         string
+	SizeBytes      *int64
+	SizeObservedAt *time.Time
 	LastJobID      *int64
 	Failure        *string
 	CreatedAt      time.Time
@@ -261,7 +276,7 @@ func (m accountModel) toAccount() Account {
 	return Account{ID: m.ID, EngineID: m.EngineID, Name: m.Name, Host: m.Host, Status: Status(m.Status), CredentialAvailable: m.CredentialCiphertext != nil && !m.CredentialRevealed, CredentialVersion: m.CredentialVersion, LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 func (m databaseModel) toDatabase() Database {
-	return Database{ID: m.ID, EngineID: m.EngineID, Name: m.Name, OwnerAccountID: m.OwnerAccountID, Status: Status(m.Status), LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+	return Database{ID: m.ID, EngineID: m.EngineID, Name: m.Name, OwnerAccountID: m.OwnerAccountID, Status: Status(m.Status), SizeBytes: m.SizeBytes, SizeObservedAt: m.SizeObservedAt, LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 func (m grantModel) toGrant() Grant {
 	return Grant{ID: m.ID, DatabaseID: m.DatabaseID, AccountID: m.AccountID, Access: mysqloperator.AccessLevel(m.Access), Status: Status(m.Status), LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}

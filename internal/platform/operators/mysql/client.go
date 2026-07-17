@@ -32,6 +32,13 @@ func (c *UnixClient) Discover(ctx context.Context) (*Engine, error) {
 	err := c.call(ctx, http.MethodGet, "/v1/mysql-family/engine", nil, &result)
 	return result.Engine, err
 }
+func (c *UnixClient) Sizes(ctx context.Context) (map[string]int64, error) {
+	var result struct {
+		Sizes map[string]int64 `json:"sizes"`
+	}
+	err := c.call(ctx, http.MethodGet, "/v1/mysql-family/sizes", nil, &result)
+	return result.Sizes, err
+}
 func (c *UnixClient) Plan(ctx context.Context, change Change) (Plan, error) {
 	var result Plan
 	err := c.call(ctx, http.MethodPost, "/v1/mysql-family/plan", change, &result)

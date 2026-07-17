@@ -91,6 +91,15 @@ mysql-family_databases:
     responses:
       '200':
         description: Managed MySQL-family databases
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/mysql-family.yaml#/MySQLFamilyDatabase
   post:
     operationId: createMySQLFamilyDatabase
     tags:

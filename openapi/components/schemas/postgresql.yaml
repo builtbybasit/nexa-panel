@@ -143,6 +143,8 @@ ManagedPostgreSQLDatabase:
   - name
   - ownerRoleId
   - status
+  - createdAt
+  - updatedAt
   properties:
     id:
       type: string
@@ -154,11 +156,26 @@ ManagedPostgreSQLDatabase:
       type: string
     status:
       $ref: '#/PostgreSQLStatus'
+    sizeBytes:
+      type: integer
+      format: int64
+      minimum: 0
+      description: On-disk size measured while serving a read and refreshed at most once a minute, so it may lag reality; absent until the database has been measured for the first time.
+    sizeObservedAt:
+      type: string
+      format: date-time
+      description: When sizeBytes was last measured; absent while sizeBytes is.
     lastJobId:
       type: integer
       format: int64
     failure:
       type: string
+    createdAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time
 CreatePostgreSQLGrant:
   type: object
   additionalProperties: false

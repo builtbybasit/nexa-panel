@@ -15,6 +15,19 @@ export function formatBytes(bytes?: number): string {
   return `${Math.ceil(bytes / 1024)} KiB`
 }
 
+/**
+ * Byte sizes where zero is a real measurement rather than a missing one.
+ * formatBytes renders 0 as "—" because its callers only ever have a size once
+ * the thing exists; a database that has simply never been measured is a
+ * different statement from one measured at zero bytes, and the two must not
+ * read the same.
+ */
+export function formatMeasuredBytes(bytes?: number | null): string {
+  if (bytes === undefined || bytes === null) return '—'
+  if (bytes === 0) return '0 KiB'
+  return formatBytes(bytes)
+}
+
 /** `plan_ready` → `plan ready` */
 export function humanize(value: string): string {
   return value.replaceAll('_', ' ')

@@ -290,6 +290,8 @@ components:
       $ref: ./components/schemas/mysql-family.yaml#/CreateMySQLFamilyAccount
     CreateMySQLFamilyDatabase:
       $ref: ./components/schemas/mysql-family.yaml#/CreateMySQLFamilyDatabase
+    MySQLFamilyDatabase:
+      $ref: ./components/schemas/mysql-family.yaml#/MySQLFamilyDatabase
     CreateMySQLFamilyGrant:
       $ref: ./components/schemas/mysql-family.yaml#/CreateMySQLFamilyGrant
     FileEntry:
