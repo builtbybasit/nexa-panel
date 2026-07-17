@@ -30,6 +30,8 @@ func NewHostSystem() *HostSystem {
 		client: &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return dialer.DialContext(ctx, "tcp", "127.0.0.1:80")
 		}}, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }, Timeout: 5 * time.Second},
+		verifyTimeout:  15 * time.Second,
+		verifyInterval: 250 * time.Millisecond,
 	}
 }
 
@@ -127,7 +129,34 @@ func (s *HostSystem) run(ctx context.Context, name string, args ...string) error
 	return nil
 }
 
+// SiteHeader is emitted by every managed Nginx server block. It identifies which
+// block served a response, so verification can tell the site apart from the
+// default_server catch-all without depending on what the document root contains.
+const SiteHeader = "X-Nexa-Site"
+
+// VerifyHost polls until the site's own Nginx server block answers, because
+// "systemctl reload" returns before Nginx serves the new configuration: old
+// workers keep the old config for a few hundred milliseconds, during which the
+// default_server answers instead.
 func (s *HostSystem) VerifyHost(ctx context.Context, site Site) error {
+	deadline := time.Now().Add(s.verifyTimeout)
+	for {
+		err := s.probeHost(ctx, site)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil || !time.Now().Before(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(s.verifyInterval):
+		}
+	}
+}
+
+func (s *HostSystem) probeHost(ctx context.Context, site Site) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+site.PrimaryDomain+"/", nil)
 	if err != nil {
 		return err
@@ -138,12 +167,12 @@ func (s *HostSystem) VerifyHost(ctx context.Context, site Site) error {
 		return err
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
-	if err != nil {
-		return err
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	if served := response.Header.Get(SiteHeader); served != site.Slug {
+		return fmt.Errorf("%s served status %d from a different Nginx server block (%s: %q, want %q)", site.PrimaryDomain, response.StatusCode, SiteHeader, served, site.Slug)
 	}
-	if response.StatusCode >= 500 || (response.StatusCode < 300 && !strings.Contains(string(body), "Nexa Panel site "+site.Slug)) {
-		return fmt.Errorf("unexpected local response status %d", response.StatusCode)
+	if response.StatusCode >= 500 {
+		return fmt.Errorf("%s served status %d", site.PrimaryDomain, response.StatusCode)
 	}
 	return nil
 }

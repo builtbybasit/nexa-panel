@@ -158,4 +158,7 @@ func (o *HostOperator) Rollback(ctx context.Context, plan Plan) (Observation, er
 type HostSystem struct {
 	command func(context.Context, string, ...string) ([]byte, error)
 	client  *http.Client
+	// verifyTimeout bounds how long VerifyHost waits for a reload to take effect.
+	verifyTimeout  time.Duration
+	verifyInterval time.Duration
 }

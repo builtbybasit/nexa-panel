@@ -202,6 +202,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name {{.Names}};
+    add_header X-Nexa-Site {{.Site.Slug}} always;
     location ^~ /.well-known/acme-challenge/ { root /srv/nexa/acme; }
 {{if .Site.TLS}}    location / { return 301 https://{{.Site.PrimaryDomain}}$request_uri; }
 {{else}}    root {{.Site.RootPath}}/public;
@@ -231,6 +232,7 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     server_name {{.TLSNames}};
+    add_header X-Nexa-Site {{.Site.Slug}} always;
     ssl_certificate {{.Site.TLS.CertificatePath}};
     ssl_certificate_key {{.Site.TLS.PrivateKeyPath}};
     ssl_protocols TLSv1.2 TLSv1.3;

@@ -57,7 +57,23 @@ func TestRendererSeparatesHTTPRoutesFromCertificateSANs(t *testing.T) {
 		t.Fatal(err)
 	}
 	nginx := plan.Artifacts[2].Content
-	if !strings.Contains(nginx, "server_name demo.example.com www.demo.example.com;") || !strings.Contains(nginx, "server_name demo.example.com;\n    ssl_certificate") || !strings.Contains(nginx, "return 301 https://demo.example.com$request_uri;") {
+	// The alias is served over HTTP but is not a certificate SAN, so only the
+	// bare primary domain may appear on the TLS block's server_name.
+	if !strings.Contains(nginx, "server_name demo.example.com www.demo.example.com;") || !strings.Contains(nginx, "server_name demo.example.com;") || !strings.Contains(nginx, "ssl_certificate /etc/letsencrypt/live/demo.example.com/fullchain.pem;") || !strings.Contains(nginx, "return 301 https://demo.example.com$request_uri;") {
 		t.Fatalf("unexpected routing config:\n%s", nginx)
+	}
+}
+
+// Verification identifies the serving block by header, so every block that
+// answers for the site must carry it; otherwise a healthy site is rolled back.
+func TestRendererLabelsServerBlocksWithTheSiteHeader(t *testing.T) {
+	site := Site{ID: "site-1", Slug: "demo-site", PrimaryDomain: "demo.example.com", PHPVersion: "8.4", UnixUser: "nexa_demo_site", RootPath: "/srv/nexa/sites/demo-site", SocketPath: "/run/php/nexa-demo-site.sock", TLS: &TLS{CertificatePath: "/etc/letsencrypt/live/demo.example.com/fullchain.pem", PrivateKeyPath: "/etc/letsencrypt/live/demo.example.com/privkey.pem"}, TLSDomains: []string{"demo.example.com"}}
+	plan, err := (Renderer{}).Render(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nginx := plan.Artifacts[2].Content
+	if got := strings.Count(nginx, "add_header X-Nexa-Site demo-site always;"); got != 2 {
+		t.Fatalf("site header appears %d times, want it on both the HTTP and TLS blocks:\n%s", got, nginx)
 	}
 }
