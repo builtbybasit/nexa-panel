@@ -1,0 +1,27 @@
+JobID:
+  name: id
+  in: path
+  required: true
+  schema:
+    type: integer
+    format: int64
+    minimum: 1
+SiteID:
+  name: id
+  in: path
+  required: true
+  schema:
+    type: string
+TaskID:
+  name: taskId
+  in: path
+  required: true
+  schema:
+    type: string
+    pattern: ^[a-f0-9]{32}$
+UploadID:
+  name: uploadId
+  in: path
+  required: true
+  schema:
+    type: string

@@ -1,0 +1,111 @@
+FileEntry:
+  type: object
+  required:
+  - name
+  - kind
+  - size
+  - mode
+  - owner
+  - group
+  - modifiedAt
+  properties:
+    name:
+      type: string
+    kind:
+      type: string
+      enum:
+      - file
+      - dir
+      - symlink
+      - other
+    size:
+      type: integer
+      format: int64
+      minimum: 0
+    mode:
+      type: string
+    owner:
+      type: string
+    group:
+      type: string
+    modifiedAt:
+      type: string
+      format: date-time
+FileListing:
+  type: object
+  required:
+  - entries
+  - truncated
+  properties:
+    entries:
+      type: array
+      items:
+        $ref: '#/FileEntry'
+    truncated:
+      type: boolean
+FileReadResult:
+  type: object
+  required:
+  - content
+  - etag
+  - size
+  - truncated
+  - binary
+  properties:
+    content:
+      type: string
+    etag:
+      type: string
+    size:
+      type: integer
+      format: int64
+      minimum: 0
+    truncated:
+      type: boolean
+    binary:
+      type: boolean
+WriteFile:
+  type: object
+  additionalProperties: false
+  required:
+  - path
+  - content
+  properties:
+    path:
+      type: string
+    content:
+      type: string
+    expectedEtag:
+      type: string
+      description: Entity tag from the last read; an empty or missing value writes unconditionally.
+FileWriteResult:
+  type: object
+  required:
+  - etag
+  properties:
+    etag:
+      type: string
+FileUpload:
+  type: object
+  required:
+  - uploadId
+  properties:
+    uploadId:
+      type: string
+FileCopyResult:
+  type: object
+  required:
+  - copied
+  - bytes
+  - skipped
+  properties:
+    copied:
+      type: integer
+      minimum: 0
+    bytes:
+      type: integer
+      format: int64
+      minimum: 0
+    skipped:
+      type: integer
+      minimum: 0

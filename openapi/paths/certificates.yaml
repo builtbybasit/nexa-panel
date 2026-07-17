@@ -1,0 +1,115 @@
+certificates:
+  get:
+    operationId: listCertificates
+    tags:
+    - Certificates
+    x-permission: certificates.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: siteId
+      in: query
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Certificate state and expiry monitoring
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/certificates.yaml#/Certificate
+  post:
+    operationId: createCertificate
+    tags:
+    - Certificates
+    x-permission: certificates.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/certificates.yaml#/CreateCertificate
+    responses:
+      '202':
+        description: HTTP-01 issuance planning was queued
+certificates_id_plan:
+  get:
+    operationId: getCertificatePlan
+    tags:
+    - Certificates
+    x-permission: certificates.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Agent-signed certificate lifecycle plan
+certificates_id_plans:
+  post:
+    operationId: prepareCertificateOperation
+    tags:
+    - Certificates
+    x-permission: certificates.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+            - operation
+            properties:
+              operation:
+                type: string
+                enum:
+                - issue
+                - renew
+                - revoke
+    responses:
+      '202':
+        description: Certificate lifecycle planning was queued
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+certificates_id_apply:
+  post:
+    operationId: applyCertificateOperation
+    tags:
+    - Certificates
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: HTTP-01 issue, renewal, or revocation was queued
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job

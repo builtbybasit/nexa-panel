@@ -1,0 +1,101 @@
+User:
+  type: object
+  required:
+  - id
+  - username
+  - role
+  properties:
+    id:
+      type: string
+    username:
+      type: string
+      minLength: 3
+      maxLength: 64
+    role:
+      type: string
+      enum:
+      - viewer
+      - operator
+      - admin
+UserResponse:
+  type: object
+  required:
+  - user
+  properties:
+    user:
+      $ref: '#/User'
+PasswordResponse:
+  type: object
+  required:
+  - user
+  - next
+  properties:
+    user:
+      $ref: '#/User'
+    next:
+      type: string
+      enum:
+      - mfa_enrollment
+      - mfa_challenge
+IdentityStatus:
+  type: object
+  required:
+  - bootstrapRequired
+  - authenticated
+  - mfaEnrollmentRequired
+  - mfaChallengeRequired
+  properties:
+    bootstrapRequired:
+      type: boolean
+    authenticated:
+      type: boolean
+    mfaEnrollmentRequired:
+      type: boolean
+    mfaChallengeRequired:
+      type: boolean
+    user:
+      $ref: '#/User'
+TOTPCode:
+  type: string
+  pattern: ^[0-9]{6}$
+MFAEnrollment:
+  type: object
+  required:
+  - secret
+  - provisioningUri
+  properties:
+    secret:
+      type: string
+    provisioningUri:
+      type: string
+      pattern: ^otpauth://totp/
+MFAConfirmation:
+  type: object
+  required:
+  - user
+  - recoveryCodes
+  properties:
+    user:
+      $ref: '#/User'
+    recoveryCodes:
+      type: array
+      minItems: 10
+      maxItems: 10
+      items:
+        type: string
+Credentials:
+  type: object
+  additionalProperties: false
+  required:
+  - username
+  - password
+  properties:
+    username:
+      type: string
+      minLength: 3
+      maxLength: 64
+    password:
+      type: string
+      format: password
+      minLength: 1
+      maxLength: 1024

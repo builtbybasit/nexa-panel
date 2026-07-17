@@ -1,0 +1,239 @@
+mysql-family_engines:
+  get:
+    operationId: listMySQLFamilyEngines
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: The single discovered native MySQL-family engine
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  maxItems: 1
+                  items:
+                    $ref: ../components/schemas/mysql-family.yaml#/MySQLFamilyEngine
+mysql-family_accounts:
+  get:
+    operationId: listMySQLFamilyAccounts
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Managed database accounts
+  post:
+    operationId: createMySQLFamilyAccount
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/mysql-family.yaml#/CreateMySQLFamilyAccount
+    responses:
+      '202':
+        description: Encrypted account creation planning was queued
+mysql-family_accounts_id_rotate:
+  post:
+    operationId: rotateMySQLFamilyAccount
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Failure-safe credential rotation planning was queued
+mysql-family_accounts_id_credential:
+  post:
+    operationId: revealMySQLFamilyCredentialOnce
+    tags:
+    - Databases
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: One-time non-cacheable credential response
+mysql-family_databases:
+  get:
+    operationId: listMySQLFamilyDatabases
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Managed MySQL-family databases
+  post:
+    operationId: createMySQLFamilyDatabase
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/mysql-family.yaml#/CreateMySQLFamilyDatabase
+    responses:
+      '202':
+        description: Database creation planning was queued
+mysql-family_grants:
+  get:
+    operationId: listMySQLFamilyGrants
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Database-scoped grants
+  post:
+    operationId: createMySQLFamilyGrant
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/mysql-family.yaml#/CreateMySQLFamilyGrant
+    responses:
+      '202':
+        description: Scoped grant planning was queued
+mysql-family_databases_id_backups:
+  post:
+    operationId: createMySQLFamilyRestorePoint
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Consistent logical backup planning was queued
+mysql-family_restore-points:
+  get:
+    operationId: listMySQLFamilyRestorePoints
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Verified MySQL-family restore points
+mysql-family_restore-points_id_restore:
+  post:
+    operationId: prepareMySQLFamilyRestore
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Checksum-bound restore with automatic rollback planning was queued
+mysql-family_resourceType_id_plan:
+  get:
+    operationId: getMySQLFamilyPlan
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: resourceType
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+        - accounts
+        - databases
+        - grants
+        - restore-points
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Agent-signed MySQL-family plan
+mysql-family_resourceType_id_apply:
+  post:
+    operationId: applyMySQLFamilyPlan
+    tags:
+    - Databases
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: resourceType
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+        - accounts
+        - databases
+        - grants
+        - restore-points
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Reviewed MySQL-family operation was queued
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job

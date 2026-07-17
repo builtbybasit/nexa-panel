@@ -1,0 +1,227 @@
+ScheduledTask:
+  type: object
+  required:
+  - id
+  - siteId
+  - name
+  - cronExpression
+  - command
+  - timeoutSeconds
+  - enabled
+  - status
+  - pendingRemoval
+  - createdAt
+  - updatedAt
+  properties:
+    id:
+      type: string
+      pattern: ^[a-f0-9]{32}$
+    siteId:
+      type: string
+    name:
+      type: string
+      minLength: 1
+      maxLength: 64
+    cronExpression:
+      type: string
+    command:
+      type: string
+      minLength: 1
+      maxLength: 2048
+    timeoutSeconds:
+      type: integer
+      minimum: 10
+      maximum: 86400
+    enabled:
+      type: boolean
+    status:
+      type: string
+      enum:
+      - draft
+      - planning
+      - plan_ready
+      - activating
+      - active
+      - rolling_back
+      - rolled_back
+      - failed
+    pendingRemoval:
+      type: boolean
+    lastJobId:
+      type: integer
+      format: int64
+    failure:
+      type: string
+    createdAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time
+ScheduledTaskRequest:
+  type: object
+  additionalProperties: false
+  required:
+  - name
+  - cronExpression
+  - command
+  - timeoutSeconds
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 64
+    cronExpression:
+      type: string
+      description: Exactly five numeric cron fields; names such as @daily or MON are rejected.
+    command:
+      type: string
+      minLength: 1
+      maxLength: 2048
+    timeoutSeconds:
+      type: integer
+      minimum: 10
+      maximum: 86400
+    enabled:
+      type: boolean
+      default: false
+SiteScope:
+  type: object
+  required:
+  - siteId
+  - slug
+  - rootPath
+  - unixUser
+  properties:
+    siteId:
+      type: string
+    slug:
+      type: string
+    rootPath:
+      type: string
+    unixUser:
+      type: string
+SchedulePlanTask:
+  type: object
+  required:
+  - id
+  - name
+  - cronExpression
+  - command
+  - timeoutSeconds
+  - enabled
+  - scope
+  properties:
+    id:
+      type: string
+    name:
+      type: string
+    cronExpression:
+      type: string
+    command:
+      type: string
+    timeoutSeconds:
+      type: integer
+    enabled:
+      type: boolean
+    scope:
+      $ref: '#/SiteScope'
+ScheduleArtifact:
+  type: object
+  required:
+  - path
+  - mode
+  - content
+  - owner
+  - group
+  - remove
+  properties:
+    path:
+      type: string
+    mode:
+      type: integer
+    content:
+      type: string
+    owner:
+      type: string
+    group:
+      type: string
+    remove:
+      type: boolean
+ScheduleSnapshot:
+  type: object
+  required:
+  - path
+  - exists
+  properties:
+    path:
+      type: string
+    exists:
+      type: boolean
+    mode:
+      type: integer
+    digest:
+      type: string
+    content:
+      type: string
+    uid:
+      type: integer
+    gid:
+      type: integer
+SchedulePlan:
+  type: object
+  required:
+  - id
+  - kind
+  - task
+  - artifacts
+  - before
+  - warnings
+  - plannedAt
+  - expiresAt
+  properties:
+    id:
+      type: string
+    kind:
+      type: string
+      const: nexa.schedule.change.v1
+    task:
+      $ref: '#/SchedulePlanTask'
+    artifacts:
+      type: array
+      items:
+        $ref: '#/ScheduleArtifact'
+    before:
+      type: array
+      items:
+        $ref: '#/ScheduleSnapshot'
+    warnings:
+      type: array
+      items:
+        type: string
+    plannedAt:
+      type: string
+      format: date-time
+    expiresAt:
+      type: string
+      format: date-time
+    signature:
+      type: string
+ScheduleRunRecord:
+  type: object
+  required:
+  - startedAt
+  - durationSeconds
+  - exitCode
+  - trigger
+  properties:
+    startedAt:
+      type: string
+      format: date-time
+    durationSeconds:
+      type: integer
+      minimum: 0
+    exitCode:
+      type: integer
+    trigger:
+      type: string

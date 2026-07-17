@@ -1,0 +1,21 @@
+Runtime:
+  type: object
+  required:
+  - engine
+  - version
+  - installed
+  - enabled
+  - supportStatus
+  properties:
+    engine:
+      type: string
+      const: php
+    version:
+      type: string
+      pattern: ^(7\.4|8\.[0-9]{1,2})$
+    installed:
+      type: boolean
+    enabled:
+      type: boolean
+    supportStatus:
+      type: string

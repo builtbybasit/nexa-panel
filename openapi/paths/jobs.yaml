@@ -1,0 +1,101 @@
+jobs:
+  get:
+    operationId: listJobs
+    tags:
+    - Jobs
+    x-permission: jobs.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    responses:
+      '200':
+        description: Most recent durable jobs.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/jobs.yaml#/Job
+jobs_id:
+  get:
+    operationId: getJob
+    tags:
+    - Jobs
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/JobID
+    responses:
+      '200':
+        description: Current durable job state.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The job does not exist.
+jobs_id_events:
+  get:
+    operationId: streamJobEvents
+    tags:
+    - Jobs
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/JobID
+    - name: Last-Event-ID
+      in: header
+      schema:
+        type: integer
+        minimum: 0
+    responses:
+      '200':
+        description: Replayable Server-Sent Events until the job reaches a terminal state.
+        content:
+          text/event-stream:
+            schema:
+              type: string
+jobs_diagnostics:
+  post:
+    operationId: submitDiagnostics
+    tags:
+    - Jobs
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            properties:
+              delayMilliseconds:
+                type: integer
+                minimum: 10
+                maximum: 2000
+                default: 100
+    responses:
+      '202':
+        description: The safe diagnostic job was persisted and queued.
+        headers:
+          Location:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job

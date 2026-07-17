@@ -1,0 +1,362 @@
+sites_id_tasks:
+  get:
+    operationId: listScheduledTasks
+    tags:
+    - Scheduled Tasks
+    x-permission: schedules.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    responses:
+      '200':
+        description: Desired scheduled tasks for the site.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/scheduled-tasks.yaml#/ScheduledTask
+      '404':
+        description: The site does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Scheduled tasks are not available for draft sites.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+  post:
+    operationId: createScheduledTask
+    tags:
+    - Scheduled Tasks
+    x-permission: schedules.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/scheduled-tasks.yaml#/ScheduledTaskRequest
+    responses:
+      '202':
+        description: The task desired state was persisted and its signed plan was queued.
+        headers:
+          Location:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - task
+              - job
+              properties:
+                task:
+                  $ref: ../components/schemas/scheduled-tasks.yaml#/ScheduledTask
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The site does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Scheduled tasks can only be changed while the site is active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The name or cron expression or command or timeout is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_tasks_taskId:
+  get:
+    operationId: getScheduledTask
+    tags:
+    - Scheduled Tasks
+    x-permission: schedules.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - $ref: ../components/parameters.yaml#/TaskID
+    responses:
+      '200':
+        description: The scheduled task plus its signed plan while one is ready for review.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - task
+              properties:
+                task:
+                  $ref: ../components/schemas/scheduled-tasks.yaml#/ScheduledTask
+                plan:
+                  $ref: ../components/schemas/scheduled-tasks.yaml#/SchedulePlan
+                planExpiresAt:
+                  type: string
+                  format: date-time
+      '404':
+        description: The site or task does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Scheduled tasks are not available for draft sites.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+  put:
+    operationId: updateScheduledTask
+    tags:
+    - Scheduled Tasks
+    x-permission: schedules.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - $ref: ../components/parameters.yaml#/TaskID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/scheduled-tasks.yaml#/ScheduledTaskRequest
+    responses:
+      '202':
+        description: The desired state was replaced and a fresh signed plan was queued.
+        headers:
+          Location:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - task
+              - job
+              properties:
+                task:
+                  $ref: ../components/schemas/scheduled-tasks.yaml#/ScheduledTask
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The site or task does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: An operation is in flight or the site is not active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The name or cron expression or command or timeout is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+  delete:
+    operationId: deleteScheduledTask
+    tags:
+    - Scheduled Tasks
+    x-permission: schedules.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - $ref: ../components/parameters.yaml#/TaskID
+    responses:
+      '202':
+        description: The task was marked for removal and its removal plan was queued.
+        headers:
+          Location:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - task
+              - job
+              properties:
+                task:
+                  $ref: ../components/schemas/scheduled-tasks.yaml#/ScheduledTask
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The site or task does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: An operation is in flight or the site is not active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_tasks_taskId_apply:
+  post:
+    operationId: applyScheduledTaskPlan
+    tags:
+    - Scheduled Tasks
+    x-permission: schedules.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - $ref: ../components/parameters.yaml#/TaskID
+    responses:
+      '202':
+        description: The reviewed signed schedule plan was queued for activation.
+        headers:
+          Location:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The site or task or signed plan does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The plan is not ready or has expired or the site is not active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_tasks_taskId_rollback:
+  post:
+    operationId: rollbackScheduledTaskPlan
+    tags:
+    - Scheduled Tasks
+    x-permission: schedules.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - $ref: ../components/parameters.yaml#/TaskID
+    responses:
+      '202':
+        description: A rollback of the applied schedule plan was queued.
+        headers:
+          Location:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The site or task or signed plan does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Only an applied scheduled task can be rolled back.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_tasks_taskId_run:
+  post:
+    operationId: runScheduledTask
+    tags:
+    - Scheduled Tasks
+    x-permission: schedules.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - $ref: ../components/parameters.yaml#/TaskID
+    responses:
+      '202':
+        description: An on-demand run with bounded output capture was queued.
+        headers:
+          Location:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The site or task does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Only an applied and enabled scheduled task can be run.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_tasks_taskId_runs:
+  get:
+    operationId: listScheduledTaskRuns
+    tags:
+    - Scheduled Tasks
+    x-permission: schedules.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - $ref: ../components/parameters.yaml#/TaskID
+    responses:
+      '200':
+        description: Most recent bounded run records captured by the wrapper script.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - items
+              properties:
+                items:
+                  type: array
+                  maxItems: 200
+                  items:
+                    $ref: ../components/schemas/scheduled-tasks.yaml#/ScheduleRunRecord
+      '404':
+        description: The site or task does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: Scheduled tasks are not available for draft sites.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error

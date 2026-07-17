@@ -1,0 +1,315 @@
+postgresql_instances:
+  get:
+    operationId: listPostgreSQLInstances
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Discovered PostgreSQL 16-18 instances
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/postgresql.yaml#/PostgreSQLInstance
+  post:
+    operationId: createPostgreSQLInstance
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/postgresql.yaml#/CreatePostgreSQLInstance
+    responses:
+      '202':
+        description: PostgreSQL instance provisioning plan was queued
+postgresql_roles:
+  get:
+    operationId: listPostgreSQLRoles
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Managed non-superuser login roles
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/postgresql.yaml#/PostgreSQLRole
+  post:
+    operationId: createPostgreSQLRole
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/postgresql.yaml#/CreatePostgreSQLRole
+    responses:
+      '202':
+        description: Role creation and encrypted credential planning was queued
+postgresql_roles_id_rotate:
+  post:
+    operationId: rotatePostgreSQLRole
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Failure-safe credential rotation planning was queued
+postgresql_roles_id_credential:
+  post:
+    operationId: revealPostgreSQLCredentialOnce
+    tags:
+    - Databases
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: One-time, non-cacheable credential response
+        headers:
+          Cache-Control:
+            schema:
+              type: string
+              const: no-store
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - credential
+              properties:
+                credential:
+                  type: string
+                  format: password
+                  x-one-time-secret: true
+postgresql_databases:
+  get:
+    operationId: listManagedPostgreSQLDatabases
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Managed logical databases
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/postgresql.yaml#/ManagedPostgreSQLDatabase
+  post:
+    operationId: createManagedPostgreSQLDatabase
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/postgresql.yaml#/CreateManagedPostgreSQLDatabase
+    responses:
+      '202':
+        description: Logical database creation planning was queued
+postgresql_grants:
+  get:
+    operationId: listPostgreSQLGrants
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Managed database-scoped grants
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/postgresql.yaml#/PostgreSQLGrant
+  post:
+    operationId: createPostgreSQLGrant
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/postgresql.yaml#/CreatePostgreSQLGrant
+    responses:
+      '202':
+        description: Scoped grant planning was queued
+postgresql_databases_id_backups:
+  post:
+    operationId: createPostgreSQLRestorePoint
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Custom-format logical backup planning was queued
+postgresql_restore-points:
+  get:
+    operationId: listPostgreSQLRestorePoints
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Verified logical restore points
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/postgresql.yaml#/PostgreSQLRestorePoint
+postgresql_restore-points_id_restore:
+  post:
+    operationId: preparePostgreSQLRestore
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Failure-safe staged restore planning was queued
+postgresql_resourceType_id_plan:
+  get:
+    operationId: getPostgreSQLPlan
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: resourceType
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+        - instances
+        - roles
+        - databases
+        - grants
+        - restore-points
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Agent-signed PostgreSQL plan
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                plan:
+                  $ref: ../components/schemas/postgresql.yaml#/PostgreSQLStoredPlan
+postgresql_resourceType_id_apply:
+  post:
+    operationId: applyPostgreSQLPlan
+    tags:
+    - Databases
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: resourceType
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+        - instances
+        - roles
+        - databases
+        - grants
+        - restore-points
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Reviewed PostgreSQL operation was queued
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job

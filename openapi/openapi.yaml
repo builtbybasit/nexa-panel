@@ -4,1850 +4,186 @@ info:
   version: 0.1.0
   description: Initial control-plane contract for the Nexa Panel foundation.
 servers:
-  - url: /api/v1
+- url: /api/v1
 paths:
   /health/live:
-    get:
-      operationId: getLiveness
-      tags: [Platform]
-      responses:
-        "200":
-          description: The control-plane process is running.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Liveness"
+    $ref: ./paths/platform.yaml#/health_live
   /modules:
-    get:
-      operationId: listModules
-      tags: [Platform]
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: Independently registered feature modules.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ModuleDescriptor"
+    $ref: ./paths/platform.yaml#/modules
   /system/overview:
-    get:
-      operationId: getSystemOverview
-      tags: [System]
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: Observed capacity and container-runtime capabilities.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SystemOverview"
+    $ref: ./paths/platform.yaml#/system_overview
   /auth/status:
-    get:
-      operationId: getIdentityStatus
-      tags: [Identity]
-      responses:
-        "200":
-          description: Bootstrap and current-session status.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IdentityStatus"
+    $ref: ./paths/identity.yaml#/auth_status
   /auth/bootstrap:
-    post:
-      operationId: bootstrapAdministrator
-      tags: [Identity]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/Credentials"
-      responses:
-        "201":
-          description: The first administrator and session were created.
-          headers:
-            Set-Cookie:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PasswordResponse"
-        "409":
-          description: An administrator already exists.
+    $ref: ./paths/identity.yaml#/auth_bootstrap
   /auth/login:
-    post:
-      operationId: login
-      tags: [Identity]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/Credentials"
-      responses:
-        "200":
-          description: Credentials were accepted and a session was created.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PasswordResponse"
-        "401":
-          description: The credentials were not accepted.
-        "429":
-          description: Too many password attempts were made from the client address.
+    $ref: ./paths/identity.yaml#/auth_login
   /auth/mfa/enroll:
-    post:
-      operationId: enrollMFA
-      tags: [Identity]
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: Encrypted TOTP enrollment material for the pre-authenticated user.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MFAEnrollment"
-        "409":
-          description: MFA is already enrolled.
+    $ref: ./paths/identity.yaml#/auth_mfa_enroll
   /auth/mfa/confirm:
-    post:
-      operationId: confirmMFA
-      tags: [Identity]
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [code]
-              properties:
-                code:
-                  $ref: "#/components/schemas/TOTPCode"
-      responses:
-        "200":
-          description: Enrollment was confirmed; recovery codes are returned once.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MFAConfirmation"
-        "401":
-          description: The TOTP was invalid, expired, or previously accepted.
-        "429":
-          description: Too many verification attempts were made.
+    $ref: ./paths/identity.yaml#/auth_mfa_confirm
   /auth/mfa/verify:
-    post:
-      operationId: verifyMFA
-      tags: [Identity]
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              oneOf:
-                - type: object
-                  additionalProperties: false
-                  required: [code]
-                  properties:
-                    code:
-                      $ref: "#/components/schemas/TOTPCode"
-                - type: object
-                  additionalProperties: false
-                  required: [recoveryCode]
-                  properties:
-                    recoveryCode:
-                      type: string
-                      pattern: "^[A-Fa-f0-9]{4}(-[A-Fa-f0-9]{4}){3}$"
-      responses:
-        "200":
-          description: The pre-authenticated session is now fully authenticated.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserResponse"
-        "401":
-          description: The TOTP or recovery code was invalid or already consumed.
-        "429":
-          description: Too many verification attempts were made.
+    $ref: ./paths/identity.yaml#/auth_mfa_verify
   /auth/session:
-    get:
-      operationId: getSession
-      tags: [Identity]
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: The authenticated administrator.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserResponse"
-        "401":
-          description: A valid session is required.
+    $ref: ./paths/identity.yaml#/auth_session
   /auth/logout:
-    post:
-      operationId: logout
-      tags: [Identity]
-      security:
-        - sessionCookie: []
-      responses:
-        "204":
-          description: The current session was revoked.
+    $ref: ./paths/identity.yaml#/auth_logout
   /users:
-    get:
-      operationId: listUsers
-      tags: [Users]
-      x-permission: users.manage
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: All managed users with their developer site grants.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ManagedUser"
-    post:
-      operationId: createUser
-      tags: [Users]
-      x-permission: users.manage
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateUser"
-      responses:
-        "201":
-          description: The managed user was created.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ManagedUser"
-        "409": {description: A user with this username already exists., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The username or password or role is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/users.yaml#/users
   /users/{id}:
-    patch:
-      operationId: updateUser
-      tags: [Users]
-      x-permission: users.manage
-      security:
-        - sessionCookie: []
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateUser"
-      responses:
-        "200":
-          description: The updated user; every live session of the user was revoked.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ManagedUser"
-        "400": {description: Neither a role nor a password was provided., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "404": {description: The user does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: The last administrator cannot lose the admin role., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The role or password is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-    delete:
-      operationId: deleteUser
-      tags: [Users]
-      x-permission: users.manage
-      security:
-        - sessionCookie: []
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "204":
-          description: The user plus their sessions and site grants were removed.
-        "404": {description: The user does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: The last administrator or your own account cannot be deleted., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/users.yaml#/users_id
   /users/{id}/sites:
-    put:
-      operationId: replaceUserSiteGrants
-      tags: [Users]
-      x-permission: users.manage
-      security:
-        - sessionCookie: []
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UserSiteGrants"
-      responses:
-        "200":
-          description: The developer's site grants were replaced with the deduplicated set.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserSiteGrants"
-        "400": {description: Site grants apply to developer users only., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "404": {description: The user does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: A granted site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "503": {description: Site grants are not configured on this control plane., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/users.yaml#/users_id_sites
   /audit/events:
-    get:
-      operationId: listAuditEvents
-      tags: [Audit]
-      x-permission: audit.read
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 200
-            default: 100
-      responses:
-        "200":
-          description: Most recent append-only audit events.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/AuditEvent"
+    $ref: ./paths/audit.yaml#/audit_events
   /jobs:
-    get:
-      operationId: listJobs
-      tags: [Jobs]
-      x-permission: jobs.read
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 200
-            default: 50
-      responses:
-        "200":
-          description: Most recent durable jobs.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Job"
+    $ref: ./paths/jobs.yaml#/jobs
   /jobs/{id}:
-    get:
-      operationId: getJob
-      tags: [Jobs]
-      security:
-        - sessionCookie: []
-      parameters:
-        - $ref: "#/components/parameters/JobID"
-      responses:
-        "200":
-          description: Current durable job state.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Job"
-        "404":
-          description: The job does not exist.
+    $ref: ./paths/jobs.yaml#/jobs_id
   /jobs/{id}/events:
-    get:
-      operationId: streamJobEvents
-      tags: [Jobs]
-      security:
-        - sessionCookie: []
-      parameters:
-        - $ref: "#/components/parameters/JobID"
-        - name: Last-Event-ID
-          in: header
-          schema:
-            type: integer
-            minimum: 0
-      responses:
-        "200":
-          description: Replayable Server-Sent Events until the job reaches a terminal state.
-          content:
-            text/event-stream:
-              schema:
-                type: string
+    $ref: ./paths/jobs.yaml#/jobs_id_events
   /jobs/diagnostics:
-    post:
-      operationId: submitDiagnostics
-      tags: [Jobs]
-      x-permission: operations.apply
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                delayMilliseconds:
-                  type: integer
-                  minimum: 10
-                  maximum: 2000
-                  default: 100
-      responses:
-        "202":
-          description: The safe diagnostic job was persisted and queued.
-          headers:
-            Location:
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Job"
+    $ref: ./paths/jobs.yaml#/jobs_diagnostics
   /node/probe/observe:
-    get:
-      operationId: observeManagedProbe
-      tags: [Node Operations]
-      x-permission: system.read
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: Current state of the fixed Nexa-owned probe target.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/NodeSnapshot"
-        "503":
-          description: The privileged node agent is unavailable.
+    $ref: ./paths/node-operations.yaml#/node_probe_observe
   /node/probe/plan:
-    post:
-      operationId: planManagedProbe
-      tags: [Node Operations]
-      x-permission: operations.plan
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ProbeChange"
-      responses:
-        "200":
-          description: A signed, time-limited plan issued by the privileged agent.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/NodePlan"
+    $ref: ./paths/node-operations.yaml#/node_probe_plan
   /node/probe/apply:
-    post:
-      operationId: applyManagedProbePlan
-      tags: [Node Operations]
-      x-permission: operations.apply
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/NodePlan"
-      responses:
-        "202":
-          description: The signed plan was persisted as a durable job.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Job"
+    $ref: ./paths/node-operations.yaml#/node_probe_apply
   /node/probe/rollback:
-    post:
-      operationId: rollbackManagedProbePlan
-      tags: [Node Operations]
-      x-permission: operations.apply
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/NodePlan"
-      responses:
-        "202":
-          description: A rollback of the signed plan was persisted as a durable job.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Job"
+    $ref: ./paths/node-operations.yaml#/node_probe_rollback
   /runtimes:
-    get:
-      operationId: listRuntimes
-      tags: [Runtimes]
-      x-permission: runtimes.read
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: Installed and enabled PHP-FPM 7.4 and 8.x runtimes discovered on the node.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Runtime"
+    $ref: ./paths/runtimes.yaml#/runtimes
   /sites:
-    get:
-      operationId: listSites
-      tags: [Sites]
-      x-permission: sites.read
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: Desired sites managed by the control plane.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Site"
-    post:
-      operationId: createSite
-      tags: [Sites]
-      x-permission: sites.write
-      security:
-        - sessionCookie: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateSite"
-      responses:
-        "202":
-          description: The site desired state was persisted and its configuration plan was queued.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [site, job]
-                properties:
-                  site:
-                    $ref: "#/components/schemas/Site"
-                  job:
-                    $ref: "#/components/schemas/Job"
-        "422":
-          description: The site identity, domain, or selected runtime is not allowed.
+    $ref: ./paths/sites.yaml#/sites
   /sites/{id}:
-    get:
-      operationId: getSite
-      tags: [Sites]
-      x-permission: sites.read
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: One managed site.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Site"
-        "404":
-          description: The site does not exist.
+    $ref: ./paths/sites.yaml#/sites_id
   /sites/{id}/plan:
-    get:
-      operationId: getSitePlan
-      tags: [Sites]
-      x-permission: sites.read
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Immutable generated artifacts awaiting privileged node validation.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [plan, expiresAt]
-                properties:
-                  plan:
-                    $ref: "#/components/schemas/SitePlan"
-                  expiresAt:
-                    type: string
-                    format: date-time
-        "404":
-          description: A plan is not ready for this site.
-    post:
-      operationId: refreshSitePlan
-      tags: [Sites]
-      x-permission: sites.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "202": {description: A new agent-signed site plan was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+    $ref: ./paths/sites.yaml#/sites_id_plan
   /sites/{id}/activate:
-    post:
-      operationId: activateSite
-      tags: [Sites]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "202": {description: Signed site activation was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+    $ref: ./paths/sites.yaml#/sites_id_activate
   /sites/{id}/rollback:
-    post:
-      operationId: rollbackSite
-      tags: [Sites]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "202": {description: Drift-guarded site rollback was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+    $ref: ./paths/sites.yaml#/sites_id_rollback
   /sites/{id}/files:
-    get:
-      operationId: listSiteFiles
-      tags: [Files]
-      x-permission: files.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - {name: path, in: query, schema: {type: string}, description: Site-relative directory; defaults to the site root.}
-      responses:
-        "200":
-          description: Bounded directory listing confined to the site root.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileListing"
-        "404": {description: The site or path does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files
   /sites/{id}/files/stat:
-    get:
-      operationId: statSiteFile
-      tags: [Files]
-      x-permission: files.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - {name: path, in: query, required: true, schema: {type: string}}
-      responses:
-        "200":
-          description: Metadata for one entry inside the site root.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileEntry"
-        "404": {description: The site or path does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_stat
   /sites/{id}/files/content:
-    get:
-      operationId: readSiteFileContent
-      tags: [Files]
-      x-permission: files.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - {name: path, in: query, required: true, schema: {type: string}}
-      responses:
-        "200":
-          description: Bounded text content with the entity tag used for conditional writes.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileReadResult"
-        "404": {description: The site or file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-    put:
-      operationId: writeSiteFileContent
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/WriteFile"
-      responses:
-        "200":
-          description: The file was written; the response carries the new entity tag.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileWriteResult"
-        "404": {description: The site or file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: The expected entity tag no longer matches or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The path or content is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_content
   /sites/{id}/files/download:
-    get:
-      operationId: downloadSiteFile
-      tags: [Files]
-      x-permission: files.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - {name: path, in: query, required: true, schema: {type: string}}
-      responses:
-        "200":
-          description: The file streamed as an attachment.
-          headers:
-            Content-Disposition:
-              schema: {type: string}
-            Content-Length:
-              schema: {type: integer, format: int64, minimum: 0}
-          content:
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-        "404": {description: The site or file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_download
   /sites/{id}/files/mkdir:
-    post:
-      operationId: createSiteDirectory
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [path]
-              properties:
-                path: {type: string}
-      responses:
-        "200":
-          description: The directory was created and is owned by the site account.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileEntry"
-        "404": {description: The site or parent directory does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: The target already exists or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_mkdir
   /sites/{id}/files/move:
-    post:
-      operationId: moveSiteFile
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [from, to]
-              properties:
-                from: {type: string}
-                to: {type: string}
-                overwrite: {type: boolean, default: false}
-      responses:
-        "200":
-          description: The entry was renamed inside the site root.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileEntry"
-        "404": {description: The site or source does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: The destination already exists or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: A path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_move
   /sites/{id}/files/copy:
-    post:
-      operationId: copySiteFile
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [from, to]
-              properties:
-                from: {type: string}
-                to: {type: string}
-      responses:
-        "200":
-          description: The file or directory tree was copied inside the site root.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileCopyResult"
-        "404": {description: The site or source does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: The destination already exists or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: A path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_copy
   /sites/{id}/files/delete:
-    post:
-      operationId: deleteSiteFile
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [path]
-              properties:
-                path: {type: string}
-                recursive: {type: boolean, default: false}
-      responses:
-        "200":
-          description: The entry was removed.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [status]
-                properties:
-                  status: {type: string, const: deleted}
-        "404": {description: The site or path does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The path is not allowed or the directory is not empty without recursive., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_delete
   /sites/{id}/files/uploads:
-    post:
-      operationId: beginSiteFileUpload
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [path, size]
-              properties:
-                path: {type: string}
-                size: {type: integer, format: int64, minimum: 0}
-                overwrite: {type: boolean, default: false}
-      responses:
-        "200":
-          description: A chunked upload session was created.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileUpload"
-        "404": {description: The site or target directory does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: The target already exists or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The path or size is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_uploads
   /sites/{id}/files/uploads/{uploadId}:
-    put:
-      operationId: uploadSiteFileChunk
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - $ref: "#/components/parameters/UploadID"
-        - {name: offset, in: query, required: true, schema: {type: integer, format: int64, minimum: 0}, description: Byte offset of this chunk within the staged file.}
-      requestBody:
-        required: true
-        description: One raw chunk of at most 8 MiB.
-        content:
-          application/octet-stream:
-            schema:
-              type: string
-              format: binary
-      responses:
-        "200":
-          description: The chunk was staged at the requested offset.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [status]
-                properties:
-                  status: {type: string, const: received}
-        "400": {description: The offset query parameter must be a non-negative integer., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "404": {description: The site or upload session does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: The offset does not match the next expected byte; the error carries the expected offset., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The chunk exceeds 8 MiB., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-    delete:
-      operationId: abortSiteFileUpload
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - $ref: "#/components/parameters/UploadID"
-      responses:
-        "200":
-          description: The upload session and its staged bytes were discarded.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [status]
-                properties:
-                  status: {type: string, const: aborted}
-        "404": {description: The site or upload session does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_uploads_uploadId
   /sites/{id}/files/uploads/{uploadId}/commit:
-    post:
-      operationId: commitSiteFileUpload
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - $ref: "#/components/parameters/UploadID"
-      responses:
-        "200":
-          description: The staged upload was moved into place and is owned by the site account.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FileEntry"
-        "404": {description: The site or upload session does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: The staged bytes are incomplete or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The upload is not committable., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_uploads_uploadId_commit
   /sites/{id}/files/archive:
-    post:
-      operationId: archiveSiteFiles
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [paths, target]
-              properties:
-                paths:
-                  type: array
-                  minItems: 1
-                  maxItems: 100
-                  items: {type: string}
-                target:
-                  type: string
-                  pattern: "\\.tar\\.gz$"
-      responses:
-        "202":
-          description: The archive job was persisted and queued.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [job]
-                properties:
-                  job:
-                    $ref: "#/components/schemas/Job"
-        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: A path is not allowed or the target is not a .tar.gz path., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_archive
   /sites/{id}/files/extract:
-    post:
-      operationId: extractSiteArchive
-      tags: [Files]
-      x-permission: files.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [path, targetDir]
-              properties:
-                path:
-                  type: string
-                  pattern: "\\.(zip|tar\\.gz|tgz)$"
-                targetDir: {type: string}
-      responses:
-        "202":
-          description: The extraction job was persisted and queued.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [job]
-                properties:
-                  job:
-                    $ref: "#/components/schemas/Job"
-        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The archive path or target directory is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_extract
   /sites/{id}/files/size:
-    post:
-      operationId: measureSiteDirectorySize
-      tags: [Files]
-      x-permission: files.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [path]
-              properties:
-                path: {type: string}
-      responses:
-        "202":
-          description: The directory size job was persisted and queued.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [job]
-                properties:
-                  job:
-                    $ref: "#/components/schemas/Job"
-        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Files are only available while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The path is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-files.yaml#/sites_id_files_size
   /sites/{id}/logs:
-    get:
-      operationId: listSiteLogs
-      tags: [Logs]
-      x-permission: logs.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      responses:
-        "200":
-          description: Discovered log files under the site logs directory.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/LogFile"
-        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Logs are not available until the site has been provisioned., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-logs.yaml#/sites_id_logs
   /sites/{id}/logs/read:
-    get:
-      operationId: readSiteLog
-      tags: [Logs]
-      x-permission: logs.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - {name: name, in: query, required: true, schema: {type: string}, description: Log file name slash-relative to the site logs directory.}
-        - {name: tail, in: query, schema: {type: integer, minimum: 1, maximum: 2000, default: 200}, description: Trailing lines to return in tail mode; values above the maximum are capped.}
-        - {name: max, in: query, schema: {type: integer, minimum: 1, maximum: 262144, default: 65536}, description: Read window in bytes; values above the maximum are capped.}
-        - {name: offset, in: query, schema: {type: integer, format: int64, minimum: 0}, description: Return complete lines appended since this byte offset instead of tailing.}
-        - {name: filter, in: query, schema: {type: string}, description: Case-insensitive substring filter applied per line.}
-      responses:
-        "200":
-          description: One bounded window of log lines with the offset to poll from next.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/LogReadResult"
-        "400": {description: A query parameter is malformed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "404": {description: The site or log file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Logs are not available until the site has been provisioned., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The log name is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-logs.yaml#/sites_id_logs_read
   /sites/{id}/logs/stream:
-    get:
-      operationId: streamSiteLog
-      tags: [Logs]
-      x-permission: logs.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - {name: name, in: query, required: true, schema: {type: string}}
-        - {name: filter, in: query, schema: {type: string}}
-        - {name: Last-Event-ID, in: header, schema: {type: integer, format: int64, minimum: 0}, description: Resume the tail from this byte offset.}
-      responses:
-        "200":
-          description: Replayable Server-Sent Events live tail; each lines event carries appended lines and rotation state as JSON and its event ID is the next byte offset.
-          content:
-            text/event-stream:
-              schema:
-                type: string
-        "400": {description: Last-Event-ID must be a non-negative integer., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "404": {description: The site or log file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Logs are not available until the site has been provisioned., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The log name is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-logs.yaml#/sites_id_logs_stream
   /sites/{id}/logs/download:
-    get:
-      operationId: downloadSiteLog
-      tags: [Logs]
-      x-permission: logs.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - {name: name, in: query, required: true, schema: {type: string}}
-      responses:
-        "200":
-          description: The log file streamed as an attachment.
-          headers:
-            Content-Disposition:
-              schema: {type: string}
-            Content-Length:
-              schema: {type: integer, format: int64, minimum: 0}
-          content:
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-        "404": {description: The site or log file does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Logs are not available until the site has been provisioned., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The log name is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-logs.yaml#/sites_id_logs_download
   /sites/{id}/tasks:
-    get:
-      operationId: listScheduledTasks
-      tags: [Scheduled Tasks]
-      x-permission: schedules.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      responses:
-        "200":
-          description: Desired scheduled tasks for the site.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ScheduledTask"
-        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Scheduled tasks are not available for draft sites., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-    post:
-      operationId: createScheduledTask
-      tags: [Scheduled Tasks]
-      x-permission: schedules.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ScheduledTaskRequest"
-      responses:
-        "202":
-          description: The task desired state was persisted and its signed plan was queued.
-          headers:
-            Location:
-              schema: {type: string}
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [task, job]
-                properties:
-                  task:
-                    $ref: "#/components/schemas/ScheduledTask"
-                  job:
-                    $ref: "#/components/schemas/Job"
-        "404": {description: The site does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Scheduled tasks can only be changed while the site is active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The name or cron expression or command or timeout is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-tasks.yaml#/sites_id_tasks
   /sites/{id}/tasks/{taskId}:
-    get:
-      operationId: getScheduledTask
-      tags: [Scheduled Tasks]
-      x-permission: schedules.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - $ref: "#/components/parameters/TaskID"
-      responses:
-        "200":
-          description: The scheduled task plus its signed plan while one is ready for review.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [task]
-                properties:
-                  task:
-                    $ref: "#/components/schemas/ScheduledTask"
-                  plan:
-                    $ref: "#/components/schemas/SchedulePlan"
-                  planExpiresAt:
-                    type: string
-                    format: date-time
-        "404": {description: The site or task does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Scheduled tasks are not available for draft sites., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-    put:
-      operationId: updateScheduledTask
-      tags: [Scheduled Tasks]
-      x-permission: schedules.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - $ref: "#/components/parameters/TaskID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ScheduledTaskRequest"
-      responses:
-        "202":
-          description: The desired state was replaced and a fresh signed plan was queued.
-          headers:
-            Location:
-              schema: {type: string}
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [task, job]
-                properties:
-                  task:
-                    $ref: "#/components/schemas/ScheduledTask"
-                  job:
-                    $ref: "#/components/schemas/Job"
-        "404": {description: The site or task does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: An operation is in flight or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "422": {description: The name or cron expression or command or timeout is not allowed., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-    delete:
-      operationId: deleteScheduledTask
-      tags: [Scheduled Tasks]
-      x-permission: schedules.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - $ref: "#/components/parameters/TaskID"
-      responses:
-        "202":
-          description: The task was marked for removal and its removal plan was queued.
-          headers:
-            Location:
-              schema: {type: string}
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [task, job]
-                properties:
-                  task:
-                    $ref: "#/components/schemas/ScheduledTask"
-                  job:
-                    $ref: "#/components/schemas/Job"
-        "404": {description: The site or task does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: An operation is in flight or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-tasks.yaml#/sites_id_tasks_taskId
   /sites/{id}/tasks/{taskId}/apply:
-    post:
-      operationId: applyScheduledTaskPlan
-      tags: [Scheduled Tasks]
-      x-permission: schedules.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - $ref: "#/components/parameters/TaskID"
-      responses:
-        "202":
-          description: The reviewed signed schedule plan was queued for activation.
-          headers:
-            Location:
-              schema: {type: string}
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Job"
-        "404": {description: The site or task or signed plan does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: The plan is not ready or has expired or the site is not active., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-tasks.yaml#/sites_id_tasks_taskId_apply
   /sites/{id}/tasks/{taskId}/rollback:
-    post:
-      operationId: rollbackScheduledTaskPlan
-      tags: [Scheduled Tasks]
-      x-permission: schedules.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - $ref: "#/components/parameters/TaskID"
-      responses:
-        "202":
-          description: A rollback of the applied schedule plan was queued.
-          headers:
-            Location:
-              schema: {type: string}
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Job"
-        "404": {description: The site or task or signed plan does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Only an applied scheduled task can be rolled back., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-tasks.yaml#/sites_id_tasks_taskId_rollback
   /sites/{id}/tasks/{taskId}/run:
-    post:
-      operationId: runScheduledTask
-      tags: [Scheduled Tasks]
-      x-permission: schedules.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - $ref: "#/components/parameters/TaskID"
-      responses:
-        "202":
-          description: An on-demand run with bounded output capture was queued.
-          headers:
-            Location:
-              schema: {type: string}
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Job"
-        "404": {description: The site or task does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Only an applied and enabled scheduled task can be run., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-tasks.yaml#/sites_id_tasks_taskId_run
   /sites/{id}/tasks/{taskId}/runs:
-    get:
-      operationId: listScheduledTaskRuns
-      tags: [Scheduled Tasks]
-      x-permission: schedules.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - $ref: "#/components/parameters/SiteID"
-        - $ref: "#/components/parameters/TaskID"
-      responses:
-        "200":
-          description: Most recent bounded run records captured by the wrapper script.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    maxItems: 200
-                    items:
-                      $ref: "#/components/schemas/ScheduleRunRecord"
-        "404": {description: The site or task does not exist., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-        "409": {description: Scheduled tasks are not available for draft sites., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    $ref: ./paths/site-tasks.yaml#/sites_id_tasks_taskId_runs
   /domains:
-    get:
-      operationId: listDomains
-      tags: [Domains]
-      x-permission: domains.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: siteId, in: query, schema: {type: string}}
-      responses:
-        "200": {description: Managed routing identities, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/Domain"}}}}}}}
-    post:
-      operationId: createDomain
-      tags: [Domains]
-      x-permission: domains.write
-      security: [{sessionCookie: []}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateDomain"}}}}
-      responses:
-        "202": {description: DNS and routing planning was queued}
+    $ref: ./paths/domains.yaml#/domains
   /domains/{id}/plan:
-    get:
-      operationId: getDomainPlan
-      tags: [Domains]
-      x-permission: domains.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "200": {description: DNS preflight and signed routing plan}
+    $ref: ./paths/domains.yaml#/domains_id_plan
   /domains/{id}/activate:
-    post:
-      operationId: activateDomain
-      tags: [Domains]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "202": {description: Atomic routing activation was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+    $ref: ./paths/domains.yaml#/domains_id_activate
   /certificates:
-    get:
-      operationId: listCertificates
-      tags: [Certificates]
-      x-permission: certificates.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: siteId, in: query, schema: {type: string}}
-      responses:
-        "200": {description: Certificate state and expiry monitoring, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/Certificate"}}}}}}}
-    post:
-      operationId: createCertificate
-      tags: [Certificates]
-      x-permission: certificates.write
-      security: [{sessionCookie: []}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateCertificate"}}}}
-      responses:
-        "202": {description: HTTP-01 issuance planning was queued}
+    $ref: ./paths/certificates.yaml#/certificates
   /certificates/{id}/plan:
-    get:
-      operationId: getCertificatePlan
-      tags: [Certificates]
-      x-permission: certificates.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "200": {description: Agent-signed certificate lifecycle plan}
+    $ref: ./paths/certificates.yaml#/certificates_id_plan
   /certificates/{id}/plans:
-    post:
-      operationId: prepareCertificateOperation
-      tags: [Certificates]
-      x-permission: certificates.write
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [operation], properties: {operation: {type: string, enum: [issue, renew, revoke]}}}}}}
-      responses:
-        "202": {description: Certificate lifecycle planning was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+    $ref: ./paths/certificates.yaml#/certificates_id_plans
   /certificates/{id}/apply:
-    post:
-      operationId: applyCertificateOperation
-      tags: [Certificates]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "202": {description: "HTTP-01 issue, renewal, or revocation was queued", content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+    $ref: ./paths/certificates.yaml#/certificates_id_apply
   /postgresql/instances:
-    get:
-      operationId: listPostgreSQLInstances
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses:
-        "200": {description: Discovered PostgreSQL 16-18 instances, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/PostgreSQLInstance"}}}}}}}
-    post:
-      operationId: createPostgreSQLInstance
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreatePostgreSQLInstance"}}}}
-      responses:
-        "202": {description: PostgreSQL instance provisioning plan was queued}
+    $ref: ./paths/postgresql.yaml#/postgresql_instances
   /postgresql/roles:
-    get:
-      operationId: listPostgreSQLRoles
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses:
-        "200": {description: Managed non-superuser login roles, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/PostgreSQLRole"}}}}}}}
-    post:
-      operationId: createPostgreSQLRole
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreatePostgreSQLRole"}}}}
-      responses:
-        "202": {description: Role creation and encrypted credential planning was queued}
+    $ref: ./paths/postgresql.yaml#/postgresql_roles
   /postgresql/roles/{id}/rotate:
-    post:
-      operationId: rotatePostgreSQLRole
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      responses:
-        "202": {description: Failure-safe credential rotation planning was queued}
+    $ref: ./paths/postgresql.yaml#/postgresql_roles_id_rotate
   /postgresql/roles/{id}/credential:
-    post:
-      operationId: revealPostgreSQLCredentialOnce
-      tags: [Databases]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      responses:
-        "200": {description: "One-time, non-cacheable credential response", headers: {Cache-Control: {schema: {type: string, const: no-store}}}, content: {application/json: {schema: {type: object, required: [credential], properties: {credential: {type: string, format: password, x-one-time-secret: true}}}}}}
+    $ref: ./paths/postgresql.yaml#/postgresql_roles_id_credential
   /postgresql/databases:
-    get:
-      operationId: listManagedPostgreSQLDatabases
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses:
-        "200": {description: Managed logical databases, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/ManagedPostgreSQLDatabase"}}}}}}}
-    post:
-      operationId: createManagedPostgreSQLDatabase
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateManagedPostgreSQLDatabase"}}}}
-      responses:
-        "202": {description: Logical database creation planning was queued}
+    $ref: ./paths/postgresql.yaml#/postgresql_databases
   /postgresql/grants:
-    get:
-      operationId: listPostgreSQLGrants
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses:
-        "200": {description: Managed database-scoped grants, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/PostgreSQLGrant"}}}}}}}
-    post:
-      operationId: createPostgreSQLGrant
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreatePostgreSQLGrant"}}}}
-      responses:
-        "202": {description: Scoped grant planning was queued}
+    $ref: ./paths/postgresql.yaml#/postgresql_grants
   /postgresql/databases/{id}/backups:
-    post:
-      operationId: createPostgreSQLRestorePoint
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      responses:
-        "202": {description: Custom-format logical backup planning was queued}
+    $ref: ./paths/postgresql.yaml#/postgresql_databases_id_backups
   /postgresql/restore-points:
-    get:
-      operationId: listPostgreSQLRestorePoints
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses:
-        "200": {description: Verified logical restore points, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: "#/components/schemas/PostgreSQLRestorePoint"}}}}}}}
+    $ref: ./paths/postgresql.yaml#/postgresql_restore-points
   /postgresql/restore-points/{id}/restore:
-    post:
-      operationId: preparePostgreSQLRestore
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      responses:
-        "202": {description: Failure-safe staged restore planning was queued}
+    $ref: ./paths/postgresql.yaml#/postgresql_restore-points_id_restore
   /postgresql/{resourceType}/{id}/plan:
-    get:
-      operationId: getPostgreSQLPlan
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: resourceType, in: path, required: true, schema: {type: string, enum: [instances, roles, databases, grants, restore-points]}}
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "200": {description: Agent-signed PostgreSQL plan, content: {application/json: {schema: {type: object, properties: {plan: {$ref: "#/components/schemas/PostgreSQLStoredPlan"}}}}}}
+    $ref: ./paths/postgresql.yaml#/postgresql_resourceType_id_plan
   /postgresql/{resourceType}/{id}/apply:
-    post:
-      operationId: applyPostgreSQLPlan
-      tags: [Databases]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: resourceType, in: path, required: true, schema: {type: string, enum: [instances, roles, databases, grants, restore-points]}}
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "202": {description: Reviewed PostgreSQL operation was queued, content: {application/json: {schema: {$ref: "#/components/schemas/Job"}}}}
+    $ref: ./paths/postgresql.yaml#/postgresql_resourceType_id_apply
   /mysql-family/engines:
-    get:
-      operationId: listMySQLFamilyEngines
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses:
-        "200": {description: The single discovered native MySQL-family engine, content: {application/json: {schema: {type: object, properties: {items: {type: array, maxItems: 1, items: {$ref: "#/components/schemas/MySQLFamilyEngine"}}}}}}}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_engines
   /mysql-family/accounts:
-    get:
-      operationId: listMySQLFamilyAccounts
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses: {"200": {description: Managed database accounts}}
-    post:
-      operationId: createMySQLFamilyAccount
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateMySQLFamilyAccount"}}}}
-      responses: {"202": {description: Encrypted account creation planning was queued}}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_accounts
   /mysql-family/accounts/{id}/rotate:
-    post:
-      operationId: rotateMySQLFamilyAccount
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      responses: {"202": {description: Failure-safe credential rotation planning was queued}}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_accounts_id_rotate
   /mysql-family/accounts/{id}/credential:
-    post:
-      operationId: revealMySQLFamilyCredentialOnce
-      tags: [Databases]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      responses: {"200": {description: One-time non-cacheable credential response}}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_accounts_id_credential
   /mysql-family/databases:
-    get:
-      operationId: listMySQLFamilyDatabases
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses: {"200": {description: Managed MySQL-family databases}}
-    post:
-      operationId: createMySQLFamilyDatabase
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateMySQLFamilyDatabase"}}}}
-      responses: {"202": {description: Database creation planning was queued}}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_databases
   /mysql-family/grants:
-    get:
-      operationId: listMySQLFamilyGrants
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses: {"200": {description: Database-scoped grants}}
-    post:
-      operationId: createMySQLFamilyGrant
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateMySQLFamilyGrant"}}}}
-      responses: {"202": {description: Scoped grant planning was queued}}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_grants
   /mysql-family/databases/{id}/backups:
-    post:
-      operationId: createMySQLFamilyRestorePoint
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      responses: {"202": {description: Consistent logical backup planning was queued}}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_databases_id_backups
   /mysql-family/restore-points:
-    get:
-      operationId: listMySQLFamilyRestorePoints
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses: {"200": {description: Verified MySQL-family restore points}}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_restore-points
   /mysql-family/restore-points/{id}/restore:
-    post:
-      operationId: prepareMySQLFamilyRestore
-      tags: [Databases]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      responses: {"202": {description: Checksum-bound restore with automatic rollback planning was queued}}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_restore-points_id_restore
   /mysql-family/{resourceType}/{id}/plan:
-    get:
-      operationId: getMySQLFamilyPlan
-      tags: [Databases]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: resourceType, in: path, required: true, schema: {type: string, enum: [accounts, databases, grants, restore-points]}}
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses: {"200": {description: Agent-signed MySQL-family plan}}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_resourceType_id_plan
   /mysql-family/{resourceType}/{id}/apply:
-    post:
-      operationId: applyMySQLFamilyPlan
-      tags: [Databases]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters:
-        - {name: resourceType, in: path, required: true, schema: {type: string, enum: [accounts, databases, grants, restore-points]}}
-        - {name: id, in: path, required: true, schema: {type: string}}
-      responses:
-        "202":
-          description: Reviewed MySQL-family operation was queued
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Job"}
+    $ref: ./paths/mysql-family.yaml#/mysql-family_resourceType_id_apply
   /admin-tools:
-    get:
-      operationId: listAdminTools
-      tags: [Admin Tools]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      responses: {"200": {description: Observed phpMyAdmin and pgAdmin deployment state}}
+    $ref: ./paths/admin-tools.yaml#/admin-tools
   /admin-tools/{kind}/plan:
-    get:
-      operationId: getAdminToolPlan
-      tags: [Admin Tools]
-      x-permission: databases.read
-      security: [{sessionCookie: []}]
-      parameters: [{name: kind, in: path, required: true, schema: {type: string, enum: [phpmyadmin, pgadmin]}}]
-      responses: {"200": {description: Agent-signed Podman deployment plan}}
-    post:
-      operationId: prepareAdminToolChange
-      tags: [Admin Tools]
-      x-permission: databases.write
-      security: [{sessionCookie: []}]
-      parameters: [{name: kind, in: path, required: true, schema: {type: string, enum: [phpmyadmin, pgadmin]}}]
-      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [action], properties: {action: {type: string, enum: [tool.deploy, tool.start, tool.stop]}}}}}}
-      responses: {"202": {description: Admin tool change planning was queued}}
+    $ref: ./paths/admin-tools.yaml#/admin-tools_kind_plan
   /admin-tools/{kind}/apply:
-    post:
-      operationId: applyAdminToolPlan
-      tags: [Admin Tools]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters: [{name: kind, in: path, required: true, schema: {type: string, enum: [phpmyadmin, pgadmin]}}]
-      responses:
-        "202":
-          description: Reviewed Podman tool operation was queued
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Job"}
+    $ref: ./paths/admin-tools.yaml#/admin-tools_kind_apply
   /admin-tools/{kind}/launch:
-    post:
-      operationId: createAdminToolLaunch
-      tags: [Admin Tools]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters: [{name: kind, in: path, required: true, schema: {type: string, enum: [phpmyadmin, pgadmin]}}]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [sourceEngine, databaseId, accountId]
-              properties:
-                sourceEngine: {type: string, enum: [postgresql, mysql]}
-                databaseId: {type: string}
-                accountId: {type: string}
-      responses:
-        "201":
-          description: One-time launch cookie and credential-free gateway URL
-          headers:
-            Set-Cookie: {schema: {type: string}, description: HttpOnly Strict SameSite launch cookie with a 60-second lifetime}
-            Cache-Control: {schema: {type: string, const: no-store}}
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [url]
-                properties: {url: {type: string, pattern: "^/tools/(phpmyadmin|pgadmin)/$"}}
+    $ref: ./paths/admin-tools.yaml#/admin-tools_kind_launch
   /applications:
-    get:
-      operationId: listApplications
-      tags: [Applications]
-      x-permission: applications.read
-      security: [{sessionCookie: []}]
-      responses: {"200": {description: Installable application catalog joined with observed package state}}
+    $ref: ./paths/applications.yaml#/applications
   /applications/{id}/plan:
-    get:
-      operationId: getApplicationPlan
-      tags: [Applications]
-      x-permission: applications.read
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      responses: {"200": {description: Agent-signed apt package plan awaiting approval}}
-    post:
-      operationId: prepareApplicationChange
-      tags: [Applications]
-      x-permission: applications.write
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [action], properties: {action: {type: string, enum: [package.install, package.remove]}}}}}}
-      responses: {"202": {description: Application change planning was queued}}
+    $ref: ./paths/applications.yaml#/applications_id_plan
   /applications/{id}/apply:
-    post:
-      operationId: applyApplicationPlan
-      tags: [Applications]
-      x-permission: operations.apply
-      security: [{sessionCookie: []}]
-      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
-      responses:
-        "202":
-          description: Reviewed apt package operation was queued
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Job"}
+    $ref: ./paths/applications.yaml#/applications_id_apply
 components:
   securitySchemes:
     sessionCookie:
@@ -1856,917 +192,147 @@ components:
       name: nexa_session
   parameters:
     JobID:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: integer
-        format: int64
-        minimum: 1
+      $ref: ./components/parameters.yaml#/JobID
     SiteID:
-      name: id
-      in: path
-      required: true
-      schema:
-        type: string
+      $ref: ./components/parameters.yaml#/SiteID
     TaskID:
-      name: taskId
-      in: path
-      required: true
-      schema:
-        type: string
-        pattern: "^[a-f0-9]{32}$"
+      $ref: ./components/parameters.yaml#/TaskID
     UploadID:
-      name: uploadId
-      in: path
-      required: true
-      schema:
-        type: string
+      $ref: ./components/parameters.yaml#/UploadID
   schemas:
     Liveness:
-      type: object
-      required: [status, version]
-      properties:
-        status:
-          type: string
-          const: ok
-        version:
-          type: string
+      $ref: ./components/schemas/common.yaml#/Liveness
     ModuleDescriptor:
-      type: object
-      required:
-        - id
-        - name
-        - version
-        - description
-        - dependencies
-        - requiredCapabilities
-        - estimatedIdleBytes
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        version:
-          type: string
-        description:
-          type: string
-        dependencies:
-          type: array
-          items:
-            type: string
-        requiredCapabilities:
-          type: array
-          items:
-            type: string
-        estimatedIdleBytes:
-          type: integer
-          format: int64
-          minimum: 0
+      $ref: ./components/schemas/common.yaml#/ModuleDescriptor
     User:
-      type: object
-      required: [id, username, role]
-      properties:
-        id:
-          type: string
-        username:
-          type: string
-          minLength: 3
-          maxLength: 64
-        role:
-          type: string
-          enum: [viewer, operator, admin]
+      $ref: ./components/schemas/identity.yaml#/User
     UserResponse:
-      type: object
-      required: [user]
-      properties:
-        user:
-          $ref: "#/components/schemas/User"
+      $ref: ./components/schemas/identity.yaml#/UserResponse
     PasswordResponse:
-      type: object
-      required: [user, next]
-      properties:
-        user:
-          $ref: "#/components/schemas/User"
-        next:
-          type: string
-          enum: [mfa_enrollment, mfa_challenge]
+      $ref: ./components/schemas/identity.yaml#/PasswordResponse
     IdentityStatus:
-      type: object
-      required: [bootstrapRequired, authenticated, mfaEnrollmentRequired, mfaChallengeRequired]
-      properties:
-        bootstrapRequired:
-          type: boolean
-        authenticated:
-          type: boolean
-        mfaEnrollmentRequired:
-          type: boolean
-        mfaChallengeRequired:
-          type: boolean
-        user:
-          $ref: "#/components/schemas/User"
+      $ref: ./components/schemas/identity.yaml#/IdentityStatus
     TOTPCode:
-      type: string
-      pattern: "^[0-9]{6}$"
+      $ref: ./components/schemas/identity.yaml#/TOTPCode
     MFAEnrollment:
-      type: object
-      required: [secret, provisioningUri]
-      properties:
-        secret:
-          type: string
-        provisioningUri:
-          type: string
-          pattern: "^otpauth://totp/"
+      $ref: ./components/schemas/identity.yaml#/MFAEnrollment
     MFAConfirmation:
-      type: object
-      required: [user, recoveryCodes]
-      properties:
-        user:
-          $ref: "#/components/schemas/User"
-        recoveryCodes:
-          type: array
-          minItems: 10
-          maxItems: 10
-          items:
-            type: string
+      $ref: ./components/schemas/identity.yaml#/MFAConfirmation
     Credentials:
-      type: object
-      additionalProperties: false
-      required: [username, password]
-      properties:
-        username:
-          type: string
-          minLength: 3
-          maxLength: 64
-        password:
-          type: string
-          format: password
-          minLength: 1
-          maxLength: 1024
+      $ref: ./components/schemas/identity.yaml#/Credentials
     Error:
-      description: Shared error envelope returned by every non-2xx JSON response.
-      type: object
-      required: [code, message]
-      properties:
-        code:
-          type: string
-        message:
-          type: string
-        offset:
-          type: integer
-          format: int64
-          minimum: 0
-          description: Present on upload offset conflicts; the next byte offset the server expects.
+      $ref: ./components/schemas/common.yaml#/Error
     ManagedRole:
-      type: string
-      enum: [admin, operator, developer, viewer]
+      $ref: ./components/schemas/users.yaml#/ManagedRole
     ManagedUser:
-      type: object
-      required: [id, username, role, createdAt, mfaConfirmed, siteIds]
-      properties:
-        id: {type: string}
-        username: {type: string, minLength: 3, maxLength: 64}
-        role: {$ref: "#/components/schemas/ManagedRole"}
-        createdAt: {type: string, format: date-time}
-        lastLoginAt: {type: string, format: date-time}
-        mfaConfirmed: {type: boolean}
-        siteIds:
-          type: array
-          items: {type: string}
-          description: Sites granted to a developer; empty for unscoped roles.
+      $ref: ./components/schemas/users.yaml#/ManagedUser
     CreateUser:
-      type: object
-      additionalProperties: false
-      required: [username, password, role]
-      properties:
-        username: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$"}
-        password: {type: string, format: password, minLength: 12, maxLength: 1024}
-        role: {$ref: "#/components/schemas/ManagedRole"}
+      $ref: ./components/schemas/users.yaml#/CreateUser
     UpdateUser:
-      type: object
-      additionalProperties: false
-      minProperties: 1
-      properties:
-        role: {$ref: "#/components/schemas/ManagedRole"}
-        password: {type: string, format: password, minLength: 12, maxLength: 1024}
+      $ref: ./components/schemas/users.yaml#/UpdateUser
     UserSiteGrants:
-      type: object
-      additionalProperties: false
-      required: [siteIds]
-      properties:
-        siteIds:
-          type: array
-          items: {type: string}
+      $ref: ./components/schemas/users.yaml#/UserSiteGrants
     AuditEvent:
-      type: object
-      required: [id, occurredAt, action, subject, metadata]
-      properties:
-        id:
-          type: integer
-          format: int64
-        occurredAt:
-          type: string
-          format: date-time
-        actorUserId:
-          type: string
-        action:
-          type: string
-        subject:
-          type: string
-        remoteAddress:
-          type: string
-        metadata:
-          type: object
-          additionalProperties: true
+      $ref: ./components/schemas/audit.yaml#/AuditEvent
     ProbeChange:
-      type: object
-      additionalProperties: false
-      required: [present]
-      properties:
-        present:
-          type: boolean
-        content:
-          type: string
-          maxLength: 256
+      $ref: ./components/schemas/node.yaml#/ProbeChange
     NodeSnapshot:
-      type: object
-      required: [exists]
-      properties:
-        exists:
-          type: boolean
-        digest:
-          type: string
-          pattern: "^[a-f0-9]{64}$"
-        content:
-          type: string
-          maxLength: 256
+      $ref: ./components/schemas/node.yaml#/NodeSnapshot
     NodePlan:
-      type: object
-      required: [id, kind, target, action, changed, before, desired, plannedAt, expiresAt, signature]
-      properties:
-        id:
-          type: string
-        kind:
-          type: string
-          const: nexa.probe.v1
-        target:
-          type: string
-        action:
-          type: string
-          enum: [none, create, update, remove]
-        changed:
-          type: boolean
-        before:
-          $ref: "#/components/schemas/NodeSnapshot"
-        desired:
-          $ref: "#/components/schemas/NodeSnapshot"
-        plannedAt:
-          type: string
-          format: date-time
-        expiresAt:
-          type: string
-          format: date-time
-        signature:
-          type: string
+      $ref: ./components/schemas/node.yaml#/NodePlan
     Runtime:
-      type: object
-      required: [engine, version, installed, enabled, supportStatus]
-      properties:
-        engine:
-          type: string
-          const: php
-        version:
-          type: string
-          pattern: "^(7\\.4|8\\.[0-9]{1,2})$"
-        installed:
-          type: boolean
-        enabled:
-          type: boolean
-        supportStatus:
-          type: string
+      $ref: ./components/schemas/runtimes.yaml#/Runtime
     CreateSite:
-      type: object
-      additionalProperties: false
-      required: [slug, displayName, primaryDomain, phpVersion]
-      properties:
-        slug:
-          type: string
-          pattern: "^[a-z][a-z0-9-]{1,31}$"
-        displayName:
-          type: string
-          minLength: 1
-          maxLength: 80
-        primaryDomain:
-          type: string
-          maxLength: 253
-        phpVersion:
-          type: string
-          pattern: "^(7\\.4|8\\.[0-9]{1,2})$"
+      $ref: ./components/schemas/sites.yaml#/CreateSite
     Site:
-      type: object
-      required: [id, slug, displayName, primaryDomain, phpVersion, unixUser, rootPath, socketPath, status, createdAt, updatedAt]
-      properties:
-        id:
-          type: string
-        slug:
-          type: string
-        displayName:
-          type: string
-        primaryDomain:
-          type: string
-        phpVersion:
-          type: string
-        unixUser:
-          type: string
-        rootPath:
-          type: string
-        socketPath:
-          type: string
-        status:
-          type: string
-          enum: [draft, planning, plan_ready, activating, active, rolling_back, rolled_back, failed]
-        lastJobId:
-          type: integer
-          format: int64
-        failure:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
+      $ref: ./components/schemas/sites.yaml#/Site
     SiteArtifact:
-      type: object
-      required: [kind, path, mode, content]
-      properties:
-        kind:
-          type: string
-          enum: [site-root, php-fpm-pool, nginx-site]
-        path:
-          type: string
-        mode:
-          type: integer
-        content:
-          type: string
+      $ref: ./components/schemas/sites.yaml#/SiteArtifact
     SitePlan:
-      type: object
-      required: [id, kind, site, artifacts, before, enabledBefore, warnings, plannedAt, expiresAt, signature]
-      properties:
-        id: {type: string}
-        kind: {type: string, const: nexa.site.activation.v1}
-        site:
-          $ref: "#/components/schemas/SitePlanTarget"
-        artifacts:
-          type: array
-          items:
-            $ref: "#/components/schemas/SiteArtifact"
-        before:
-          type: array
-          items: {type: object}
-        enabledBefore: {type: boolean}
-        warnings:
-          type: array
-          items:
-            type: string
-        plannedAt: {type: string, format: date-time}
-        expiresAt: {type: string, format: date-time}
-        signature: {type: string}
+      $ref: ./components/schemas/sites.yaml#/SitePlan
     SitePlanTarget:
-      type: object
-      required: [id, slug, primaryDomain, phpVersion, unixUser, rootPath, socketPath]
-      properties:
-        id:
-          type: string
-        slug:
-          type: string
-        primaryDomain:
-          type: string
-        phpVersion:
-          type: string
-        unixUser:
-          type: string
-        rootPath:
-          type: string
-        socketPath:
-          type: string
-        routes:
-          type: array
-          items: {$ref: "#/components/schemas/SiteRoute"}
-        tls:
-          type: object
-          properties:
-            certificatePath: {type: string}
-            privateKeyPath: {type: string}
-        tlsDomains:
-          type: array
-          items: {type: string}
+      $ref: ./components/schemas/sites.yaml#/SitePlanTarget
     SiteRoute:
-      type: object
-      required: [hostname, kind]
-      properties:
-        hostname: {type: string}
-        kind: {type: string, enum: [subdomain, alias, redirect]}
-        redirectTarget: {type: string}
+      $ref: ./components/schemas/sites.yaml#/SiteRoute
     CreateDomain:
-      type: object
-      additionalProperties: false
-      required: [siteId, hostname, kind]
-      properties:
-        siteId: {type: string}
-        hostname: {type: string}
-        kind: {type: string, enum: [subdomain, alias, redirect]}
-        redirectTarget: {type: string}
+      $ref: ./components/schemas/domains.yaml#/CreateDomain
     Domain:
-      type: object
-      required: [id, siteId, hostname, kind, status, resolvedAddresses, createdAt, updatedAt]
-      properties:
-        id: {type: string}
-        siteId: {type: string}
-        hostname: {type: string}
-        kind: {type: string, enum: [primary, subdomain, alias, redirect]}
-        redirectTarget: {type: string}
-        status: {type: string, enum: [planning, plan_ready, activating, active, failed]}
-        resolvedAddresses: {type: array, items: {type: string}}
-        lastJobId: {type: integer, format: int64}
-        failure: {type: string}
-        createdAt: {type: string, format: date-time}
-        updatedAt: {type: string, format: date-time}
+      $ref: ./components/schemas/domains.yaml#/Domain
     CreateCertificate:
-      type: object
-      additionalProperties: false
-      required: [siteId, email]
-      properties:
-        siteId: {type: string}
-        email: {type: string, format: email}
+      $ref: ./components/schemas/certificates.yaml#/CreateCertificate
     Certificate:
-      type: object
-      required: [id, siteId, primaryDomain, email, status, domains, expiringSoon, createdAt, updatedAt]
-      properties:
-        id: {type: string}
-        siteId: {type: string}
-        primaryDomain: {type: string}
-        email: {type: string, format: email}
-        status: {type: string, enum: [planning, plan_ready, issuing, active, renewing, revoking, revoked, failed]}
-        domains: {type: array, items: {type: string}}
-        certificatePath: {type: string}
-        issuedAt: {type: string, format: date-time}
-        expiresAt: {type: string, format: date-time}
-        expiringSoon: {type: boolean}
-        lastJobId: {type: integer, format: int64}
-        failure: {type: string}
-        createdAt: {type: string, format: date-time}
-        updatedAt: {type: string, format: date-time}
+      $ref: ./components/schemas/certificates.yaml#/Certificate
     PostgreSQLStatus:
-      type: string
-      enum: [planning, plan_ready, applying, active, online, down, backing_up, verified, restoring, failed]
+      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLStatus
     CreatePostgreSQLInstance:
-      type: object
-      additionalProperties: false
-      required: [version, cluster]
-      properties:
-        version: {type: string, enum: ["16", "17", "18"]}
-        cluster: {type: string, pattern: "^[a-z][a-z0-9_]{1,30}$"}
-        port: {type: integer, minimum: 1024, maximum: 65535}
+      $ref: ./components/schemas/postgresql.yaml#/CreatePostgreSQLInstance
     PostgreSQLInstance:
-      type: object
-      required: [id, version, cluster, port, status, owner, dataPath, socketPath, logPath, configPath, systemdUnit, managedByNexa]
-      properties:
-        id: {type: string}
-        version: {type: string, enum: ["16", "17", "18"]}
-        cluster: {type: string}
-        port: {type: integer}
-        status: {$ref: "#/components/schemas/PostgreSQLStatus"}
-        owner: {type: string}
-        dataPath: {type: string}
-        socketPath: {type: string}
-        logPath: {type: string}
-        configPath: {type: string}
-        systemdUnit: {type: string}
-        managedByNexa: {type: boolean}
-        lastJobId: {type: integer, format: int64}
-        failure: {type: string}
+      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLInstance
     CreatePostgreSQLRole:
-      type: object
-      additionalProperties: false
-      required: [instanceId, name]
-      properties:
-        instanceId: {type: string}
-        name: {type: string, pattern: "^[a-z][a-z0-9_]{1,62}$"}
+      $ref: ./components/schemas/postgresql.yaml#/CreatePostgreSQLRole
     PostgreSQLRole:
-      type: object
-      required: [id, instanceId, name, status, credentialAvailable, credentialVersion]
-      properties:
-        id: {type: string}
-        instanceId: {type: string}
-        name: {type: string}
-        status: {$ref: "#/components/schemas/PostgreSQLStatus"}
-        credentialAvailable: {type: boolean}
-        credentialVersion: {type: integer, minimum: 0}
-        lastJobId: {type: integer, format: int64}
-        failure: {type: string}
+      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLRole
     CreateManagedPostgreSQLDatabase:
-      type: object
-      additionalProperties: false
-      required: [instanceId, name, ownerRoleId]
-      properties:
-        instanceId: {type: string}
-        name: {type: string, pattern: "^[a-z][a-z0-9_]{1,62}$"}
-        ownerRoleId: {type: string}
+      $ref: ./components/schemas/postgresql.yaml#/CreateManagedPostgreSQLDatabase
     ManagedPostgreSQLDatabase:
-      type: object
-      required: [id, instanceId, name, ownerRoleId, status]
-      properties:
-        id: {type: string}
-        instanceId: {type: string}
-        name: {type: string}
-        ownerRoleId: {type: string}
-        status: {$ref: "#/components/schemas/PostgreSQLStatus"}
-        lastJobId: {type: integer, format: int64}
-        failure: {type: string}
+      $ref: ./components/schemas/postgresql.yaml#/ManagedPostgreSQLDatabase
     CreatePostgreSQLGrant:
-      type: object
-      additionalProperties: false
-      required: [databaseId, roleId, access]
-      properties:
-        databaseId: {type: string}
-        roleId: {type: string}
-        access: {type: string, enum: [connect, read_only, read_write]}
+      $ref: ./components/schemas/postgresql.yaml#/CreatePostgreSQLGrant
     PostgreSQLGrant:
-      type: object
-      required: [id, databaseId, roleId, access, status]
-      properties:
-        id: {type: string}
-        databaseId: {type: string}
-        roleId: {type: string}
-        access: {type: string, enum: [connect, read_only, read_write]}
-        status: {$ref: "#/components/schemas/PostgreSQLStatus"}
-        lastJobId: {type: integer, format: int64}
-        failure: {type: string}
+      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLGrant
     PostgreSQLRestorePoint:
-      type: object
-      required: [id, databaseId, status]
-      properties:
-        id: {type: string}
-        databaseId: {type: string}
-        status: {$ref: "#/components/schemas/PostgreSQLStatus"}
-        sha256: {type: string, pattern: "^[a-f0-9]{64}$"}
-        sizeBytes: {type: integer, format: int64, minimum: 0}
-        verifiedAt: {type: string, format: date-time}
-        lastJobId: {type: integer, format: int64}
-        failure: {type: string}
+      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLRestorePoint
     PostgreSQLStoredPlan:
-      type: object
-      required: [id, resourceType, resourceId, operation, agentPlan, createdAt, expiresAt]
-      properties:
-        id: {type: string}
-        resourceType: {type: string, enum: [instance, role, database, grant, restore_point]}
-        resourceId: {type: string}
-        operation: {type: string, enum: [instance.provision, role.create, role.rotate, database.create, grant.apply, backup.create, backup.restore]}
-        agentPlan:
-          type: object
-          required: [id, kind, change, steps, warnings, observedFingerprint, interruption, plannedAt, expiresAt, signature]
-          properties:
-            id: {type: string}
-            kind: {type: string, const: nexa.postgresql.v1}
-            change: {type: object, additionalProperties: true}
-            steps: {type: array, items: {type: string}}
-            warnings: {type: array, items: {type: string}}
-            observedFingerprint: {type: string, pattern: "^[a-f0-9]{64}$"}
-            interruption: {type: boolean}
-            plannedAt: {type: string, format: date-time}
-            expiresAt: {type: string, format: date-time}
-            signature: {type: string}
-        createdAt: {type: string, format: date-time}
-        expiresAt: {type: string, format: date-time}
+      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLStoredPlan
     MySQLFamilyEngine:
-      type: object
-      required: [id, kind, version, versionText, socketPath, port, status, systemdUnit]
-      properties:
-        id: {type: string, enum: [mysql, mariadb]}
-        kind: {type: string, enum: [mysql, mariadb]}
-        version: {type: string}
-        versionText: {type: string}
-        socketPath: {type: string}
-        port: {type: integer, minimum: 1, maximum: 65535}
-        status: {type: string, enum: [online]}
-        systemdUnit: {type: string}
+      $ref: ./components/schemas/mysql-family.yaml#/MySQLFamilyEngine
     CreateMySQLFamilyAccount:
-      type: object
-      additionalProperties: false
-      required: [engineId, name]
-      properties:
-        engineId: {type: string, enum: [mysql, mariadb]}
-        name: {type: string, pattern: "^[a-z][a-z0-9_]{1,62}$"}
-        host: {type: string, default: localhost}
+      $ref: ./components/schemas/mysql-family.yaml#/CreateMySQLFamilyAccount
     CreateMySQLFamilyDatabase:
-      type: object
-      additionalProperties: false
-      required: [engineId, name, ownerAccountId]
-      properties:
-        engineId: {type: string, enum: [mysql, mariadb]}
-        name: {type: string, pattern: "^[a-z][a-z0-9_]{1,62}$"}
-        ownerAccountId: {type: string}
+      $ref: ./components/schemas/mysql-family.yaml#/CreateMySQLFamilyDatabase
     CreateMySQLFamilyGrant:
-      type: object
-      additionalProperties: false
-      required: [databaseId, accountId, access]
-      properties:
-        databaseId: {type: string}
-        accountId: {type: string}
-        access: {type: string, enum: [connect, read_only, read_write]}
+      $ref: ./components/schemas/mysql-family.yaml#/CreateMySQLFamilyGrant
     FileEntry:
-      type: object
-      required: [name, kind, size, mode, owner, group, modifiedAt]
-      properties:
-        name: {type: string}
-        kind: {type: string, enum: [file, dir, symlink, other]}
-        size: {type: integer, format: int64, minimum: 0}
-        mode: {type: string}
-        owner: {type: string}
-        group: {type: string}
-        modifiedAt: {type: string, format: date-time}
+      $ref: ./components/schemas/files.yaml#/FileEntry
     FileListing:
-      type: object
-      required: [entries, truncated]
-      properties:
-        entries:
-          type: array
-          items:
-            $ref: "#/components/schemas/FileEntry"
-        truncated: {type: boolean}
+      $ref: ./components/schemas/files.yaml#/FileListing
     FileReadResult:
-      type: object
-      required: [content, etag, size, truncated, binary]
-      properties:
-        content: {type: string}
-        etag: {type: string}
-        size: {type: integer, format: int64, minimum: 0}
-        truncated: {type: boolean}
-        binary: {type: boolean}
+      $ref: ./components/schemas/files.yaml#/FileReadResult
     WriteFile:
-      type: object
-      additionalProperties: false
-      required: [path, content]
-      properties:
-        path: {type: string}
-        content: {type: string}
-        expectedEtag:
-          type: string
-          description: Entity tag from the last read; an empty or missing value writes unconditionally.
+      $ref: ./components/schemas/files.yaml#/WriteFile
     FileWriteResult:
-      type: object
-      required: [etag]
-      properties:
-        etag: {type: string}
+      $ref: ./components/schemas/files.yaml#/FileWriteResult
     FileUpload:
-      type: object
-      required: [uploadId]
-      properties:
-        uploadId: {type: string}
+      $ref: ./components/schemas/files.yaml#/FileUpload
     FileCopyResult:
-      type: object
-      required: [copied, bytes, skipped]
-      properties:
-        copied: {type: integer, minimum: 0}
-        bytes: {type: integer, format: int64, minimum: 0}
-        skipped: {type: integer, minimum: 0}
+      $ref: ./components/schemas/files.yaml#/FileCopyResult
     LogFile:
-      type: object
-      required: [name, size, modifiedAt]
-      properties:
-        name: {type: string}
-        size: {type: integer, format: int64, minimum: 0}
-        modifiedAt: {type: string, format: date-time}
+      $ref: ./components/schemas/logs.yaml#/LogFile
     LogReadResult:
-      type: object
-      required: [lines, nextOffset, size, rotated, truncated]
-      properties:
-        lines:
-          type: array
-          items: {type: string}
-        nextOffset: {type: integer, format: int64, minimum: 0}
-        size: {type: integer, format: int64, minimum: 0}
-        rotated: {type: boolean}
-        truncated: {type: boolean}
+      $ref: ./components/schemas/logs.yaml#/LogReadResult
     ScheduledTask:
-      type: object
-      required: [id, siteId, name, cronExpression, command, timeoutSeconds, enabled, status, pendingRemoval, createdAt, updatedAt]
-      properties:
-        id: {type: string, pattern: "^[a-f0-9]{32}$"}
-        siteId: {type: string}
-        name: {type: string, minLength: 1, maxLength: 64}
-        cronExpression: {type: string}
-        command: {type: string, minLength: 1, maxLength: 2048}
-        timeoutSeconds: {type: integer, minimum: 10, maximum: 86400}
-        enabled: {type: boolean}
-        status: {type: string, enum: [draft, planning, plan_ready, activating, active, rolling_back, rolled_back, failed]}
-        pendingRemoval: {type: boolean}
-        lastJobId: {type: integer, format: int64}
-        failure: {type: string}
-        createdAt: {type: string, format: date-time}
-        updatedAt: {type: string, format: date-time}
+      $ref: ./components/schemas/scheduled-tasks.yaml#/ScheduledTask
     ScheduledTaskRequest:
-      type: object
-      additionalProperties: false
-      required: [name, cronExpression, command, timeoutSeconds]
-      properties:
-        name: {type: string, minLength: 1, maxLength: 64}
-        cronExpression:
-          type: string
-          description: Exactly five numeric cron fields; names such as @daily or MON are rejected.
-        command: {type: string, minLength: 1, maxLength: 2048}
-        timeoutSeconds: {type: integer, minimum: 10, maximum: 86400}
-        enabled: {type: boolean, default: false}
+      $ref: ./components/schemas/scheduled-tasks.yaml#/ScheduledTaskRequest
     SiteScope:
-      type: object
-      required: [siteId, slug, rootPath, unixUser]
-      properties:
-        siteId: {type: string}
-        slug: {type: string}
-        rootPath: {type: string}
-        unixUser: {type: string}
+      $ref: ./components/schemas/scheduled-tasks.yaml#/SiteScope
     SchedulePlanTask:
-      type: object
-      required: [id, name, cronExpression, command, timeoutSeconds, enabled, scope]
-      properties:
-        id: {type: string}
-        name: {type: string}
-        cronExpression: {type: string}
-        command: {type: string}
-        timeoutSeconds: {type: integer}
-        enabled: {type: boolean}
-        scope:
-          $ref: "#/components/schemas/SiteScope"
+      $ref: ./components/schemas/scheduled-tasks.yaml#/SchedulePlanTask
     ScheduleArtifact:
-      type: object
-      required: [path, mode, content, owner, group, remove]
-      properties:
-        path: {type: string}
-        mode: {type: integer}
-        content: {type: string}
-        owner: {type: string}
-        group: {type: string}
-        remove: {type: boolean}
+      $ref: ./components/schemas/scheduled-tasks.yaml#/ScheduleArtifact
     ScheduleSnapshot:
-      type: object
-      required: [path, exists]
-      properties:
-        path: {type: string}
-        exists: {type: boolean}
-        mode: {type: integer}
-        digest: {type: string}
-        content: {type: string}
-        uid: {type: integer}
-        gid: {type: integer}
+      $ref: ./components/schemas/scheduled-tasks.yaml#/ScheduleSnapshot
     SchedulePlan:
-      type: object
-      required: [id, kind, task, artifacts, before, warnings, plannedAt, expiresAt]
-      properties:
-        id: {type: string}
-        kind: {type: string, const: nexa.schedule.change.v1}
-        task:
-          $ref: "#/components/schemas/SchedulePlanTask"
-        artifacts:
-          type: array
-          items:
-            $ref: "#/components/schemas/ScheduleArtifact"
-        before:
-          type: array
-          items:
-            $ref: "#/components/schemas/ScheduleSnapshot"
-        warnings:
-          type: array
-          items: {type: string}
-        plannedAt: {type: string, format: date-time}
-        expiresAt: {type: string, format: date-time}
-        signature: {type: string}
+      $ref: ./components/schemas/scheduled-tasks.yaml#/SchedulePlan
     ScheduleRunRecord:
-      type: object
-      required: [startedAt, durationSeconds, exitCode, trigger]
-      properties:
-        startedAt: {type: string, format: date-time}
-        durationSeconds: {type: integer, minimum: 0}
-        exitCode: {type: integer}
-        trigger: {type: string}
+      $ref: ./components/schemas/scheduled-tasks.yaml#/ScheduleRunRecord
     Job:
-      type: object
-      required: [id, kind, state, progress, request, createdAt, updatedAt]
-      properties:
-        id:
-          type: integer
-          format: int64
-        kind:
-          type: string
-        state:
-          type: string
-          enum: [queued, running, succeeded, failed]
-        progress:
-          type: integer
-          minimum: 0
-          maximum: 100
-        actorUserId:
-          type: string
-        request:
-          type: object
-          additionalProperties: true
-        result:
-          type: object
-          additionalProperties: true
-        failure:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-        startedAt:
-          type: string
-          format: date-time
-        completedAt:
-          type: string
-          format: date-time
+      $ref: ./components/schemas/jobs.yaml#/Job
     JobEvent:
-      type: object
-      required: [sequence, jobId, state, progress, message, occurredAt]
-      properties:
-        sequence:
-          type: integer
-          format: int64
-        jobId:
-          type: integer
-          format: int64
-        state:
-          type: string
-          enum: [queued, running, succeeded, failed]
-        progress:
-          type: integer
-          minimum: 0
-          maximum: 100
-        message:
-          type: string
-        occurredAt:
-          type: string
-          format: date-time
+      $ref: ./components/schemas/jobs.yaml#/JobEvent
     SystemOverview:
-      type: object
-      required: [observedAt, podman, warnings]
-      properties:
-        observedAt:
-          type: string
-          format: date-time
-        memory:
-          $ref: "#/components/schemas/MemorySnapshot"
-        podman:
-          $ref: "#/components/schemas/PodmanStatus"
-        warnings:
-          type: array
-          items:
-            type: string
+      $ref: ./components/schemas/system.yaml#/SystemOverview
     MemorySnapshot:
-      type: object
-      required:
-        - supported
-        - totalBytes
-        - availableBytes
-        - swapTotalBytes
-        - swapFreeBytes
-        - usedPercent
-        - profile
-      properties:
-        supported:
-          type: boolean
-        totalBytes:
-          type: integer
-          format: int64
-          minimum: 0
-        availableBytes:
-          type: integer
-          format: int64
-          minimum: 0
-        swapTotalBytes:
-          type: integer
-          format: int64
-          minimum: 0
-        swapFreeBytes:
-          type: integer
-          format: int64
-          minimum: 0
-        usedPercent:
-          type: number
-          minimum: 0
-          maximum: 100
-        profile:
-          type: string
-          enum: [unsupported, compact, standard, pro]
+      $ref: ./components/schemas/system.yaml#/MemorySnapshot
     PodmanStatus:
-      type: object
-      required: [available]
-      properties:
-        available:
-          type: boolean
-        version:
-          type: string
-        path:
-          type: string
+      $ref: ./components/schemas/system.yaml#/PodmanStatus

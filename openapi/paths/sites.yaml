@@ -1,0 +1,169 @@
+sites:
+  get:
+    operationId: listSites
+    tags:
+    - Sites
+    x-permission: sites.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Desired sites managed by the control plane.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/sites.yaml#/Site
+  post:
+    operationId: createSite
+    tags:
+    - Sites
+    x-permission: sites.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/sites.yaml#/CreateSite
+    responses:
+      '202':
+        description: The site desired state was persisted and its configuration plan was queued.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - site
+              - job
+              properties:
+                site:
+                  $ref: ../components/schemas/sites.yaml#/Site
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '422':
+        description: The site identity, domain, or selected runtime is not allowed.
+sites_id:
+  get:
+    operationId: getSite
+    tags:
+    - Sites
+    x-permission: sites.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: One managed site.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/sites.yaml#/Site
+      '404':
+        description: The site does not exist.
+sites_id_plan:
+  get:
+    operationId: getSitePlan
+    tags:
+    - Sites
+    x-permission: sites.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Immutable generated artifacts awaiting privileged node validation.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - plan
+              - expiresAt
+              properties:
+                plan:
+                  $ref: ../components/schemas/sites.yaml#/SitePlan
+                expiresAt:
+                  type: string
+                  format: date-time
+      '404':
+        description: A plan is not ready for this site.
+  post:
+    operationId: refreshSitePlan
+    tags:
+    - Sites
+    x-permission: sites.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: A new agent-signed site plan was queued
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+sites_id_activate:
+  post:
+    operationId: activateSite
+    tags:
+    - Sites
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Signed site activation was queued
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+sites_id_rollback:
+  post:
+    operationId: rollbackSite
+    tags:
+    - Sites
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Drift-guarded site rollback was queued
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job

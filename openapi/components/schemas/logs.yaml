@@ -1,0 +1,41 @@
+LogFile:
+  type: object
+  required:
+  - name
+  - size
+  - modifiedAt
+  properties:
+    name:
+      type: string
+    size:
+      type: integer
+      format: int64
+      minimum: 0
+    modifiedAt:
+      type: string
+      format: date-time
+LogReadResult:
+  type: object
+  required:
+  - lines
+  - nextOffset
+  - size
+  - rotated
+  - truncated
+  properties:
+    lines:
+      type: array
+      items:
+        type: string
+    nextOffset:
+      type: integer
+      format: int64
+      minimum: 0
+    size:
+      type: integer
+      format: int64
+      minimum: 0
+    rotated:
+      type: boolean
+    truncated:
+      type: boolean

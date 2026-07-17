@@ -1,0 +1,70 @@
+CreateDomain:
+  type: object
+  additionalProperties: false
+  required:
+  - siteId
+  - hostname
+  - kind
+  properties:
+    siteId:
+      type: string
+    hostname:
+      type: string
+    kind:
+      type: string
+      enum:
+      - subdomain
+      - alias
+      - redirect
+    redirectTarget:
+      type: string
+Domain:
+  type: object
+  required:
+  - id
+  - siteId
+  - hostname
+  - kind
+  - status
+  - resolvedAddresses
+  - createdAt
+  - updatedAt
+  properties:
+    id:
+      type: string
+    siteId:
+      type: string
+    hostname:
+      type: string
+    kind:
+      type: string
+      enum:
+      - primary
+      - subdomain
+      - alias
+      - redirect
+    redirectTarget:
+      type: string
+    status:
+      type: string
+      enum:
+      - planning
+      - plan_ready
+      - activating
+      - active
+      - failed
+    resolvedAddresses:
+      type: array
+      items:
+        type: string
+    lastJobId:
+      type: integer
+      format: int64
+    failure:
+      type: string
+    createdAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time

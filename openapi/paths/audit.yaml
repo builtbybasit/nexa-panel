@@ -1,0 +1,30 @@
+audit_events:
+  get:
+    operationId: listAuditEvents
+    tags:
+    - Audit
+    x-permission: audit.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 100
+    responses:
+      '200':
+        description: Most recent append-only audit events.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/audit.yaml#/AuditEvent

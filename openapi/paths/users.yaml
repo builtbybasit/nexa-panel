@@ -1,0 +1,184 @@
+users:
+  get:
+    operationId: listUsers
+    tags:
+    - Users
+    x-permission: users.manage
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: All managed users with their developer site grants.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/users.yaml#/ManagedUser
+  post:
+    operationId: createUser
+    tags:
+    - Users
+    x-permission: users.manage
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/users.yaml#/CreateUser
+    responses:
+      '201':
+        description: The managed user was created.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/users.yaml#/ManagedUser
+      '409':
+        description: A user with this username already exists.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The username or password or role is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+users_id:
+  patch:
+    operationId: updateUser
+    tags:
+    - Users
+    x-permission: users.manage
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/users.yaml#/UpdateUser
+    responses:
+      '200':
+        description: The updated user; every live session of the user was revoked.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/users.yaml#/ManagedUser
+      '400':
+        description: Neither a role nor a password was provided.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '404':
+        description: The user does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The last administrator cannot lose the admin role.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The role or password is not allowed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+  delete:
+    operationId: deleteUser
+    tags:
+    - Users
+    x-permission: users.manage
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '204':
+        description: The user plus their sessions and site grants were removed.
+      '404':
+        description: The user does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The last administrator or your own account cannot be deleted.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+users_id_sites:
+  put:
+    operationId: replaceUserSiteGrants
+    tags:
+    - Users
+    x-permission: users.manage
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/users.yaml#/UserSiteGrants
+    responses:
+      '200':
+        description: The developer's site grants were replaced with the deduplicated set.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/users.yaml#/UserSiteGrants
+      '400':
+        description: Site grants apply to developer users only.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '404':
+        description: The user does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: A granted site does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '503':
+        description: Site grants are not configured on this control plane.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error

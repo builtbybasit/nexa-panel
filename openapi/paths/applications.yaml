@@ -1,0 +1,80 @@
+applications:
+  get:
+    operationId: listApplications
+    tags:
+    - Applications
+    x-permission: applications.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Installable application catalog joined with observed package state
+applications_id_plan:
+  get:
+    operationId: getApplicationPlan
+    tags:
+    - Applications
+    x-permission: applications.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Agent-signed apt package plan awaiting approval
+  post:
+    operationId: prepareApplicationChange
+    tags:
+    - Applications
+    x-permission: applications.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - action
+            properties:
+              action:
+                type: string
+                enum:
+                - package.install
+                - package.remove
+    responses:
+      '202':
+        description: Application change planning was queued
+applications_id_apply:
+  post:
+    operationId: applyApplicationPlan
+    tags:
+    - Applications
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Reviewed apt package operation was queued
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job

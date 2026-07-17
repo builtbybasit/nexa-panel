@@ -1,0 +1,150 @@
+admin-tools:
+  get:
+    operationId: listAdminTools
+    tags:
+    - Admin Tools
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Observed phpMyAdmin and pgAdmin deployment state
+admin-tools_kind_plan:
+  get:
+    operationId: getAdminToolPlan
+    tags:
+    - Admin Tools
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: kind
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+        - phpmyadmin
+        - pgadmin
+    responses:
+      '200':
+        description: Agent-signed Podman deployment plan
+  post:
+    operationId: prepareAdminToolChange
+    tags:
+    - Admin Tools
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: kind
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+        - phpmyadmin
+        - pgadmin
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - action
+            properties:
+              action:
+                type: string
+                enum:
+                - tool.deploy
+                - tool.start
+                - tool.stop
+    responses:
+      '202':
+        description: Admin tool change planning was queued
+admin-tools_kind_apply:
+  post:
+    operationId: applyAdminToolPlan
+    tags:
+    - Admin Tools
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: kind
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+        - phpmyadmin
+        - pgadmin
+    responses:
+      '202':
+        description: Reviewed Podman tool operation was queued
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+admin-tools_kind_launch:
+  post:
+    operationId: createAdminToolLaunch
+    tags:
+    - Admin Tools
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: kind
+      in: path
+      required: true
+      schema:
+        type: string
+        enum:
+        - phpmyadmin
+        - pgadmin
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - sourceEngine
+            - databaseId
+            - accountId
+            properties:
+              sourceEngine:
+                type: string
+                enum:
+                - postgresql
+                - mysql
+              databaseId:
+                type: string
+              accountId:
+                type: string
+    responses:
+      '201':
+        description: One-time launch cookie and credential-free gateway URL
+        headers:
+          Set-Cookie:
+            schema:
+              type: string
+            description: HttpOnly Strict SameSite launch cookie with a 60-second lifetime
+          Cache-Control:
+            schema:
+              type: string
+              const: no-store
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - url
+              properties:
+                url:
+                  type: string
+                  pattern: ^/tools/(phpmyadmin|pgadmin)/$

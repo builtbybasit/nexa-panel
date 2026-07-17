@@ -1,0 +1,69 @@
+SystemOverview:
+  type: object
+  required:
+  - observedAt
+  - podman
+  - warnings
+  properties:
+    observedAt:
+      type: string
+      format: date-time
+    memory:
+      $ref: '#/MemorySnapshot'
+    podman:
+      $ref: '#/PodmanStatus'
+    warnings:
+      type: array
+      items:
+        type: string
+MemorySnapshot:
+  type: object
+  required:
+  - supported
+  - totalBytes
+  - availableBytes
+  - swapTotalBytes
+  - swapFreeBytes
+  - usedPercent
+  - profile
+  properties:
+    supported:
+      type: boolean
+    totalBytes:
+      type: integer
+      format: int64
+      minimum: 0
+    availableBytes:
+      type: integer
+      format: int64
+      minimum: 0
+    swapTotalBytes:
+      type: integer
+      format: int64
+      minimum: 0
+    swapFreeBytes:
+      type: integer
+      format: int64
+      minimum: 0
+    usedPercent:
+      type: number
+      minimum: 0
+      maximum: 100
+    profile:
+      type: string
+      enum:
+      - unsupported
+      - compact
+      - standard
+      - pro
+PodmanStatus:
+  type: object
+  required:
+  - available
+  properties:
+    available:
+      type: boolean
+    version:
+      type: string
+    path:
+      type: string

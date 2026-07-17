@@ -1,0 +1,194 @@
+CreateSite:
+  type: object
+  additionalProperties: false
+  required:
+  - slug
+  - displayName
+  - primaryDomain
+  - phpVersion
+  properties:
+    slug:
+      type: string
+      pattern: ^[a-z][a-z0-9-]{1,31}$
+    displayName:
+      type: string
+      minLength: 1
+      maxLength: 80
+    primaryDomain:
+      type: string
+      maxLength: 253
+    phpVersion:
+      type: string
+      pattern: ^(7\.4|8\.[0-9]{1,2})$
+Site:
+  type: object
+  required:
+  - id
+  - slug
+  - displayName
+  - primaryDomain
+  - phpVersion
+  - unixUser
+  - rootPath
+  - socketPath
+  - status
+  - createdAt
+  - updatedAt
+  properties:
+    id:
+      type: string
+    slug:
+      type: string
+    displayName:
+      type: string
+    primaryDomain:
+      type: string
+    phpVersion:
+      type: string
+    unixUser:
+      type: string
+    rootPath:
+      type: string
+    socketPath:
+      type: string
+    status:
+      type: string
+      enum:
+      - draft
+      - planning
+      - plan_ready
+      - activating
+      - active
+      - rolling_back
+      - rolled_back
+      - failed
+    lastJobId:
+      type: integer
+      format: int64
+    failure:
+      type: string
+    createdAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time
+SiteArtifact:
+  type: object
+  required:
+  - kind
+  - path
+  - mode
+  - content
+  properties:
+    kind:
+      type: string
+      enum:
+      - site-root
+      - php-fpm-pool
+      - nginx-site
+    path:
+      type: string
+    mode:
+      type: integer
+    content:
+      type: string
+SitePlan:
+  type: object
+  required:
+  - id
+  - kind
+  - site
+  - artifacts
+  - before
+  - enabledBefore
+  - warnings
+  - plannedAt
+  - expiresAt
+  - signature
+  properties:
+    id:
+      type: string
+    kind:
+      type: string
+      const: nexa.site.activation.v1
+    site:
+      $ref: '#/SitePlanTarget'
+    artifacts:
+      type: array
+      items:
+        $ref: '#/SiteArtifact'
+    before:
+      type: array
+      items:
+        type: object
+    enabledBefore:
+      type: boolean
+    warnings:
+      type: array
+      items:
+        type: string
+    plannedAt:
+      type: string
+      format: date-time
+    expiresAt:
+      type: string
+      format: date-time
+    signature:
+      type: string
+SitePlanTarget:
+  type: object
+  required:
+  - id
+  - slug
+  - primaryDomain
+  - phpVersion
+  - unixUser
+  - rootPath
+  - socketPath
+  properties:
+    id:
+      type: string
+    slug:
+      type: string
+    primaryDomain:
+      type: string
+    phpVersion:
+      type: string
+    unixUser:
+      type: string
+    rootPath:
+      type: string
+    socketPath:
+      type: string
+    routes:
+      type: array
+      items:
+        $ref: '#/SiteRoute'
+    tls:
+      type: object
+      properties:
+        certificatePath:
+          type: string
+        privateKeyPath:
+          type: string
+    tlsDomains:
+      type: array
+      items:
+        type: string
+SiteRoute:
+  type: object
+  required:
+  - hostname
+  - kind
+  properties:
+    hostname:
+      type: string
+    kind:
+      type: string
+      enum:
+      - subdomain
+      - alias
+      - redirect
+    redirectTarget:
+      type: string

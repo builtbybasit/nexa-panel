@@ -1,0 +1,79 @@
+domains:
+  get:
+    operationId: listDomains
+    tags:
+    - Domains
+    x-permission: domains.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: siteId
+      in: query
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Managed routing identities
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/domains.yaml#/Domain
+  post:
+    operationId: createDomain
+    tags:
+    - Domains
+    x-permission: domains.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/domains.yaml#/CreateDomain
+    responses:
+      '202':
+        description: DNS and routing planning was queued
+domains_id_plan:
+  get:
+    operationId: getDomainPlan
+    tags:
+    - Domains
+    x-permission: domains.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: DNS preflight and signed routing plan
+domains_id_activate:
+  post:
+    operationId: activateDomain
+    tags:
+    - Domains
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Atomic routing activation was queued
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job

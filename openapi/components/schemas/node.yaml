@@ -1,0 +1,66 @@
+ProbeChange:
+  type: object
+  additionalProperties: false
+  required:
+  - present
+  properties:
+    present:
+      type: boolean
+    content:
+      type: string
+      maxLength: 256
+NodeSnapshot:
+  type: object
+  required:
+  - exists
+  properties:
+    exists:
+      type: boolean
+    digest:
+      type: string
+      pattern: ^[a-f0-9]{64}$
+    content:
+      type: string
+      maxLength: 256
+NodePlan:
+  type: object
+  required:
+  - id
+  - kind
+  - target
+  - action
+  - changed
+  - before
+  - desired
+  - plannedAt
+  - expiresAt
+  - signature
+  properties:
+    id:
+      type: string
+    kind:
+      type: string
+      const: nexa.probe.v1
+    target:
+      type: string
+    action:
+      type: string
+      enum:
+      - none
+      - create
+      - update
+      - remove
+    changed:
+      type: boolean
+    before:
+      $ref: '#/NodeSnapshot'
+    desired:
+      $ref: '#/NodeSnapshot'
+    plannedAt:
+      type: string
+      format: date-time
+    expiresAt:
+      type: string
+      format: date-time
+    signature:
+      type: string

@@ -1,0 +1,169 @@
+auth_status:
+  get:
+    operationId: getIdentityStatus
+    tags:
+    - Identity
+    responses:
+      '200':
+        description: Bootstrap and current-session status.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/identity.yaml#/IdentityStatus
+auth_bootstrap:
+  post:
+    operationId: bootstrapAdministrator
+    tags:
+    - Identity
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/identity.yaml#/Credentials
+    responses:
+      '201':
+        description: The first administrator and session were created.
+        headers:
+          Set-Cookie:
+            schema:
+              type: string
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/identity.yaml#/PasswordResponse
+      '409':
+        description: An administrator already exists.
+auth_login:
+  post:
+    operationId: login
+    tags:
+    - Identity
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/identity.yaml#/Credentials
+    responses:
+      '200':
+        description: Credentials were accepted and a session was created.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/identity.yaml#/PasswordResponse
+      '401':
+        description: The credentials were not accepted.
+      '429':
+        description: Too many password attempts were made from the client address.
+auth_mfa_enroll:
+  post:
+    operationId: enrollMFA
+    tags:
+    - Identity
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Encrypted TOTP enrollment material for the pre-authenticated user.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/identity.yaml#/MFAEnrollment
+      '409':
+        description: MFA is already enrolled.
+auth_mfa_confirm:
+  post:
+    operationId: confirmMFA
+    tags:
+    - Identity
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - code
+            properties:
+              code:
+                $ref: ../components/schemas/identity.yaml#/TOTPCode
+    responses:
+      '200':
+        description: Enrollment was confirmed; recovery codes are returned once.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/identity.yaml#/MFAConfirmation
+      '401':
+        description: The TOTP was invalid, expired, or previously accepted.
+      '429':
+        description: Too many verification attempts were made.
+auth_mfa_verify:
+  post:
+    operationId: verifyMFA
+    tags:
+    - Identity
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            oneOf:
+            - type: object
+              additionalProperties: false
+              required:
+              - code
+              properties:
+                code:
+                  $ref: ../components/schemas/identity.yaml#/TOTPCode
+            - type: object
+              additionalProperties: false
+              required:
+              - recoveryCode
+              properties:
+                recoveryCode:
+                  type: string
+                  pattern: ^[A-Fa-f0-9]{4}(-[A-Fa-f0-9]{4}){3}$
+    responses:
+      '200':
+        description: The pre-authenticated session is now fully authenticated.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/identity.yaml#/UserResponse
+      '401':
+        description: The TOTP or recovery code was invalid or already consumed.
+      '429':
+        description: Too many verification attempts were made.
+auth_session:
+  get:
+    operationId: getSession
+    tags:
+    - Identity
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: The authenticated administrator.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/identity.yaml#/UserResponse
+      '401':
+        description: A valid session is required.
+auth_logout:
+  post:
+    operationId: logout
+    tags:
+    - Identity
+    security:
+    - sessionCookie: []
+    responses:
+      '204':
+        description: The current session was revoked.
