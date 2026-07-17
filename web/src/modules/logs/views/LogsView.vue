@@ -4,7 +4,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { formatBytes, formatDateTime } from '@/shared/formatters'
-import { AppAlert, AppButton, AppCard, AppIcon, AppInput, AppSelect, EmptyState, PageHeader, StatusPill } from '@/shared/ui'
+import { AppAlert, AppButton, AppCard, AppIcon, AppInput, AppSelect, EmptyState, PageHeader, SkeletonRow, StatusPill, Switch } from '@/shared/ui'
 
 import { listSites } from '../../sites/api'
 import { downloadUrl, listLogs, readLog, subscribeToLogStream, type LogFile } from '../api'
@@ -71,18 +71,26 @@ function fileSize(file: LogFile): string {
 interface ViewerLine {
   id: number
   text: string
-  /** Rotation markers rendered distinctly between log lines. */
+  /** Rotation/trim markers rendered distinctly between log lines. */
   marker?: boolean
+  /** True for the single pinned marker noting trimmed output. */
+  trim?: boolean
 }
 
 const LINE_BUFFER_CAP = 5000
+const TRIM_MARKER_TEXT = '— older lines were dropped (5,000-line buffer) — download the file for the full log —'
 
 const lines = ref<ViewerLine[]>([])
 let nextLineId = 0
 
 function appendLines(texts: string[]) {
   for (const text of texts) lines.value.push({ id: nextLineId++, text })
-  if (lines.value.length > LINE_BUFFER_CAP) lines.value.splice(0, lines.value.length - LINE_BUFFER_CAP)
+  const overflow = lines.value.length - LINE_BUFFER_CAP
+  if (overflow > 0) {
+    lines.value.splice(0, overflow)
+    // Keep a single marker pinned at the top so the discarded output is visible.
+    if (!lines.value[0]?.trim) lines.value.unshift({ id: nextLineId++, text: TRIM_MARKER_TEXT, marker: true, trim: true })
+  }
   void scrollToBottom()
 }
 
@@ -136,6 +144,67 @@ watch(filterInput, (value) => {
   }, 400)
 })
 
+// While following, the stream is unfiltered and the filter is applied here
+// instead, so changing it never wipes the accumulated buffer. Snapshot reads
+// still filter server-side, which makes this a no-op for them.
+const visibleLines = computed(() => {
+  const needle = appliedFilter.value.toLowerCase()
+  if (!needle) return lines.value
+  return lines.value.filter((line) => line.marker || line.text.toLowerCase().includes(needle))
+})
+
+// --- In-buffer search with match highlighting ---
+
+const searchInput = ref('')
+const searchTerm = ref('')
+let searchTimer: number | undefined
+
+watch(searchInput, (value) => {
+  window.clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(() => {
+    searchTerm.value = value.trim()
+  }, 300)
+})
+
+const matchCount = computed(() => {
+  const needle = searchTerm.value.toLowerCase()
+  if (!needle) return 0
+  let count = 0
+  for (const line of visibleLines.value) {
+    if (line.marker) continue
+    const haystack = line.text.toLowerCase()
+    let index = haystack.indexOf(needle)
+    while (index !== -1) {
+      count++
+      index = haystack.indexOf(needle, index + needle.length)
+    }
+  }
+  return count
+})
+
+interface LineSegment {
+  text: string
+  hit: boolean
+}
+
+function lineSegments(text: string): LineSegment[] {
+  const needle = searchTerm.value
+  if (!needle) return [{ text, hit: false }]
+  const haystack = text.toLowerCase()
+  const needleLower = needle.toLowerCase()
+  const segments: LineSegment[] = []
+  let cursor = 0
+  let index = haystack.indexOf(needleLower)
+  while (index !== -1) {
+    if (index > cursor) segments.push({ text: text.slice(cursor, index), hit: false })
+    segments.push({ text: text.slice(index, index + needle.length), hit: true })
+    cursor = index + needle.length
+    index = haystack.indexOf(needleLower, cursor)
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), hit: false })
+  return segments
+}
+
 async function refreshTail() {
   const name = selectedName.value
   if (!name || !selectedSite.value) return
@@ -158,7 +227,8 @@ async function refreshTail() {
 // --- Follow (live tail over SSE) ---
 // The stream opens with its own initial tail, so the buffer is cleared on
 // start to avoid duplicating the last manual read. Stopped on toggle-off,
-// site change, file change, and unmount.
+// site change, file change, and unmount. The stream itself is unfiltered:
+// `visibleLines` filters client-side so filter changes keep the buffer.
 
 const following = ref(false)
 let stopStream: (() => void) | undefined
@@ -173,7 +243,7 @@ function startFollow() {
   streamNotice.value = ''
   stickToBottom.value = true
   following.value = true
-  stopStream = subscribeToLogStream(siteId.value, name, appliedFilter.value, {
+  stopStream = subscribeToLogStream(siteId.value, name, '', {
     onLines: (event) => {
       if (event.rotated) appendMarker('— log rotated; continuing from the new file —')
       if (event.lines.length) appendLines(event.lines)
@@ -221,14 +291,16 @@ watch(tailCount, () => {
   if (!following.value) void refreshTail()
 })
 
+// While following, `visibleLines` applies the new filter over the kept buffer;
+// only snapshot mode needs a re-read.
 watch(appliedFilter, () => {
-  if (following.value) startFollow()
-  else void refreshTail()
+  if (!following.value) void refreshTail()
 })
 
 onBeforeUnmount(() => {
   stopFollow()
   window.clearTimeout(filterTimer)
+  window.clearTimeout(searchTimer)
 })
 </script>
 
@@ -240,8 +312,15 @@ onBeforeUnmount(() => {
       description="Inspect and live-tail the nginx, PHP, and task logs under each site's logs/ directory."
     />
 
-    <AppAlert v-if="sitesQuery.isPending.value" tone="info">Loading sites…</AppAlert>
-    <AppAlert v-else-if="sitesQuery.isError.value" tone="danger">The site list is unavailable.</AppAlert>
+    <AppCard v-if="sitesQuery.isPending.value" flush>
+      <div class="divide-y divide-outline px-4 py-1 sm:px-5">
+        <SkeletonRow v-for="n in 3" :key="n" />
+      </div>
+    </AppCard>
+    <AppAlert v-else-if="sitesQuery.isError.value" tone="danger">
+      <p>The site list couldn't be loaded.</p>
+      <AppButton size="sm" class="mt-2" @click="sitesQuery.refetch()">Retry</AppButton>
+    </AppAlert>
     <EmptyState
       v-else-if="!eligibleSites.length"
       icon="file-text"
@@ -279,8 +358,13 @@ onBeforeUnmount(() => {
             />
           </template>
           <div class="px-2 pb-2">
-            <AppAlert v-if="logsQuery.isPending.value" tone="info" class="m-2">Loading log files…</AppAlert>
-            <AppAlert v-else-if="logsError" tone="danger" class="m-2">{{ logsError }}</AppAlert>
+            <div v-if="logsQuery.isPending.value" class="divide-y divide-outline px-2">
+              <SkeletonRow v-for="n in 3" :key="n" />
+            </div>
+            <AppAlert v-else-if="logsError" tone="danger" class="m-2">
+              <p>Log files couldn't be loaded: {{ logsError }}</p>
+              <AppButton size="sm" class="mt-2" @click="logsQuery.refetch()">Retry</AppButton>
+            </AppAlert>
             <EmptyState
               v-else-if="!logFiles.length"
               icon="file-text"
@@ -329,7 +413,7 @@ onBeforeUnmount(() => {
                 </AppSelect>
               </div>
               <div class="min-w-0 flex-1 sm:max-w-xs">
-                <AppInput v-model="filterInput" placeholder="Filter lines (server-side)" aria-label="Filter" autocomplete="off" />
+                <AppInput v-model="filterInput" placeholder="Filter lines" aria-label="Filter lines" autocomplete="off" />
               </div>
               <AppButton size="sm" icon="refresh-cw" :loading="viewerLoading" :disabled="following || !selectedName" @click="refreshTail">
                 Refresh
@@ -351,10 +435,30 @@ onBeforeUnmount(() => {
                 <AppIcon name="download" :size="14" />
                 Download
               </a>
-              <label class="flex cursor-pointer items-center gap-2 text-[13px] text-ink-secondary">
-                <input v-model="wrapLines" type="checkbox" class="accent-accent-500" />
+              <label class="flex items-center gap-2 text-[13px] text-ink-secondary">
+                <Switch v-model="wrapLines" />
                 Wrap lines
               </label>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <div class="relative min-w-0 flex-1 sm:max-w-xs">
+                <AppIcon
+                  name="search"
+                  :size="15"
+                  class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-ink-muted"
+                />
+                <AppInput
+                  v-model="searchInput"
+                  class="pl-9"
+                  placeholder="Search loaded lines"
+                  aria-label="Search loaded lines"
+                  autocomplete="off"
+                />
+              </div>
+              <span v-if="searchTerm" class="text-[13px] whitespace-nowrap text-ink-muted tabular-nums" aria-live="polite">
+                {{ matchCount }} {{ matchCount === 1 ? 'match' : 'matches' }}
+              </span>
             </div>
 
             <AppAlert v-if="viewerError" tone="danger">{{ viewerError }}</AppAlert>
@@ -376,19 +480,33 @@ onBeforeUnmount(() => {
                 @scroll="onScroll"
               >
                 <p v-if="viewerLoading && !lines.length" class="text-ink-muted">Loading log…</p>
-                <p v-else-if="!lines.length" class="text-ink-muted">
-                  {{ appliedFilter ? 'No lines matched the filter.' : following ? 'Waiting for new lines…' : 'The log is empty.' }}
+                <p v-else-if="!visibleLines.length" class="text-ink-muted">
+                  {{
+                    lines.length || appliedFilter
+                      ? 'No lines match the filter.'
+                      : following
+                        ? 'Waiting for new lines…'
+                        : 'The log is empty.'
+                  }}
                 </p>
                 <template v-else>
                   <div
-                    v-for="line in lines"
+                    v-for="line in visibleLines"
                     :key="line.id"
                     :class="[
                       wrapLines ? 'whitespace-pre-wrap break-all' : 'w-max min-w-full whitespace-pre',
                       line.marker ? 'my-1 rounded border-y border-amber-400/25 bg-amber-400/[0.07] px-1.5 py-0.5 text-amber-300' : '',
                     ]"
                   >
-                    {{ line.text || ' ' }}
+                    <template v-if="!line.marker && searchTerm"
+                      ><span
+                        v-for="(segment, index) in lineSegments(line.text)"
+                        :key="index"
+                        :class="segment.hit ? 'rounded-[2px] bg-amber-400/30 text-amber-100' : ''"
+                        >{{ segment.text }}</span
+                      ></template
+                    >
+                    <template v-else>{{ line.text || ' ' }}</template>
                   </div>
                 </template>
               </div>

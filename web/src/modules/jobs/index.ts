@@ -4,7 +4,7 @@ export const jobsModule: FeatureModule = {
   id: 'jobs',
   name: 'Jobs',
   description: 'Durable background operations and progress history.',
-  navigation: { label: 'Jobs', to: '/jobs', icon: 'history', group: 'Operations', order: 40 },
+  navigation: { label: 'Jobs', to: '/jobs', icon: 'history', group: 'Server', order: 32 },
   routes: [
     {
       path: '/jobs',

@@ -3,8 +3,8 @@ import type { FeatureModule } from '../types'
 export const adminToolsModule: FeatureModule = {
   id: 'admin-tools',
   name: 'Admin Tools',
-  description: 'Podman-isolated phpMyAdmin and pgAdmin services.',
-  navigation: { label: 'Admin tools', to: '/admin-tools', icon: 'wrench', group: 'Databases', order: 32 },
+  description: 'phpMyAdmin & pgAdmin',
+  navigation: { label: 'DB web clients', to: '/admin-tools', icon: 'terminal', group: 'Databases', order: 22 },
   routes: [
     {
       path: '/admin-tools',

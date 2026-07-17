@@ -1,35 +1,33 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch, type ComponentPublicInstance } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
-import { formatTime } from '@/shared/formatters'
+import { useCollection } from '@/shared/composables/useCollection'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
+import { humanize } from '@/shared/formatters'
 import {
   AppAlert,
   AppButton,
   AppCard,
+  AppDialog,
   AppInput,
   AppSelect,
   EmptyState,
-  FactList,
   FormField,
+  JobFailureNotice,
   JobProgress,
+  ListToolbar,
   PageHeader,
   ResourceRow,
+  SkeletonRow,
   StatusPill,
 } from '@/shared/ui'
 
-import { activateSite, createSite, getSitePlan, listRuntimes, listSites, prepareSitePlan, rollbackSite, type Site, type SitePlan } from '../api'
+import { createSite, listRuntimes, listSites, type Site, type SiteStatus } from '../api'
 
-const displayName = ref('')
-const slug = ref('')
-const primaryDomain = ref('')
-const phpVersion = ref('')
-
-const selectedSite = ref<Site>()
-const selectedPlan = ref<SitePlan>()
-const planExpiresAt = ref('')
-
+const route = useRoute()
+const router = useRouter()
 const runner = useJobRunner()
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
@@ -37,228 +35,300 @@ const runtimesQuery = useQuery({ queryKey: ['runtimes'], queryFn: listRuntimes, 
 const sites = computed(() => sitesQuery.data.value ?? [])
 const runtimes = computed(() => runtimesQuery.data.value ?? [])
 
-const artifactLabels: Record<string, string> = {
-  'site-root': 'Starter file',
-  'php-fpm-pool': 'PHP-FPM pool',
-  'nginx-site': 'Nginx site',
-}
+const siteStatuses: SiteStatus[] = ['draft', 'planning', 'plan_ready', 'activating', 'active', 'rolling_back', 'rolled_back', 'failed']
+const statusFilter = ref<SiteStatus | ''>('')
 
-const siteFacts = computed(() =>
-  selectedSite.value
-    ? [
-        { label: 'Unix owner', value: selectedSite.value.unixUser, mono: true },
-        { label: 'Site root', value: selectedSite.value.rootPath, mono: true },
-        { label: 'FPM socket', value: selectedSite.value.socketPath, mono: true },
-        { label: 'Runtime', value: `PHP ${selectedSite.value.phpVersion}` },
-      ]
-    : [],
+const filteredSites = computed(() =>
+  statusFilter.value ? sites.value.filter((site) => site.status === statusFilter.value) : sites.value,
 )
 
-async function refreshSelected(siteId: string) {
-  await sitesQuery.refetch()
-  selectedSite.value = sites.value.find((site) => site.id === siteId) ?? selectedSite.value
+const { search, page, pageCount, items, matching } = useCollection(() => filteredSites.value, {
+  searchText: (site) => `${site.displayName} ${site.primaryDomain} ${site.slug}`,
+})
+
+// --- Create dialog ---------------------------------------------------------
+
+const createOpen = computed(() => route.query.create === '1')
+
+const displayName = ref('')
+const slug = ref('')
+const slugLocked = ref(true)
+const primaryDomain = ref('')
+const phpVersion = ref('')
+const slugError = ref('')
+const domainError = ref('')
+const slugField = ref<ComponentPublicInstance>()
+const createdSite = ref<Site>()
+
+const SLUG_PATTERN = /^[a-z][a-z0-9-]{1,31}$/
+
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32)
 }
 
+watch(displayName, (name) => {
+  if (slugLocked.value) slug.value = slugify(name)
+})
+watch(slug, () => {
+  slugError.value = ''
+})
+watch(primaryDomain, () => {
+  domainError.value = ''
+})
+// A fresh open never shows a previous attempt's failed progress or values.
+watch(createOpen, (open) => {
+  if (open && !runner.busy.value) {
+    runner.error.value = ''
+    runner.progress.value = undefined
+    resetForm()
+  }
+})
+
+function unlockSlug() {
+  slugLocked.value = false
+  void nextTick(() => (slugField.value?.$el as HTMLInputElement | undefined)?.focus())
+}
+
+function openCreate() {
+  void router.replace({ query: { ...route.query, create: '1' } })
+}
+
+function closeCreate() {
+  const { create: _create, ...rest } = route.query
+  void router.replace({ query: rest })
+}
+
+function resetForm() {
+  displayName.value = ''
+  slug.value = ''
+  slugLocked.value = true
+  primaryDomain.value = ''
+  phpVersion.value = ''
+  slugError.value = ''
+  domainError.value = ''
+}
+
+function validate(): boolean {
+  const candidateSlug = slug.value.trim()
+  const candidateDomain = primaryDomain.value.trim().toLowerCase()
+  slugError.value = ''
+  domainError.value = ''
+  if (!SLUG_PATTERN.test(candidateSlug)) {
+    slugError.value = 'Use 2–32 lowercase letters, digits, or hyphens, starting with a letter.'
+  } else if (sites.value.some((site) => site.slug === candidateSlug)) {
+    slugError.value = 'Another site already uses this slug. Choose a different one.'
+  }
+  if (sites.value.some((site) => site.primaryDomain.toLowerCase() === candidateDomain)) {
+    domainError.value = 'Another site already uses this domain.'
+  }
+  return !slugError.value && !domainError.value
+}
+
+// exactOptionalPropertyTypes: only bind optional props when a value exists.
+const failureLink = computed(() =>
+  runner.progress.value?.state === 'failed' && runner.jobId.value !== undefined ? { jobId: runner.jobId.value } : {},
+)
+const progressExtras = computed(() => ({
+  messages: runner.messages.value,
+  ...(runner.startedAtMs.value !== undefined ? { startedAtMs: runner.startedAtMs.value } : {}),
+}))
+
 async function submit() {
-  selectedPlan.value = undefined
+  if (runner.busy.value || !validate()) return
   await runner.run(
     async () => {
       const result = await createSite({
-        displayName: displayName.value,
-        slug: slug.value,
-        primaryDomain: primaryDomain.value,
+        displayName: displayName.value.trim(),
+        slug: slug.value.trim(),
+        primaryDomain: primaryDomain.value.trim(),
         phpVersion: phpVersion.value,
       })
-      selectedSite.value = result.site
+      createdSite.value = result.site
       await sitesQuery.refetch()
       return result.job.id
     },
     {
       onSettled: async () => {
-        if (selectedSite.value) await refreshSelected(selectedSite.value.id)
+        await sitesQuery.refetch()
       },
-      onSuccess: async () => {
-        if (selectedSite.value) await loadPlan(selectedSite.value)
+      onSuccess: () => {
+        const created = createdSite.value
+        resetForm()
+        if (created) void router.push(`/sites/${created.id}`)
       },
-      failureMessage: 'Planning failed. Open Jobs for the durable failure record.',
+      failureMessage: 'Site planning failed',
     },
   )
-}
-
-async function loadPlan(site: Site) {
-  selectedSite.value = site
-  selectedPlan.value = undefined
-  planExpiresAt.value = ''
-  runner.error.value = ''
-  if (!site.lastJobId && site.status !== 'plan_ready') return
-  try {
-    const response = await getSitePlan(site.id)
-    selectedPlan.value = response.plan
-    planExpiresAt.value = response.expiresAt
-  } catch (caught) {
-    runner.error.value = caught instanceof Error ? caught.message : 'The configuration plan could not be loaded.'
-  }
-}
-
-async function mutateSite(rollback: boolean) {
-  const site = selectedSite.value
-  if (!site) return
-  await runner.run(async () => (rollback ? await rollbackSite(site.id) : await activateSite(site.id)).id, {
-    onSettled: () => refreshSelected(site.id),
-    failureMessage: 'The node operation failed and restoration was attempted. Inspect Jobs for details.',
-  })
-}
-
-async function refreshPlan() {
-  const site = selectedSite.value
-  if (!site) return
-  await runner.run(async () => (await prepareSitePlan(site.id)).id, {
-    onSettled: () => refreshSelected(site.id),
-    onSuccess: async () => {
-      if (selectedSite.value) await loadPlan(selectedSite.value)
-    },
-    failureMessage: 'Site planning failed. Open Jobs for the durable failure record.',
-  })
 }
 </script>
 
 <template>
   <section class="space-y-6">
     <PageHeader
-      eyebrow="Managed web hosting"
+      eyebrow="Web hosting"
       title="Sites"
-      description="Every site change is planned first, validated on the node, and activated atomically with automatic restore on failure."
+      description="Create a site, review the generated plan, then activate it. Nothing changes on the server until you approve."
     >
-      <StatusPill tone="accent" label="Plan-first workflow" :pulse="false" />
+      <AppButton variant="primary" icon="plus" @click="openCreate">Create site</AppButton>
     </PageHeader>
 
-    <AppAlert v-if="runtimesQuery.isSuccess.value && runtimes.length === 0" tone="warning">
-      No installed PHP-FPM 7.4 or 8.x runtime was discovered under <code class="font-mono">/etc/php</code>. Install and enable
-      one before creating a site.
-    </AppAlert>
-    <AppAlert v-if="sitesQuery.isError.value || runtimesQuery.isError.value" tone="danger">
-      Site or runtime inventory is unavailable. Check the API and node configuration.
-    </AppAlert>
+    <AppCard flush>
+      <div class="space-y-3 p-3 sm:p-4">
+        <ListToolbar
+          v-model:search="search"
+          :count="matching"
+          count-label="sites"
+          placeholder="Search by name, domain, or slug"
+        >
+          <template #filters>
+            <div class="w-44">
+              <AppSelect v-model="statusFilter" aria-label="Filter by status">
+                <option value="">All statuses</option>
+                <option v-for="status in siteStatuses" :key="status" :value="status">{{ humanize(status) }}</option>
+              </AppSelect>
+            </div>
+          </template>
+        </ListToolbar>
 
-    <div class="grid gap-4 lg:grid-cols-[minmax(0,380px)_1fr]">
-      <AppCard
-        eyebrow="Desired state"
-        title="Create a PHP site"
-        description="Nexa derives the Unix owner, document root, socket, and config paths from the immutable slug."
-      >
-        <form class="space-y-4" @submit.prevent="submit">
-          <FormField label="Display name">
-            <AppInput v-model="displayName" maxlength="80" autocomplete="off" placeholder="Customer portal" required />
-          </FormField>
-          <FormField label="Immutable slug" hint="Lowercase letters, digits, and hyphens. Cannot be changed later.">
-            <AppInput v-model="slug" minlength="2" maxlength="32" pattern="[a-z][a-z0-9-]+" autocomplete="off" placeholder="customer-portal" required />
-          </FormField>
-          <FormField label="Primary domain">
-            <AppInput v-model="primaryDomain" maxlength="253" autocomplete="url" placeholder="portal.example.com" required />
-          </FormField>
-          <FormField label="Installed PHP runtime">
-            <AppSelect v-model="phpVersion" required>
-              <option disabled value="">Select a discovered runtime</option>
-              <option v-for="runtime in runtimes" :key="runtime.version" :value="runtime.version">
-                PHP {{ runtime.version }}{{ runtime.supportStatus === 'end_of_life_allowed' ? ' — legacy / end of life' : '' }}
-              </option>
-            </AppSelect>
-          </FormField>
-
-          <AppAlert v-if="runner.error.value" tone="danger">{{ runner.error.value }}</AppAlert>
-          <JobProgress v-if="runner.progress.value" :event="runner.progress.value" />
-
-          <AppButton variant="primary" type="submit" :loading="runner.busy.value" :disabled="runtimes.length === 0" class="w-full">
-            Create and prepare plan
-          </AppButton>
-        </form>
-      </AppCard>
-
-      <AppCard eyebrow="Desired resources" :title="`${sites.length} managed ${sites.length === 1 ? 'site' : 'sites'}`" flush>
-        <div class="px-3 pb-3 sm:px-4 sm:pb-4">
-          <div v-if="sites.length" class="space-y-1">
-            <ResourceRow
-              v-for="site in sites"
-              :key="site.id"
-              :title="site.displayName"
-              :subtitle="site.primaryDomain"
-              :avatar="site.displayName.slice(0, 1).toUpperCase()"
-              clickable
-              @select="loadPlan(site)"
-            >
-              <template #meta>
-                <span class="hidden shrink-0 font-mono text-xs text-ink-muted sm:inline">PHP {{ site.phpVersion }}</span>
-              </template>
-              <template #status>
-                <StatusPill :status="site.status" />
-              </template>
-            </ResourceRow>
-          </div>
-          <EmptyState
-            v-else
-            icon="layers"
-            title="No sites yet"
-            description="Create the first desired site to generate its reviewed node plan."
-            class="m-2"
-          />
+        <div v-if="sitesQuery.isPending.value" class="space-y-1">
+          <SkeletonRow v-for="n in 3" :key="n" />
         </div>
-      </AppCard>
-    </div>
-
-    <AppCard
-      v-if="selectedSite"
-      :eyebrow="`Configuration plan · ${selectedSite.slug}`"
-      :title="selectedPlan ? 'Artifacts ready for node validation' : 'Plan is not ready'"
-    >
-      <template #actions>
-        <StatusPill v-if="planExpiresAt" tone="warning" :label="`Expires ${formatTime(planExpiresAt)}`" :pulse="false" />
-      </template>
-
-      <div class="space-y-5">
-        <FactList :facts="siteFacts" />
-
-        <div v-if="selectedPlan" class="grid gap-3 sm:grid-cols-3">
-          <article
-            v-for="artifact in selectedPlan.artifacts"
-            :key="artifact.path"
-            class="rounded-xl border border-outline bg-canvas/40 px-4 py-3"
-          >
-            <span class="block text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">
-              {{ artifactLabels[artifact.kind] ?? artifact.kind }}
-            </span>
-            <code class="mt-1 block font-mono text-xs break-all text-accent-200">{{ artifact.path }}</code>
-            <small class="mt-1 block text-[11px] text-ink-muted">Mode {{ artifact.mode.toString(8) }}</small>
-          </article>
-        </div>
-
-        <AppAlert v-if="selectedPlan" tone="warning">
-          Activation validates PHP-FPM and <code class="font-mono">nginx -t</code>, reloads services, verifies the Host
-          response, and restores captured state on failure.
+        <AppAlert v-else-if="sitesQuery.isError.value" tone="danger">
+          <p>Sites could not be loaded.</p>
+          <AppButton size="sm" class="mt-2" @click="sitesQuery.refetch()">Retry</AppButton>
         </AppAlert>
-
-        <div v-if="selectedPlan" class="flex flex-wrap gap-2">
-          <AppButton
-            v-if="selectedSite.status !== 'active'"
-            icon="refresh-cw"
-            :disabled="runner.busy.value"
-            @click="refreshPlan"
-          >
-            Refresh signed plan
-          </AppButton>
-          <AppButton
-            v-if="selectedSite.status !== 'active'"
-            variant="primary"
-            :loading="runner.busy.value"
-            :disabled="selectedSite.status === 'activating'"
-            @click="mutateSite(false)"
-          >
-            Approve and activate
-          </AppButton>
-          <AppButton v-else variant="danger" icon="rotate-ccw" :loading="runner.busy.value" @click="mutateSite(true)">
-            Rollback activation
-          </AppButton>
-        </div>
+        <EmptyState
+          v-else-if="sites.length === 0"
+          icon="layers"
+          title="No sites yet"
+          description="Create your first site to get a plan you can review and activate."
+        >
+          <template #action>
+            <AppButton variant="primary" icon="plus" @click="openCreate">Create site</AppButton>
+          </template>
+        </EmptyState>
+        <EmptyState
+          v-else-if="items.length === 0"
+          icon="search"
+          title="No matching sites"
+          description="Try a different search or status filter."
+        />
+        <template v-else>
+          <div class="space-y-1">
+            <RouterLink
+              v-for="site in items"
+              :key="site.id"
+              :to="`/sites/${site.id}`"
+              class="block rounded-xl focus-visible:outline-2 focus-visible:outline-accent-400"
+            >
+              <ResourceRow
+                :title="site.displayName"
+                :subtitle="site.primaryDomain"
+                :avatar="site.displayName.slice(0, 1).toUpperCase()"
+                class="hover:border-outline hover:bg-white/[0.03]"
+              >
+                <template #meta>
+                  <span
+                    v-if="site.status === 'failed' && site.failure"
+                    class="hidden max-w-56 truncate text-xs text-rose-300 md:inline"
+                    :title="site.failure"
+                  >
+                    {{ site.failure }}
+                  </span>
+                  <span class="hidden shrink-0 font-mono text-xs text-ink-muted sm:inline">PHP {{ site.phpVersion }}</span>
+                </template>
+                <template #status>
+                  <StatusPill :status="site.status" />
+                </template>
+              </ResourceRow>
+            </RouterLink>
+          </div>
+          <div v-if="pageCount > 1" class="flex items-center justify-end gap-2 pt-1 text-[13px] text-ink-muted">
+            <AppButton size="sm" icon="chevron-left" aria-label="Previous page" :disabled="page <= 1" @click="page--" />
+            <span class="tabular-nums">Page {{ page }} of {{ pageCount }}</span>
+            <AppButton size="sm" icon="chevron-right" aria-label="Next page" :disabled="page >= pageCount" @click="page++" />
+          </div>
+        </template>
       </div>
     </AppCard>
+
+    <AppDialog :open="createOpen" title="Create site" @close="closeCreate">
+      <form id="create-site-form" class="space-y-4" @submit.prevent="submit">
+        <AppAlert v-if="runtimesQuery.isSuccess.value && runtimes.length === 0" tone="warning">
+          No installed PHP runtime was found under <code class="font-mono">/etc/php</code>. Install and enable one before
+          creating a site.
+        </AppAlert>
+        <AppAlert v-if="runtimesQuery.isError.value" tone="danger">
+          PHP runtimes could not be loaded.
+          <AppButton size="sm" class="mt-2" @click="runtimesQuery.refetch()">Retry</AppButton>
+        </AppAlert>
+
+        <FormField label="Display name">
+          <AppInput v-model="displayName" maxlength="80" autocomplete="off" placeholder="Customer portal" required />
+        </FormField>
+        <FormField
+          label="Slug"
+          :error="slugError"
+          :hint="
+            slugLocked
+              ? 'Created from the display name. Names the Unix user and folders; cannot be changed later.'
+              : 'Lowercase letters, digits, and hyphens. Cannot be changed later.'
+          "
+        >
+          <div class="flex gap-2">
+            <AppInput
+              ref="slugField"
+              v-model="slug"
+              maxlength="32"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="customer-portal"
+              class="font-mono"
+              :readonly="slugLocked"
+              :invalid="Boolean(slugError)"
+              required
+            />
+            <AppButton v-if="slugLocked" icon="pencil" aria-label="Edit slug" @click="unlockSlug">Edit</AppButton>
+          </div>
+        </FormField>
+        <FormField label="Primary domain" :error="domainError">
+          <AppInput
+            v-model="primaryDomain"
+            maxlength="253"
+            autocomplete="url"
+            placeholder="portal.example.com"
+            :invalid="Boolean(domainError)"
+            required
+          />
+        </FormField>
+        <FormField label="PHP version">
+          <AppSelect v-model="phpVersion" empty-message="No PHP runtime found" required>
+            <option disabled value="">Select a PHP version</option>
+            <option v-for="runtime in runtimes" :key="runtime.version" :value="runtime.version">
+              PHP {{ runtime.version }}{{ runtime.supportStatus === 'end_of_life_allowed' ? ' — no longer supported' : '' }}
+            </option>
+          </AppSelect>
+        </FormField>
+
+        <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="failureLink" />
+        <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="progressExtras" />
+      </form>
+      <template #footer>
+        <AppButton :disabled="runner.busy.value" @click="closeCreate">Cancel</AppButton>
+        <AppButton
+          form="create-site-form"
+          type="submit"
+          variant="primary"
+          :loading="runner.busy.value"
+          :disabled="runtimes.length === 0"
+        >
+          Create site
+        </AppButton>
+      </template>
+    </AppDialog>
   </section>
 </template>

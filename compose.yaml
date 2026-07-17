@@ -1,0 +1,33 @@
+# Disposable Ubuntu 24.04 test node running Nexa Panel under systemd, laid out
+# like the .deb would install it (see Dockerfile). The container runs systemd as
+# PID 1, so it needs a privileged, cgroup-mounted setup — this is a test node,
+# not a production deployment.
+#
+#   docker compose up --build -d      # build image + start
+#   docker compose logs -f            # follow systemd/service logs
+#   docker compose down               # stop and remove
+#
+# Panel: http://localhost:8080 (embedded production UI)
+
+services:
+  nexa-node:
+    build:
+      context: .
+    image: nexa-node
+    container_name: nexa-node
+    # systemd as PID 1 needs full privileges and the host's cgroup namespace.
+    privileged: true
+    cgroup: host
+    stop_signal: SIGRTMIN+3        # tell systemd to shut down cleanly
+    ports:
+      - "8080:8080"
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    tmpfs:
+      - /run
+      - /run/lock
+    # This is a disposable test node: state under /var/lib/nexa-panel (the SQLite
+    # control DB + master key) is created fresh on each `up` by systemd's
+    # StateDirectory. Persisting it via a named volume is intentionally left out —
+    # a volume mounted there starts root-owned and trips the same readonly-database
+    # failure the panel already hit; keep state ephemeral for this image.

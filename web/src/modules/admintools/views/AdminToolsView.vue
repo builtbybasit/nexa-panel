@@ -9,11 +9,15 @@ import {
   AppAlert,
   AppButton,
   AppCard,
+  AppIcon,
   AppSelect,
+  EmptyState,
   FormField,
+  JobFailureNotice,
   JobProgress,
   PageHeader,
   PlanSteps,
+  SkeletonCard,
   StatusPill,
 } from '@/shared/ui'
 
@@ -40,18 +44,27 @@ const postgresRoleId = ref('')
 const selected = ref<AdminTool>()
 const selectedPlan = ref<AdminToolPlan>()
 const launching = ref(false)
+const planLoadError = ref('')
+const launchError = ref('')
+const blockedLaunch = ref<{ kind: ToolKind; url: string }>()
 
 const runner = useJobRunner()
+
+// Spread-bound so the optional props are omitted (not passed as undefined),
+// which exactOptionalPropertyTypes requires.
+const runnerJobLink = computed(() => (runner.jobId.value === undefined ? {} : { jobId: runner.jobId.value }))
+const runnerTiming = computed(() => (runner.startedAtMs.value === undefined ? {} : { startedAtMs: runner.startedAtMs.value }))
 
 const toolTitles: Record<ToolKind, string> = { phpmyadmin: 'phpMyAdmin', pgadmin: 'pgAdmin' }
 
 async function loadPlan(tool: AdminTool) {
   selected.value = tool
   selectedPlan.value = undefined
+  planLoadError.value = ''
   try {
     selectedPlan.value = (await getPlan(tool.kind)).plan
   } catch (caught) {
-    runner.error.value = caught instanceof Error ? caught.message : 'The admin tool plan is not ready.'
+    planLoadError.value = caught instanceof Error ? caught.message : 'The plan is not ready yet.'
   }
 }
 
@@ -69,7 +82,7 @@ async function change(tool: AdminTool, action: ToolAction) {
       onSuccess: async () => {
         if (selected.value) await loadPlan(selected.value)
       },
-      failureMessage: 'The admin tool operation failed. Inspect Jobs for details.',
+      failureMessage: 'The admin tool operation failed',
     },
   )
 }
@@ -82,22 +95,27 @@ async function approve() {
       selectedPlan.value = undefined
       await toolsQuery.refetch()
     },
-    failureMessage: 'The admin tool operation failed. Inspect Jobs for details.',
+    failureMessage: 'The admin tool operation failed',
   })
 }
 
 async function launch(kind: ToolKind) {
   launching.value = true
-  runner.error.value = ''
+  launchError.value = ''
+  blockedLaunch.value = undefined
   try {
     const input =
       kind === 'phpmyadmin'
         ? { sourceEngine: 'mysql' as const, databaseId: mysqlDatabaseId.value, accountId: mysqlAccountId.value }
         : { sourceEngine: 'postgresql' as const, databaseId: postgresDatabaseId.value, accountId: postgresRoleId.value }
     const response = await launchTool(kind, input)
-    window.location.assign(response.url)
+    // window.open returns null when the feature string contains `noopener`,
+    // so sever the opener by hand to keep popup-blocker detection working.
+    const opened = window.open(response.url, '_blank')
+    if (opened) opened.opener = null
+    else blockedLaunch.value = { kind, url: response.url }
   } catch (caught) {
-    runner.error.value = caught instanceof Error ? caught.message : 'The admin tool launch failed.'
+    launchError.value = caught instanceof Error ? caught.message : `${toolTitles[kind]} could not be opened.`
   } finally {
     launching.value = false
   }
@@ -114,11 +132,29 @@ async function launch(kind: ToolKind) {
       <StatusPill tone="accent" label="Podman · localhost only" :pulse="false" />
     </PageHeader>
 
-    <AppAlert v-if="runner.error.value" tone="danger">{{ runner.error.value }}</AppAlert>
-    <JobProgress v-if="runner.progress.value" :event="runner.progress.value" />
+    <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="runnerJobLink" />
+    <JobProgress
+      v-if="runner.progress.value"
+      :event="runner.progress.value"
+      :messages="runner.messages.value"
+      v-bind="runnerTiming"
+    />
 
     <!-- Tool lifecycle -->
-    <div class="grid gap-4 sm:grid-cols-2">
+    <div v-if="toolsQuery.isPending.value" class="grid gap-4 sm:grid-cols-2">
+      <SkeletonCard v-for="n in 2" :key="n" />
+    </div>
+    <AppAlert v-else-if="toolsQuery.isError.value" tone="danger">
+      <p>The admin tools list couldn't be loaded.</p>
+      <AppButton size="sm" class="mt-2" @click="toolsQuery.refetch()">Retry</AppButton>
+    </AppAlert>
+    <EmptyState
+      v-else-if="!tools.length"
+      icon="database"
+      title="No admin tools available"
+      description="No database admin tools are configured on this host."
+    />
+    <div v-else class="grid gap-4 sm:grid-cols-2">
       <AppCard
         v-for="tool in tools"
         :key="tool.kind"
@@ -154,7 +190,7 @@ async function launch(kind: ToolKind) {
               :disabled="runner.busy.value"
               @click="change(tool, 'tool.deploy')"
             >
-              Deploy / start
+              Deploy and start
             </AppButton>
             <AppButton v-if="tool.status === 'active'" icon="stop" :disabled="runner.busy.value" @click="change(tool, 'tool.stop')">
               Stop
@@ -167,20 +203,38 @@ async function launch(kind: ToolKind) {
       </AppCard>
     </div>
 
+    <AppAlert v-if="launchError" tone="danger">{{ launchError }}</AppAlert>
+    <AppAlert v-if="blockedLaunch" tone="info">
+      <p>The browser blocked the new tab.</p>
+      <a
+        :href="blockedLaunch.url"
+        target="_blank"
+        rel="noopener"
+        class="mt-1 inline-flex items-center gap-1.5 font-medium underline underline-offset-2 hover:text-sky-100"
+      >
+        Open {{ toolTitles[blockedLaunch.kind] }}
+        <AppIcon name="external-link" :size="14" />
+      </a>
+    </AppAlert>
+
     <!-- Secure launch -->
     <div class="grid gap-4 sm:grid-cols-2">
       <AppCard eyebrow="MySQL-family" title="Open phpMyAdmin">
         <form class="space-y-3" @submit.prevent="launch('phpmyadmin')">
           <FormField label="Database">
-            <AppSelect v-model="mysqlDatabaseId" required>
-              <option disabled value="">Select database</option>
-              <option v-for="item in mysqlDatabases" :key="item.id" :value="item.id">{{ item.name }}</option>
+            <AppSelect v-model="mysqlDatabaseId" required empty-message="No MySQL databases yet — create one in MySQL / MariaDB">
+              <template v-if="mysqlDatabases.length">
+                <option disabled value="">Select database</option>
+                <option v-for="item in mysqlDatabases" :key="item.id" :value="item.id">{{ item.name }}</option>
+              </template>
             </AppSelect>
           </FormField>
           <FormField label="Account">
-            <AppSelect v-model="mysqlAccountId" required>
-              <option disabled value="">Select account</option>
-              <option v-for="item in mysqlAccounts" :key="item.id" :value="item.id">{{ item.name }}@{{ item.host }}</option>
+            <AppSelect v-model="mysqlAccountId" required empty-message="No MySQL accounts yet — create one in MySQL / MariaDB">
+              <template v-if="mysqlAccounts.length">
+                <option disabled value="">Select account</option>
+                <option v-for="item in mysqlAccounts" :key="item.id" :value="item.id">{{ item.name }}@{{ item.host }}</option>
+              </template>
             </AppSelect>
           </FormField>
           <AppButton
@@ -191,23 +245,30 @@ async function launch(kind: ToolKind) {
             :disabled="!activeToolKinds.has('phpmyadmin')"
             class="w-full"
           >
-            Launch securely
+            Launch phpMyAdmin
           </AppButton>
+          <p v-if="!toolsQuery.isPending.value && !activeToolKinds.has('phpmyadmin')" class="text-xs text-ink-muted">
+            phpMyAdmin is not running — deploy it above first.
+          </p>
         </form>
       </AppCard>
 
       <AppCard eyebrow="PostgreSQL" title="Open pgAdmin">
         <form class="space-y-3" @submit.prevent="launch('pgadmin')">
           <FormField label="Database">
-            <AppSelect v-model="postgresDatabaseId" required>
-              <option disabled value="">Select database</option>
-              <option v-for="item in postgresDatabases" :key="item.id" :value="item.id">{{ item.name }}</option>
+            <AppSelect v-model="postgresDatabaseId" required empty-message="No PostgreSQL databases yet — create one in Databases">
+              <template v-if="postgresDatabases.length">
+                <option disabled value="">Select database</option>
+                <option v-for="item in postgresDatabases" :key="item.id" :value="item.id">{{ item.name }}</option>
+              </template>
             </AppSelect>
           </FormField>
           <FormField label="Role">
-            <AppSelect v-model="postgresRoleId" required>
-              <option disabled value="">Select role</option>
-              <option v-for="item in postgresRoles" :key="item.id" :value="item.id">{{ item.name }}</option>
+            <AppSelect v-model="postgresRoleId" required empty-message="No PostgreSQL roles yet — create one in Databases">
+              <template v-if="postgresRoles.length">
+                <option disabled value="">Select role</option>
+                <option v-for="item in postgresRoles" :key="item.id" :value="item.id">{{ item.name }}</option>
+              </template>
             </AppSelect>
           </FormField>
           <AppButton
@@ -218,18 +279,22 @@ async function launch(kind: ToolKind) {
             :disabled="!activeToolKinds.has('pgadmin')"
             class="w-full"
           >
-            Launch securely
+            Launch pgAdmin
           </AppButton>
+          <p v-if="!toolsQuery.isPending.value && !activeToolKinds.has('pgadmin')" class="text-xs text-ink-muted">
+            pgAdmin is not running — deploy it above first.
+          </p>
         </form>
       </AppCard>
     </div>
 
     <!-- Plan review -->
+    <AppAlert v-if="planLoadError" tone="danger">{{ planLoadError }}</AppAlert>
     <AppCard v-if="selected && selectedPlan" eyebrow="Agent-signed Podman plan" :title="toolTitles[selected.kind] ?? selected.kind">
       <div class="space-y-4">
         <PlanSteps :steps="selectedPlan.agentPlan.steps" :warnings="selectedPlan.agentPlan.warnings" />
         <div class="flex flex-wrap gap-2">
-          <AppButton variant="primary" :loading="runner.busy.value" @click="approve">Approve and execute</AppButton>
+          <AppButton variant="primary" :loading="runner.busy.value" @click="approve">Approve and apply</AppButton>
         </div>
       </div>
     </AppCard>

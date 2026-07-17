@@ -1,36 +1,45 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import { listSites } from '@/modules/sites/api'
-import { formatTime } from '@/shared/formatters'
+import { useCollection } from '@/shared/composables/useCollection'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
+import { formatDateTime } from '@/shared/formatters'
 import {
   AppAlert,
   AppButton,
   AppCard,
+  AppDialog,
   AppInput,
   AppSelect,
   EmptyState,
   FactList,
   FormField,
+  JobFailureNotice,
   JobProgress,
+  ListToolbar,
   PageHeader,
+  PlanReviewDialog,
   ResourceRow,
+  SkeletonRow,
   StatusPill,
+  type Fact,
 } from '@/shared/ui'
 
-import { activateDomain, createDomain, getDomainPlan, listDomains, type Domain, type DomainKind, type DomainPlan } from '../api'
+import {
+  activateDomain,
+  createDomain,
+  getDomainPlan,
+  listDomains,
+  type Domain,
+  type DomainKind,
+  type DomainPlan,
+} from '../api'
 
-const siteId = ref('')
-const hostname = ref('')
-const kind = ref<Exclude<DomainKind, 'primary'>>('subdomain')
-const redirectTarget = ref('')
-
-const selected = ref<Domain>()
-const plan = ref<DomainPlan>()
-const planExpiresAt = ref('')
-
+const route = useRoute()
+const router = useRouter()
 const runner = useJobRunner()
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites })
@@ -38,119 +47,286 @@ const domainsQuery = useQuery({ queryKey: ['domains'], queryFn: () => listDomain
 const sites = computed(() => sitesQuery.data.value ?? [])
 const domains = computed(() => domainsQuery.data.value ?? [])
 
-const planFacts = computed(() =>
-  plan.value
-    ? [
-        { label: 'Resolved addresses', value: plan.value.resolvedAddresses.join(', ') || 'No records' },
-        { label: 'Attached hostnames', value: `${plan.value.nodePlan.site.routes?.length ?? 0} routes` },
-        { label: 'Site', value: plan.value.nodePlan.site.primaryDomain },
-      ]
-    : [],
+const siteFilter = ref('')
+const filteredDomains = computed(() =>
+  siteFilter.value ? domains.value.filter((domain) => domain.siteId === siteFilter.value) : domains.value,
 )
+const { search, page, pageCount, items: pageItems, matching } = useCollection(() => filteredDomains.value, {
+  searchText: (domain) => domain.hostname,
+})
+
+const selected = ref<Domain>()
+const detailEl = ref<HTMLElement>()
+
+const plan = ref<DomainPlan>()
+const planExpiresAt = ref('')
+const planOpen = ref(false)
+const planLoading = ref(false)
+const planError = ref('')
+
+// The create dialog is URL-driven (?create=1) so deep links, the header
+// button, and history navigation all agree on whether it is open.
+const createOpen = computed(() => route.query.create === '1')
+const createSiteId = ref('')
+const hostname = ref('')
+const kind = ref<Exclude<DomainKind, 'primary'>>('subdomain')
+const redirectTarget = ref('')
+
+const hostnameError = computed(() => {
+  const value = hostname.value.trim().toLowerCase()
+  if (!value) return undefined
+  return domains.value.some((domain) => domain.hostname.toLowerCase() === value)
+    ? 'This hostname is already in use on this node.'
+    : undefined
+})
+
+// exactOptionalPropertyTypes: optional props with possibly-undefined values
+// are passed as conditional v-bind objects instead of direct bindings.
+const failureLink = computed(() =>
+  runner.progress.value?.state === 'failed' && runner.jobId.value !== undefined
+    ? { jobId: runner.jobId.value }
+    : {},
+)
+
+const storedFailureLink = computed(() =>
+  selected.value?.lastJobId !== undefined ? { jobId: selected.value.lastJobId } : {},
+)
+
+const progressExtras = computed(() => ({
+  messages: runner.messages.value,
+  ...(runner.startedAtMs.value !== undefined ? { startedAtMs: runner.startedAtMs.value } : {}),
+}))
+
+const hostnameFieldError = computed(() => (hostnameError.value ? { error: hostnameError.value } : {}))
+
+function failureHint(failure?: string) {
+  return failure ? { description: failure } : {}
+}
+
+function select(domain: Domain) {
+  if (selected.value?.id !== domain.id) {
+    runner.error.value = ''
+    planError.value = ''
+  }
+  selected.value = domain
+  if (route.query.selected !== domain.id) {
+    void router.replace({ query: { ...route.query, selected: domain.id } })
+  }
+}
+
+// Restore ?selected= once the list first arrives.
+let selectionRestored = typeof route.query.selected !== 'string'
+watch(
+  domains,
+  (list) => {
+    if (selectionRestored || list.length === 0) return
+    selectionRestored = true
+    const found = list.find((domain) => domain.id === route.query.selected)
+    if (found) selected.value = found
+  },
+  { immediate: true },
+)
+
+watch(
+  () => selected.value?.id,
+  async (id, previousId) => {
+    if (!id || id === previousId) return
+    await nextTick()
+    detailEl.value?.focus({ preventScroll: true })
+    detailEl.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  },
+)
+
+onMounted(() => {
+  if (typeof route.query.site === 'string') {
+    createSiteId.value = route.query.site
+    siteFilter.value = route.query.site
+  }
+})
+
+function openCreate() {
+  if (!createOpen.value) void router.replace({ query: { ...route.query, create: '1' } })
+}
+
+function closeCreate() {
+  if (!createOpen.value) return
+  const query = { ...route.query }
+  delete query.create
+  void router.replace({ query })
+}
 
 async function refreshSelected(domainId: string) {
   await domainsQuery.refetch()
-  selected.value = domains.value.find((domain) => domain.id === domainId)
+  const found = domains.value.find((domain) => domain.id === domainId)
+  if (found) select(found)
 }
 
-async function loadPlan(domain: Domain) {
-  selected.value = domain
-  plan.value = undefined
-  if (domain.status !== 'plan_ready' && domain.status !== 'active') return
+async function openPlan(domain: Domain) {
+  planLoading.value = true
+  planError.value = ''
   try {
     const response = await getDomainPlan(domain.id)
     plan.value = response.plan
     planExpiresAt.value = response.expiresAt
+    planOpen.value = true
   } catch (caught) {
-    runner.error.value = caught instanceof Error ? caught.message : 'The routing plan could not be loaded.'
+    planError.value = caught instanceof Error ? caught.message : 'The routing plan could not be loaded.'
+  } finally {
+    planLoading.value = false
   }
 }
 
-async function submit() {
+async function submitCreate() {
+  if (hostnameError.value || !createSiteId.value) return
+  let createdId = ''
   await runner.run(
     async () => {
       const result = await createDomain({
-        siteId: siteId.value,
-        hostname: hostname.value,
+        siteId: createSiteId.value,
+        hostname: hostname.value.trim().toLowerCase(),
         kind: kind.value,
-        ...(kind.value === 'redirect' ? { redirectTarget: redirectTarget.value } : {}),
+        ...(kind.value === 'redirect' ? { redirectTarget: redirectTarget.value.trim() } : {}),
       })
-      selected.value = result.domain
+      createdId = result.domain.id
       return result.job.id
     },
     {
-      onSettled: async () => {
-        if (selected.value) await refreshSelected(selected.value.id)
-      },
+      onSettled: () => refreshSelected(createdId),
       onSuccess: async () => {
-        if (selected.value) await loadPlan(selected.value)
+        closeCreate()
+        hostname.value = ''
+        redirectTarget.value = ''
+        if (selected.value) await openPlan(selected.value)
       },
-      failureMessage: 'The domain operation failed. Inspect Jobs for details.',
+      failureMessage: 'The domain could not be added.',
     },
   )
 }
 
-async function activate() {
+async function approvePlan() {
   const domain = selected.value
   if (!domain) return
+  planOpen.value = false
   await runner.run(async () => (await activateDomain(domain.id)).id, {
     onSettled: () => refreshSelected(domain.id),
-    failureMessage: 'The domain activation failed. Inspect Jobs for details.',
+    failureMessage: 'The domain could not be activated.',
+    successToast: 'Domain activated',
   })
 }
+
+function kindLabel(domain: Domain): string {
+  return domain.kind === 'redirect' && domain.redirectTarget
+    ? `redirect → ${domain.redirectTarget}`
+    : domain.kind
+}
+
+const detailFacts = computed<Fact[]>(() => {
+  const domain = selected.value
+  if (!domain) return []
+  const site = sites.value.find((item) => item.id === domain.siteId)
+  return [
+    { label: 'Hostname', value: domain.hostname, mono: true },
+    { label: 'Site', value: site?.displayName ?? domain.siteId, to: `/sites/${domain.siteId}` },
+    { label: 'Kind', value: kindLabel(domain) },
+    {
+      label: 'Resolved addresses',
+      value: domain.resolvedAddresses.join(', ') || 'No records',
+      mono: domain.resolvedAddresses.length > 0,
+    },
+    { label: 'Added', value: formatDateTime(domain.createdAt) },
+  ]
+})
+
+const planTitle = computed(() => `Activate ${selected.value?.hostname ?? 'domain'}`)
+
+const planFacts = computed<Fact[]>(() => {
+  const current = plan.value
+  const domain = selected.value
+  if (!current || !domain) return []
+  const site = current.nodePlan.site
+  return [
+    { label: 'Hostname', value: domain.hostname, mono: true },
+    { label: 'Site', value: site.primaryDomain, to: `/sites/${site.id}` },
+    { label: 'Kind', value: kindLabel(domain) },
+    { label: 'Hostnames after change', value: String(site.routes?.length ?? 0) },
+  ]
+})
+
+const planSteps = computed(() => {
+  const current = plan.value
+  if (!current) return []
+  return [
+    ...current.nodePlan.artifacts.map((artifact) => `Write ${artifact.path}`),
+    'Validate the full Nginx configuration and reload',
+  ]
+})
+
+const planWarnings = computed(() =>
+  plan.value ? [...new Set([...plan.value.warnings, ...plan.value.nodePlan.warnings])] : [],
+)
+
+const planDnsRows = computed(() =>
+  plan.value && selected.value
+    ? [{ hostname: selected.value.hostname, addresses: plan.value.resolvedAddresses }]
+    : [],
+)
 </script>
 
 <template>
   <section class="space-y-6">
     <PageHeader
-      eyebrow="Routing and preflight"
+      eyebrow="Routing"
       title="Domains"
-      description="Hostnames are globally unique on this node. Every change regenerates and validates the complete Nginx site as one atomic change."
-    />
+      description="Point extra hostnames at your sites. Every change is validated as one atomic Nginx update before it goes live."
+    >
+      <AppButton variant="primary" icon="plus" @click="openCreate">Add domain</AppButton>
+    </PageHeader>
 
-    <div class="grid gap-4 lg:grid-cols-[minmax(0,380px)_1fr]">
-      <AppCard eyebrow="Attach hostname" title="New route">
-        <form class="space-y-4" @submit.prevent="submit">
-          <FormField label="Site">
-            <AppSelect v-model="siteId" required>
-              <option disabled value="">Select site</option>
+    <AppCard flush>
+      <div class="space-y-3 p-3 sm:p-4">
+        <ListToolbar v-model:search="search" :count="matching" count-label="domains" placeholder="Search hostnames">
+          <template #filters>
+            <AppSelect v-model="siteFilter" aria-label="Filter by site" class="w-44">
+              <option value="">All sites</option>
               <option v-for="site in sites" :key="site.id" :value="site.id">{{ site.displayName }}</option>
             </AppSelect>
-          </FormField>
-          <FormField label="Kind">
-            <AppSelect v-model="kind">
-              <option value="subdomain">Subdomain</option>
-              <option value="alias">Alias</option>
-              <option value="redirect">Redirect</option>
-            </AppSelect>
-          </FormField>
-          <FormField label="Hostname">
-            <AppInput v-model="hostname" placeholder="www.example.com" required />
-          </FormField>
-          <FormField v-if="kind === 'redirect'" label="Redirect target hostname">
-            <AppInput v-model="redirectTarget" placeholder="example.com" required />
-          </FormField>
+          </template>
+        </ListToolbar>
 
-          <AppAlert v-if="runner.error.value" tone="danger">{{ runner.error.value }}</AppAlert>
-          <JobProgress v-if="runner.progress.value" :event="runner.progress.value" />
-
-          <AppButton variant="primary" type="submit" :loading="runner.busy.value" class="w-full">
-            Create routing plan
-          </AppButton>
-        </form>
-      </AppCard>
-
-      <AppCard eyebrow="Routing inventory" :title="`${domains.length} hostnames`" flush>
-        <div class="px-3 pb-3 sm:px-4 sm:pb-4">
-          <div v-if="domains.length" class="space-y-1">
+        <div v-if="domainsQuery.isPending.value" class="space-y-1">
+          <SkeletonRow v-for="n in 3" :key="n" />
+        </div>
+        <AppAlert v-else-if="domainsQuery.isError.value" tone="danger">
+          <p>Domains could not be loaded.</p>
+          <AppButton size="sm" class="mt-2" @click="domainsQuery.refetch()">Retry</AppButton>
+        </AppAlert>
+        <EmptyState
+          v-else-if="domains.length === 0"
+          icon="globe"
+          title="No domains yet"
+          description="Point a subdomain, alias, or redirect at one of your sites."
+        >
+          <template #action>
+            <AppButton variant="primary" icon="plus" @click="openCreate">Add domain</AppButton>
+          </template>
+        </EmptyState>
+        <EmptyState
+          v-else-if="matching === 0"
+          icon="search"
+          title="No matching domains"
+          description="Try a different search or site filter."
+        />
+        <template v-else>
+          <div class="space-y-1">
             <ResourceRow
-              v-for="domain in domains"
+              v-for="domain in pageItems"
               :key="domain.id"
               :title="domain.hostname"
-              :subtitle="`${domain.kind}${domain.redirectTarget ? ` → ${domain.redirectTarget}` : ''}`"
+              :subtitle="kindLabel(domain)"
               icon="globe"
               clickable
-              @select="loadPlan(domain)"
+              :selected="domain.id === selected?.id"
+              @select="select(domain)"
             >
               <template #meta>
                 <span class="hidden shrink-0 font-mono text-xs text-ink-muted sm:inline">
@@ -158,40 +334,151 @@ async function activate() {
                 </span>
               </template>
               <template #status>
-                <StatusPill :status="domain.status" />
+                <StatusPill :status="domain.status" v-bind="failureHint(domain.failure)" />
               </template>
             </ResourceRow>
           </div>
-          <EmptyState
-            v-else
-            icon="globe"
-            title="No additional hostnames"
-            description="Attach a subdomain, alias, or redirect to a managed site."
-            class="m-2"
+          <div v-if="pageCount > 1" class="flex items-center justify-end gap-2 border-t border-outline pt-3">
+            <AppButton size="sm" icon="chevron-left" aria-label="Previous page" :disabled="page <= 1" @click="page--" />
+            <span class="text-xs text-ink-muted tabular-nums">Page {{ page }} of {{ pageCount }}</span>
+            <AppButton size="sm" icon="chevron-right" aria-label="Next page" :disabled="page >= pageCount" @click="page++" />
+          </div>
+        </template>
+      </div>
+    </AppCard>
+
+    <div
+      v-if="selected"
+      ref="detailEl"
+      tabindex="-1"
+      class="scroll-mt-6 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40"
+    >
+      <AppCard eyebrow="Domain" :title="selected.hostname">
+        <template #actions>
+          <StatusPill :status="selected.status" v-bind="failureHint(selected.failure)" />
+        </template>
+
+        <div class="space-y-4">
+          <JobFailureNotice v-if="selected.failure" :message="selected.failure" v-bind="storedFailureLink" />
+          <JobFailureNotice
+            v-if="runner.error.value && !createOpen"
+            :message="runner.error.value"
+            v-bind="failureLink"
           />
+          <AppAlert v-if="planError" tone="danger">{{ planError }}</AppAlert>
+          <JobProgress
+            v-if="runner.busy.value && runner.progress.value && !createOpen"
+            :event="runner.progress.value"
+            v-bind="progressExtras"
+          />
+
+          <FactList :facts="detailFacts" />
+
+          <div v-if="selected.status === 'plan_ready'" class="flex flex-wrap gap-2">
+            <AppButton
+              variant="primary"
+              :loading="planLoading"
+              :disabled="runner.busy.value"
+              @click="openPlan(selected)"
+            >
+              Review plan
+            </AppButton>
+          </div>
+          <div
+            v-else-if="selected.status === 'active'"
+            class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent-400/25 bg-accent-400/[0.06] px-4 py-3"
+          >
+            <p class="text-[13px] text-ink-secondary">{{ selected.hostname }} is live. Serve it over HTTPS next.</p>
+            <AppButton variant="primary" size="sm" @click="router.push(`/certificates?site=${selected.siteId}&create=1`)">
+              Enable HTTPS →
+            </AppButton>
+          </div>
         </div>
       </AppCard>
     </div>
 
-    <AppCard v-if="selected && plan" eyebrow="DNS and Nginx plan" :title="selected.hostname">
-      <template #actions>
-        <StatusPill tone="warning" :label="`Expires ${formatTime(planExpiresAt)}`" :pulse="false" />
-      </template>
+    <AppDialog :open="createOpen" title="Add domain" @close="closeCreate">
+      <form class="space-y-4" @submit.prevent="submitCreate">
+        <FormField label="Site">
+          <AppSelect v-model="createSiteId" required>
+            <option disabled value="">Select site</option>
+            <option v-for="site in sites" :key="site.id" :value="site.id">{{ site.displayName }}</option>
+          </AppSelect>
+        </FormField>
+        <FormField label="Kind" hint="An alias serves the site directly; a redirect sends visitors to another hostname.">
+          <AppSelect v-model="kind">
+            <option value="subdomain">Subdomain</option>
+            <option value="alias">Alias</option>
+            <option value="redirect">Redirect</option>
+          </AppSelect>
+        </FormField>
+        <FormField label="Hostname" v-bind="hostnameFieldError">
+          <!-- Displayed lowercase; the value is normalized on submit so typing keeps the caret. -->
+          <AppInput v-model="hostname" class="lowercase" placeholder="www.example.com" :invalid="Boolean(hostnameError)" required />
+        </FormField>
+        <FormField v-if="kind === 'redirect'" label="Redirect target">
+          <AppInput v-model="redirectTarget" placeholder="example.com" required />
+        </FormField>
 
-      <div class="space-y-4">
-        <AppAlert v-for="warning in plan.warnings" :key="warning" tone="warning">{{ warning }}</AppAlert>
-        <FactList :facts="planFacts" />
-        <div class="flex flex-wrap gap-2">
-          <AppButton
-            variant="primary"
-            :loading="runner.busy.value"
-            :disabled="selected.status === 'active'"
-            @click="activate"
+        <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="failureLink" />
+        <JobProgress
+          v-if="runner.busy.value && runner.progress.value"
+          :event="runner.progress.value"
+          v-bind="progressExtras"
+        />
+
+        <AppButton
+          variant="primary"
+          type="submit"
+          :loading="runner.busy.value"
+          :disabled="Boolean(hostnameError)"
+          class="w-full"
+        >
+          Add domain
+        </AppButton>
+      </form>
+    </AppDialog>
+
+    <PlanReviewDialog
+      :open="planOpen"
+      :title="planTitle"
+      :steps="planSteps"
+      :facts="planFacts"
+      :warnings="planWarnings"
+      :expires-at="planExpiresAt"
+      :busy="planLoading || runner.busy.value"
+      approve-label="Activate domain"
+      :can-regenerate="false"
+      @approve="approvePlan"
+      @close="planOpen = false"
+    >
+      <div>
+        <p class="mb-2 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">DNS preflight</p>
+        <ul class="space-y-1.5">
+          <li
+            v-for="row in planDnsRows"
+            :key="row.hostname"
+            class="rounded-lg border border-outline bg-canvas/40 px-3 py-2"
           >
-            {{ selected.status === 'active' ? 'Active' : 'Approve and activate' }}
-          </AppButton>
-        </div>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="min-w-0 font-mono text-xs break-all text-ink">{{ row.hostname }}</span>
+              <StatusPill
+                v-if="row.addresses.length"
+                tone="info"
+                label="resolves"
+                description="DNS records exist for this hostname. This does not confirm they point at this server."
+              />
+              <StatusPill v-else tone="warning" label="no records" />
+            </div>
+            <p v-if="row.addresses.length" class="mt-1 font-mono text-xs break-all text-ink-muted">
+              {{ row.addresses.join(', ') }}
+            </p>
+            <p v-else class="mt-1 text-xs text-amber-300">
+              Add an A record for {{ row.hostname }} pointing at this server before continuing.
+            </p>
+          </li>
+        </ul>
       </div>
-    </AppCard>
+    </PlanReviewDialog>
   </section>
 </template>

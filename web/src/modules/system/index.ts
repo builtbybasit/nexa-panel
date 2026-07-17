@@ -4,7 +4,7 @@ export const systemModule: FeatureModule = {
   id: 'system',
   name: 'System',
   description: 'Node capacity and container runtime capabilities.',
-  navigation: { label: 'System', to: '/system', icon: 'cpu', group: 'Operations', order: 42 },
+  navigation: { label: 'System', to: '/system', icon: 'cpu', group: 'Server', order: 30 },
   routes: [
     {
       path: '/system',

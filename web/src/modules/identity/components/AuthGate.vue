@@ -1,20 +1,26 @@
 <script setup lang="ts">
 import QrcodeVue from 'qrcode.vue'
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, type ComponentPublicInstance } from 'vue'
 
 import BrandMark from '@/app/components/BrandMark.vue'
 import { AppAlert, AppButton, AppIcon, AppInput, FormField } from '@/shared/ui'
 
 import { useIdentityStore } from '../store'
 
+/** Focus the phase's active field on mount; the autofocus attribute is unreliable after first paint. */
+const vFocus = { mounted: (el: HTMLElement) => el.focus() }
+
 const identity = useIdentityStore()
-const username = ref('admin')
+const username = ref('')
 const password = ref('')
 const confirmPassword = ref('')
 const verificationCode = ref('')
 const useRecoveryCode = ref(false)
 const localError = ref('')
 const copied = ref(false)
+const codesSaved = ref(false)
+
+const codeField = ref<ComponentPublicInstance>()
 
 const isBootstrap = computed(() => identity.phase === 'bootstrap')
 const isCredentials = computed(() => identity.phase === 'bootstrap' || identity.phase === 'login')
@@ -26,6 +32,13 @@ const headline = computed(() => {
   return 'Welcome back.'
 })
 const errorMessage = computed(() => localError.value || identity.error)
+const enrollmentFailed = computed(() => !identity.enrollment && !identity.loading && !!identity.error)
+
+function focusCodeField(select = false) {
+  const el = codeField.value?.$el as HTMLInputElement | undefined
+  el?.focus()
+  if (select) el?.select()
+}
 
 async function submitCredentials() {
   localError.value = ''
@@ -50,17 +63,54 @@ async function submitMFA() {
     else await identity.verify(verificationCode.value, useRecoveryCode.value)
     verificationCode.value = ''
   } catch {
+    // The store exposes the server-safe error below; reselect the code for a quick retry.
+    await nextTick()
+    focusCodeField(true)
+  }
+}
+
+async function retryEnrollment() {
+  localError.value = ''
+  try {
+    await identity.prepareEnrollment()
+  } catch {
     // The store exposes the server-safe error below.
   }
 }
 
+function toggleRecoveryMode() {
+  useRecoveryCode.value = !useRecoveryCode.value
+  verificationCode.value = ''
+  localError.value = ''
+  void nextTick(() => focusCodeField())
+}
+
+/** Back to a clean sign-in from the MFA phases, e.g. when this is not your account. */
+async function switchAccount() {
+  localError.value = ''
+  verificationCode.value = ''
+  useRecoveryCode.value = false
+  await identity.logout()
+}
+
 async function copyRecoveryCodes() {
+  localError.value = ''
   try {
     await navigator.clipboard.writeText(identity.recoveryCodes.join('\n'))
     copied.value = true
   } catch {
-    localError.value = 'Copying was blocked. Save each recovery code manually.'
+    localError.value = 'Copying was blocked by the browser. Download the codes or write them down instead.'
   }
+}
+
+function downloadRecoveryCodes() {
+  const blob = new Blob([identity.recoveryCodes.join('\n') + '\n'], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = 'nexa-panel-recovery-codes.txt'
+  anchor.click()
+  URL.revokeObjectURL(url)
 }
 </script>
 
@@ -113,13 +163,21 @@ async function copyRecoveryCodes() {
               {{
                 isBootstrap
                   ? 'Use at least 12 characters. Authenticator enrollment follows next.'
-                  : 'Enter your administrator password to continue.'
+                  : 'Enter your username and password to continue.'
               }}
             </p>
           </div>
 
           <FormField label="Username">
-            <AppInput v-model.trim="username" name="username" autocomplete="username" required minlength="3" maxlength="64" />
+            <AppInput
+              v-model.trim="username"
+              v-focus
+              name="username"
+              autocomplete="username"
+              required
+              minlength="3"
+              maxlength="64"
+            />
           </FormField>
           <FormField label="Password">
             <AppInput
@@ -146,7 +204,8 @@ async function copyRecoveryCodes() {
             <p class="text-[11px] font-bold tracking-[0.14em] text-accent-400 uppercase">Required second factor</p>
             <h2 class="mt-1.5 text-2xl font-semibold tracking-tight text-ink">Connect an authenticator</h2>
             <p class="mt-1.5 text-sm text-ink-secondary">
-              Scan this QR code with any TOTP-compatible authenticator, then enter its six-digit code.
+              A code from your authenticator means a stolen password alone can never reach your servers. Scan the QR
+              code with any authenticator app, then enter its six-digit code.
             </p>
           </div>
 
@@ -159,11 +218,19 @@ async function copyRecoveryCodes() {
               <code class="mt-1 block font-mono text-[13px] break-all text-accent-200">{{ identity.enrollment.secret }}</code>
             </div>
           </div>
-          <AppAlert v-else tone="info">Preparing encrypted authenticator enrollment…</AppAlert>
+          <div v-else-if="enrollmentFailed" class="space-y-3">
+            <AppAlert tone="danger">{{ identity.error }}</AppAlert>
+            <AppButton icon="refresh-cw" class="w-full" :loading="identity.loading" @click="retryEnrollment">
+              Try loading the QR code again
+            </AppButton>
+          </div>
+          <AppAlert v-else tone="info">Preparing authenticator enrollment…</AppAlert>
 
           <FormField label="Six-digit code">
             <AppInput
+              ref="codeField"
               v-model.trim="verificationCode"
+              v-focus
               class="text-center font-mono text-lg tracking-[0.4em]"
               name="one-time-code"
               inputmode="numeric"
@@ -173,10 +240,20 @@ async function copyRecoveryCodes() {
               required
             />
           </FormField>
-          <AppAlert v-if="errorMessage" tone="danger">{{ errorMessage }}</AppAlert>
+          <AppAlert v-if="identity.enrollment && errorMessage" tone="danger">
+            {{ errorMessage }} Codes change every 30 seconds — enter the newest one and try again.
+          </AppAlert>
           <AppButton variant="primary" type="submit" :loading="identity.loading" :disabled="!identity.enrollment" class="w-full">
             Verify and enable MFA
           </AppButton>
+          <button
+            type="button"
+            class="w-full text-center text-[13px] font-medium text-ink-muted transition-colors hover:text-ink"
+            :disabled="identity.loading"
+            @click="switchAccount"
+          >
+            Use a different account
+          </button>
         </form>
 
         <form v-else-if="identity.phase === 'challenge'" class="space-y-4" @submit.prevent="submitMFA">
@@ -186,13 +263,15 @@ async function copyRecoveryCodes() {
               {{ useRecoveryCode ? 'Use a recovery code' : 'Authenticator code' }}
             </h2>
             <p class="mt-1.5 text-sm text-ink-secondary">
-              {{ useRecoveryCode ? 'Each recovery code works once.' : 'Enter the current six-digit code from your authenticator.' }}
+              {{ useRecoveryCode ? 'Each recovery code works once.' : 'Enter the current six-digit code from your authenticator app.' }}
             </p>
           </div>
 
           <FormField :label="useRecoveryCode ? 'Recovery code' : 'Six-digit code'">
             <AppInput
+              ref="codeField"
               v-model.trim="verificationCode"
+              v-focus
               class="text-center font-mono text-lg tracking-[0.3em]"
               name="verification-code"
               :inputmode="useRecoveryCode ? 'text' : 'numeric'"
@@ -200,18 +279,25 @@ async function copyRecoveryCodes() {
               :pattern="useRecoveryCode ? undefined : '[0-9]{6}'"
               :maxlength="useRecoveryCode ? 19 : 6"
               required
-              autofocus
             />
           </FormField>
           <button
             type="button"
             class="text-[13px] font-medium text-accent-300 hover:text-accent-200"
-            @click="((useRecoveryCode = !useRecoveryCode), (verificationCode = ''))"
+            @click="toggleRecoveryMode"
           >
             {{ useRecoveryCode ? 'Use authenticator instead' : 'Use a recovery code' }}
           </button>
           <AppAlert v-if="errorMessage" tone="danger">{{ errorMessage }}</AppAlert>
           <AppButton variant="primary" type="submit" :loading="identity.loading" class="w-full">Verify and sign in</AppButton>
+          <button
+            type="button"
+            class="w-full text-center text-[13px] font-medium text-ink-muted transition-colors hover:text-ink"
+            :disabled="identity.loading"
+            @click="switchAccount"
+          >
+            Use a different account
+          </button>
         </form>
 
         <section v-else-if="identity.phase === 'recovery'" class="space-y-4">
@@ -233,11 +319,22 @@ async function copyRecoveryCodes() {
             </code>
           </div>
 
-          <AppButton :icon="copied ? 'check' : 'copy'" class="w-full" @click="copyRecoveryCodes">
-            {{ copied ? 'Copied' : 'Copy all codes' }}
-          </AppButton>
+          <div class="grid grid-cols-2 gap-2">
+            <AppButton v-focus icon="download" @click="downloadRecoveryCodes">Download codes (.txt)</AppButton>
+            <AppButton :icon="copied ? 'check' : 'copy'" aria-live="polite" @click="copyRecoveryCodes">
+              {{ copied ? 'Copied' : 'Copy all codes' }}
+            </AppButton>
+          </div>
           <AppAlert v-if="localError" tone="danger">{{ localError }}</AppAlert>
-          <AppButton variant="primary" class="w-full" @click="identity.acknowledgeRecoveryCodes()">I saved these codes</AppButton>
+          <label
+            class="flex cursor-pointer items-start gap-2.5 rounded-xl border border-outline bg-raised/40 px-4 py-3 text-[13px] leading-relaxed text-ink-secondary"
+          >
+            <input v-model="codesSaved" type="checkbox" class="mt-0.5 accent-accent-500" />
+            I saved these codes somewhere outside this server.
+          </label>
+          <AppButton variant="primary" class="w-full" :disabled="!codesSaved" @click="identity.acknowledgeRecoveryCodes()">
+            Continue to the panel
+          </AppButton>
         </section>
       </div>
     </section>

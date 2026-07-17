@@ -14,6 +14,9 @@ defineProps<{ icon?: string; title: string; description?: string }>()
     </span>
     <p class="text-sm font-semibold text-ink">{{ title }}</p>
     <p v-if="description" class="max-w-sm text-[13px] leading-relaxed text-ink-muted">{{ description }}</p>
+    <div v-if="$slots.action" class="mt-2 flex flex-wrap items-center justify-center gap-2">
+      <slot name="action" />
+    </div>
     <slot />
   </div>
 </template>

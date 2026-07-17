@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { useQuery } from '@tanstack/vue-query'
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { useIdentityStore } from '@/modules/identity/store'
 import { featureModules } from '@/modules/registry'
+import { getSystemOverview } from '@/modules/system/api'
+import { formatTime } from '@/shared/formatters'
 import { AppIcon } from '@/shared/ui'
 
 import BrandMark from './BrandMark.vue'
@@ -32,6 +35,41 @@ const groups = computed<NavigationGroup[]>(() => {
   }
   return grouped
 })
+
+// Same key as the top bar memory gauge so both share one 15s poll.
+const overviewQuery = useQuery({
+  queryKey: ['system', 'overview'],
+  queryFn: getSystemOverview,
+  refetchInterval: 15_000,
+  retry: 1,
+})
+
+const node = computed(() => {
+  if (overviewQuery.isError.value) {
+    const lastChecked = overviewQuery.dataUpdatedAt.value
+    return {
+      dot: 'bg-rose-400',
+      ping: false,
+      label: 'Node unreachable',
+      detail: 'The control plane is not responding',
+      title: lastChecked ? `Last successful check: ${formatTime(new Date(lastChecked).toISOString())}` : 'No successful check yet',
+    }
+  }
+  const overview = overviewQuery.data.value
+  if (!overview) {
+    return { dot: 'bg-ink-muted', ping: false, label: 'Local node', detail: 'Checking node health…', title: undefined }
+  }
+  if (overview.warnings.length > 0) {
+    return {
+      dot: 'bg-amber-400',
+      ping: true,
+      label: 'Local node',
+      detail: `${overview.warnings.length} ${overview.warnings.length === 1 ? 'warning' : 'warnings'} — see System`,
+      title: overview.warnings.join('\n'),
+    }
+  }
+  return { dot: 'bg-emerald-400', ping: true, label: 'Local node', detail: 'Single-server control plane', title: undefined }
+})
 </script>
 
 <template>
@@ -42,7 +80,10 @@ const groups = computed<NavigationGroup[]>(() => {
 
     <nav class="flex-1 space-y-6" aria-label="Primary navigation">
       <div v-for="group in groups" :key="group.label">
-        <p class="mb-1.5 px-3 text-[10px] font-bold tracking-[0.14em] text-ink-muted uppercase">{{ group.label }}</p>
+        <!-- 'General' holds the ungrouped Overview entry above the first header. -->
+        <p v-if="group.label !== 'General'" class="mb-1.5 px-3 text-[10px] font-bold tracking-[0.14em] text-ink-muted uppercase">
+          {{ group.label }}
+        </p>
         <RouterLink
           v-for="item in group.items"
           :key="item.id"
@@ -60,14 +101,14 @@ const groups = computed<NavigationGroup[]>(() => {
       </div>
     </nav>
 
-    <div class="mt-6 flex items-center gap-2.5 border-t border-outline px-3 pt-4 text-xs">
+    <div class="mt-6 flex items-center gap-2.5 border-t border-outline px-3 pt-4 text-xs" :title="node.title" :class="node.title ? 'cursor-help' : ''">
       <span class="relative flex size-2" aria-hidden="true">
-        <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-        <span class="relative inline-flex size-2 rounded-full bg-emerald-400" />
+        <span v-if="node.ping" class="absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" :class="node.dot" />
+        <span class="relative inline-flex size-2 rounded-full" :class="node.dot" />
       </span>
       <span>
-        <strong class="block font-semibold text-ink">Local node</strong>
-        <small class="block text-ink-muted">Single-server control plane</small>
+        <strong class="block font-semibold text-ink">{{ node.label }}</strong>
+        <small class="block text-ink-muted">{{ node.detail }}</small>
       </span>
     </div>
   </div>

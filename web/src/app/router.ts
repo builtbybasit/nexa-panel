@@ -10,7 +10,13 @@ export const router = createRouter({
     ...routes,
     {
       path: '/:pathMatch(.*)*',
-      redirect: '/',
+      name: 'not-found',
+      component: () => import('./views/NotFoundView.vue'),
     },
   ],
+})
+
+router.afterEach((to) => {
+  const feature = featureModules.find((candidate) => candidate.id === to.meta.moduleId)
+  document.title = feature ? `${feature.name} · Nexa Panel` : 'Nexa Panel'
 })

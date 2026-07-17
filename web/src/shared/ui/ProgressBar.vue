@@ -1,5 +1,11 @@
 <script setup lang="ts">
-withDefaults(defineProps<{ value: number; tone?: 'accent' | 'danger' }>(), { tone: 'accent' })
+withDefaults(defineProps<{ value: number; tone?: 'accent' | 'warning' | 'danger' }>(), { tone: 'accent' })
+
+const toneClasses: Record<'accent' | 'warning' | 'danger', string> = {
+  accent: 'bg-accent-400',
+  warning: 'bg-amber-400',
+  danger: 'bg-rose-400',
+}
 </script>
 
 <template>
@@ -12,7 +18,7 @@ withDefaults(defineProps<{ value: number; tone?: 'accent' | 'danger' }>(), { ton
   >
     <div
       class="h-full rounded-full transition-[width] duration-300"
-      :class="tone === 'danger' ? 'bg-rose-400' : 'bg-accent-400'"
+      :class="toneClasses[tone]"
       :style="{ width: `${Math.min(100, Math.max(0, value))}%` }"
     />
   </div>

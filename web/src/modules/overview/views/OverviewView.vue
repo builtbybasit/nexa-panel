@@ -4,12 +4,22 @@ import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { listCertificates } from '@/modules/certificates/api'
-import { listJobs } from '@/modules/jobs/api'
-import { featureModules } from '@/modules/registry'
+import { listJobs, type Job } from '@/modules/jobs/api'
 import { listSites } from '@/modules/sites/api'
 import { getSystemOverview } from '@/modules/system/api'
 import { formatBytes, formatDateTime, formatJobKind } from '@/shared/formatters'
-import { AppCard, AppIcon, EmptyState, MetricCard, PageHeader, StatusPill } from '@/shared/ui'
+import {
+  AppAlert,
+  AppButton,
+  AppCard,
+  AppIcon,
+  EmptyState,
+  MetricCard,
+  PageHeader,
+  SkeletonCard,
+  SkeletonRow,
+  StatusPill,
+} from '@/shared/ui'
 
 const systemQuery = useQuery({ queryKey: ['system', 'overview'], queryFn: getSystemOverview, retry: false, refetchInterval: 15_000 })
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
@@ -27,9 +37,24 @@ const runningJobs = computed(() => jobs.value.filter((job) => job.state === 'que
 const recentJobs = computed(() => jobs.value.slice(0, 6))
 const expiringCertificates = computed(() => certificates.value.filter((certificate) => certificate.expiringSoon).length)
 
-const quickLinks = computed(() =>
-  featureModules.filter((feature) => feature.navigation && feature.id !== 'overview'),
-)
+const quickActions = [
+  { label: 'Create site', icon: 'layers', to: '/sites?create=1' },
+  { label: 'Add domain', icon: 'globe', to: '/domains?create=1' },
+  { label: 'Enable HTTPS', icon: 'lock', to: '/certificates?create=1' },
+  { label: 'New database', icon: 'database', to: '/databases?create=1' },
+  { label: 'Schedule a task', icon: 'clock', to: '/schedules?create=1' },
+  { label: 'Browse files', icon: 'folder', to: '/files' },
+]
+
+const targetKeys = ['displayName', 'slug', 'hostname', 'name'] as const
+
+function jobTarget(job: Job): string | undefined {
+  for (const key of targetKeys) {
+    const value = job.request[key]
+    if (typeof value === 'string' && value) return value
+  }
+  return undefined
+}
 </script>
 
 <template>
@@ -41,33 +66,46 @@ const quickLinks = computed(() =>
     />
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <SkeletonCard v-if="sitesQuery.isPending.value" />
       <MetricCard
+        v-else
         label="Managed sites"
         icon="layers"
+        to="/sites"
         :value="sitesQuery.isError.value ? '—' : sites.length"
         :detail="sitesQuery.isError.value ? 'Inventory unavailable' : `${activeSites} active through Nginx`"
       />
+      <SkeletonCard v-if="systemQuery.isPending.value" />
       <MetricCard
+        v-else
         label="Memory available"
         icon="cpu"
+        to="/system"
         :value="memory ? formatBytes(memory.availableBytes) : '—'"
         :detail="memory ? `${Math.round(memory.usedPercent)}% used · ${memory.profile} profile` : 'Capacity not reported'"
       />
+      <SkeletonCard v-if="jobsQuery.isPending.value" />
       <MetricCard
+        v-else
         label="Active jobs"
         icon="history"
+        to="/jobs"
         :value="jobsQuery.isError.value ? '—' : runningJobs.length"
         :detail="jobsQuery.isError.value ? 'Job history unavailable' : `${jobs.length} recorded operations`"
       />
+      <SkeletonCard v-if="certificatesQuery.isPending.value" />
       <MetricCard
+        v-else
         label="TLS certificates"
         icon="shield"
+        to="/certificates"
         :value="certificatesQuery.isError.value ? '—' : certificates.length"
+        :tone="!certificatesQuery.isError.value && expiringCertificates ? 'warning' : 'default'"
         :detail="
           certificatesQuery.isError.value
             ? 'Certificate state unavailable'
             : expiringCertificates
-              ? `${expiringCertificates} expiring within 30 days`
+              ? `${expiringCertificates} expiring within 30 days — review`
               : 'No upcoming expirations'
         "
       />
@@ -86,17 +124,26 @@ const quickLinks = computed(() =>
     <div class="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
       <AppCard eyebrow="Durable operations" title="Recent jobs" flush>
         <div class="px-3 pb-3 sm:px-4 sm:pb-4">
-          <div v-if="recentJobs.length" class="divide-y divide-outline">
+          <div v-if="jobsQuery.isPending.value" class="space-y-1 px-2 py-2" aria-hidden="true">
+            <SkeletonRow v-for="n in 3" :key="n" />
+          </div>
+          <div v-else-if="jobsQuery.isError.value" class="m-2 flex flex-col items-start gap-3">
+            <AppAlert tone="danger" class="w-full">Recent jobs couldn't be loaded.</AppAlert>
+            <AppButton size="sm" icon="refresh-cw" @click="jobsQuery.refetch()">Retry</AppButton>
+          </div>
+          <div v-else-if="recentJobs.length" class="divide-y divide-outline">
             <RouterLink
               v-for="job in recentJobs"
               :key="job.id"
-              to="/jobs"
+              :to="`/jobs?job=${job.id}`"
               class="flex items-center gap-3 px-2 py-3 transition-colors hover:bg-white/[0.02]"
             >
               <span class="font-mono text-xs text-ink-muted">#{{ job.id }}</span>
               <span class="min-w-0 flex-1">
                 <strong class="block truncate text-[13px] font-semibold text-ink">{{ formatJobKind(job.kind) }}</strong>
-                <small class="block text-xs text-ink-muted">{{ formatDateTime(job.createdAt) }}</small>
+                <small class="block truncate text-xs text-ink-muted">
+                  {{ formatDateTime(job.createdAt) }}<template v-if="jobTarget(job)"> · {{ jobTarget(job) }}</template>
+                </small>
               </span>
               <StatusPill :status="job.state" />
             </RouterLink>
@@ -111,21 +158,18 @@ const quickLinks = computed(() =>
         </div>
       </AppCard>
 
-      <AppCard eyebrow="Platform" title="Modules">
-        <nav class="grid gap-1.5" aria-label="Module shortcuts">
+      <AppCard eyebrow="Shortcuts" title="Quick actions">
+        <nav class="grid gap-1.5" aria-label="Quick actions">
           <RouterLink
-            v-for="feature in quickLinks"
-            :key="feature.id"
-            :to="feature.navigation!.to"
+            v-for="action in quickActions"
+            :key="action.to"
+            :to="action.to"
             class="group flex items-center gap-3 rounded-xl border border-transparent px-3 py-2.5 transition-colors hover:border-outline hover:bg-white/[0.03]"
           >
             <span class="grid size-9 shrink-0 place-items-center rounded-lg border border-outline bg-white/[0.03] text-accent-300">
-              <AppIcon :name="feature.navigation!.icon" :size="16" />
+              <AppIcon :name="action.icon" :size="16" />
             </span>
-            <span class="min-w-0 flex-1">
-              <strong class="block text-[13px] font-semibold text-ink">{{ feature.name }}</strong>
-              <small class="block truncate text-xs text-ink-muted">{{ feature.description }}</small>
-            </span>
+            <strong class="min-w-0 flex-1 text-[13px] font-semibold text-ink">{{ action.label }}</strong>
             <AppIcon name="chevron-right" :size="14" class="shrink-0 text-ink-muted transition-transform group-hover:translate-x-0.5" />
           </RouterLink>
         </nav>

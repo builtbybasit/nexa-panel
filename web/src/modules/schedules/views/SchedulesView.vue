@@ -1,11 +1,28 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
+import { useCollection } from '@/shared/composables/useCollection'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { formatDateTime } from '@/shared/formatters'
-import { AppAlert, AppButton, AppCard, AppSelect, EmptyState, JobProgress, PageHeader, StatusPill } from '@/shared/ui'
+import {
+  AppAlert,
+  AppButton,
+  AppCard,
+  AppConfirmDialog,
+  AppDialog,
+  AppSelect,
+  EmptyState,
+  JobFailureNotice,
+  JobProgress,
+  ListToolbar,
+  PageHeader,
+  PlanReviewDialog,
+  SkeletonRow,
+  StatusPill,
+  type Fact,
+} from '@/shared/ui'
 
 import { getJob, type Job } from '../../jobs/api'
 import { listSites } from '../../sites/api'
@@ -17,10 +34,12 @@ import {
   listTasks,
   rollbackTask,
   runTask,
+  updateTask,
   type ScheduledTask,
   type TaskPlan,
   type TaskRunResult,
 } from '../api'
+import { describe as describeCron } from '../cron'
 import TaskFormDialog from './TaskFormDialog.vue'
 
 // --- Site selection (persisted in the ?site= route query; mutations need active sites) ---
@@ -38,6 +57,7 @@ function selectSite(id: string) {
   const query = { ...route.query }
   if (id) query.site = id
   else delete query.site
+  delete query.selected
   void router.replace({ query })
 }
 
@@ -66,14 +86,34 @@ const tasksQuery = useQuery({
 const tasks = computed(() => tasksQuery.data.value ?? [])
 const tasksError = computed(() => (tasksQuery.error.value instanceof Error ? tasksQuery.error.value.message : ''))
 
+const TASKS_PAGE_SIZE = 25
+
+const collection = useCollection(() => tasks.value, {
+  searchText: (task) => `${task.name} ${task.command}`,
+  pageSize: TASKS_PAGE_SIZE,
+})
+
 const runner = useJobRunner()
+
+// exactOptionalPropertyTypes: optional props are only bound while they hold a value.
+const runnerJobLink = computed(() => (runner.jobId.value === undefined ? {} : { jobId: runner.jobId.value }))
+const runnerElapsed = computed(() => (runner.startedAtMs.value === undefined ? {} : { startedAtMs: runner.startedAtMs.value }))
 
 const inFlightStatuses = new Set(['planning', 'activating'])
 const canMutate = (task: ScheduledTask) => !task.pendingRemoval && !inFlightStatuses.has(task.status)
 const canRun = (task: ScheduledTask) => task.status === 'active' && task.enabled && !task.pendingRemoval
 const canReview = (task: ScheduledTask) => task.status === 'plan_ready' || task.status === 'failed'
 
-// --- Create / edit (dialog queues the 202, the runner follows the planning job) ---
+/** The expression as a plain sentence; unknown shapes fall back to the raw text. */
+function scheduleSentence(task: ScheduledTask): string {
+  try {
+    return describeCron(task.cronExpression)
+  } catch {
+    return task.cronExpression
+  }
+}
+
+// --- Create / edit (dialog queues the change, the runner follows the planning job) ---
 
 const form = ref<{ task?: ScheduledTask }>()
 
@@ -85,11 +125,11 @@ function onTaskQueued(task: ScheduledTask, job: Job) {
       await tasksQuery.refetch()
     },
     onSuccess: () => openPlan(task),
-    failureMessage: 'Task planning failed. Open Jobs for the durable failure record.',
+    failureMessage: 'Task planning failed.',
   })
 }
 
-// --- Plan preview (also chained after create/update/delete planning jobs) ---
+// --- Plan review (also chained after create/update/delete planning jobs) ---
 
 const planDialog = ref<{ task: ScheduledTask; plan: TaskPlan | undefined; loading: boolean; error: string }>()
 
@@ -111,25 +151,47 @@ function closePlan() {
   runner.error.value = ''
 }
 
-// Plans expire server-side (15 minutes); tick a clock for the countdown pill.
-const now = ref(Date.now())
-const ticker = window.setInterval(() => {
-  now.value = Date.now()
-}, 1000)
-onBeforeUnmount(() => window.clearInterval(ticker))
+const planFailed = computed(() => planDialog.value?.task.status === 'failed')
 
+const planFacts = computed<Fact[]>(() => {
+  const task = planDialog.value?.task
+  if (!task) return []
+  return [
+    { label: 'Task', value: task.name },
+    { label: 'Schedule', value: scheduleSentence(task) },
+    { label: 'Expression', value: task.cronExpression, mono: true },
+    { label: 'Command', value: task.command, mono: true },
+    { label: 'Timeout', value: `${task.timeoutSeconds}s` },
+    { label: 'Enabled', value: task.enabled ? 'Yes' : 'No' },
+  ]
+})
+
+const planWarnings = computed(() => {
+  const dialog = planDialog.value
+  if (!dialog || dialog.loading || dialog.error) return []
+  const warnings = [...(dialog.plan?.warnings ?? [])]
+  if (dialog.task.pendingRemoval) {
+    warnings.unshift("Applying this plan removes the task's cron entry and wrapper script from the host, then deletes the task.")
+  }
+  return warnings
+})
+
+// Plans expire server-side; a loaded dialog without one gets an already-expired
+// deadline so PlanReviewDialog offers Regenerate instead of Approve.
 const planExpiry = computed(() => {
-  const plan = planDialog.value?.plan
-  if (!plan) return undefined
-  const remainingMs = new Date(plan.expiresAt).getTime() - now.value
-  if (remainingMs <= 0) return { expired: true, label: 'Plan expired' }
-  const totalSeconds = Math.floor(remainingMs / 1000)
-  return { expired: false, label: `Expires in ${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}` }
+  const dialog = planDialog.value
+  if (!dialog || dialog.loading) return {}
+  return { expiresAt: dialog.plan?.expiresAt ?? new Date(0).toISOString() }
+})
+
+const planFailureLink = computed(() => {
+  const id = planDialog.value?.task.lastJobId
+  return id === undefined ? {} : { jobId: id }
 })
 
 function applyPlan() {
   const dialog = planDialog.value
-  if (!dialog) return
+  if (!dialog?.plan) return
   const task = dialog.task
   void runner.run(async () => (await applyTask(siteId.value, task.id)).job.id, {
     onSettled: async () => {
@@ -144,8 +206,37 @@ function applyPlan() {
     onSuccess: () => {
       planDialog.value = undefined
     },
-    failureMessage: 'The apply failed on the host. Review the failure below, then roll back.',
+    successToast: task.pendingRemoval ? 'Task removed' : 'Plan applied',
+    failureMessage: 'Applying the plan failed.',
   })
+}
+
+/** Queues a fresh plan for the reviewed task: a replan for edits, a new removal plan for deletes. */
+function regeneratePlan() {
+  const dialog = planDialog.value
+  if (!dialog) return
+  const task = dialog.task
+  void runner.run(
+    async () => {
+      const result = task.pendingRemoval
+        ? await deleteTask(siteId.value, task.id)
+        : await updateTask(siteId.value, task.id, {
+            name: task.name,
+            cronExpression: task.cronExpression,
+            command: task.command,
+            timeoutSeconds: task.timeoutSeconds,
+            enabled: task.enabled,
+          })
+      return result.job.id
+    },
+    {
+      onSettled: async () => {
+        await tasksQuery.refetch()
+      },
+      onSuccess: () => openPlan(task),
+      failureMessage: 'Replanning failed.',
+    },
+  )
 }
 
 function rollbackPlan() {
@@ -157,7 +248,8 @@ function rollbackPlan() {
       await tasksQuery.refetch()
     },
     onSuccess: () => openPlan(task),
-    failureMessage: 'The rollback failed. Inspect Jobs for the durable failure record.',
+    successToast: 'Rollback complete',
+    failureMessage: 'The rollback failed.',
   })
 }
 
@@ -182,7 +274,7 @@ function runNow(task: ScheduledTask) {
       }
       if (expandedTaskId.value === task.id) await runsQuery.refetch()
     },
-    failureMessage: 'The task run failed. Inspect Jobs for the durable failure record.',
+    failureMessage: 'The task run failed.',
   })
 }
 
@@ -198,9 +290,22 @@ function formatDurationSeconds(seconds: number): string {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
-// --- Run history (fetched on expand, one task at a time) ---
+const relativeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 
-const expandedTaskId = ref('')
+function formatRelative(timestamp: string): string {
+  const deltaMs = new Date(timestamp).getTime() - Date.now()
+  const magnitude = Math.abs(deltaMs)
+  if (magnitude < 60_000) return relativeFormat.format(Math.round(deltaMs / 1000), 'second')
+  if (magnitude < 3_600_000) return relativeFormat.format(Math.round(deltaMs / 60_000), 'minute')
+  if (magnitude < 86_400_000) return relativeFormat.format(Math.round(deltaMs / 3_600_000), 'hour')
+  return relativeFormat.format(Math.round(deltaMs / 86_400_000), 'day')
+}
+
+// --- Run history (fetched on expand, one task at a time; ?selected= restores it) ---
+
+const expandedTaskId = ref(typeof route.query.selected === 'string' ? route.query.selected : '')
+let scrollToSelection = expandedTaskId.value !== ''
+
 const runsQuery = useQuery({
   queryKey: ['task-runs', siteId, expandedTaskId],
   queryFn: () => listTaskRuns(siteId.value, expandedTaskId.value),
@@ -212,9 +317,24 @@ const runsError = computed(() => (runsQuery.error.value instanceof Error ? runsQ
 
 function toggleRuns(task: ScheduledTask) {
   expandedTaskId.value = expandedTaskId.value === task.id ? '' : task.id
+  const query = { ...route.query }
+  if (expandedTaskId.value) query.selected = expandedTaskId.value
+  else delete query.selected
+  void router.replace({ query })
 }
 
-// --- Delete: queue a removal plan, then chain into the plan preview for Apply ---
+watch(tasks, async (list) => {
+  if (!scrollToSelection) return
+  const index = list.findIndex((task) => task.id === expandedTaskId.value)
+  if (index === -1) return
+  scrollToSelection = false
+  // Pagination could hide the restored row; jump to the page holding it.
+  collection.page.value = Math.floor(index / TASKS_PAGE_SIZE) + 1
+  await nextTick()
+  document.getElementById(`task-row-${expandedTaskId.value}`)?.scrollIntoView({ block: 'center' })
+})
+
+// --- Delete: queue a removal plan, then chain into the plan review for Apply ---
 
 const deleteTarget = ref<ScheduledTask>()
 const deleteBusy = ref(false)
@@ -223,6 +343,11 @@ const deleteError = ref('')
 function openDelete(task: ScheduledTask) {
   deleteTarget.value = task
   deleteError.value = ''
+}
+
+function closeDelete() {
+  if (deleteBusy.value) return
+  deleteTarget.value = undefined
 }
 
 async function confirmDelete() {
@@ -239,7 +364,7 @@ async function confirmDelete() {
         await tasksQuery.refetch()
       },
       onSuccess: () => openPlan(result.task),
-      failureMessage: 'Removal planning failed. Open Jobs for the durable failure record.',
+      failureMessage: 'Removal planning failed.',
     })
   } catch (caught) {
     deleteError.value = caught instanceof Error ? caught.message : 'The delete could not be queued.'
@@ -257,6 +382,22 @@ watch(siteId, () => {
   deleteTarget.value = undefined
   form.value = undefined
 })
+
+// ?create=1 opens the create dialog once an active site is selected. This
+// watcher is registered after the siteId reset above on purpose: watchers run
+// in creation order, so when the first site is auto-selected the reset clears
+// `form` first and this one may then open the dialog.
+watch(
+  [selectedSite, () => route.query.create],
+  ([site, create]) => {
+    if (!site || create !== '1') return
+    form.value = {}
+    const query = { ...route.query }
+    delete query.create
+    void router.replace({ query })
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -264,19 +405,33 @@ watch(siteId, () => {
     <PageHeader
       eyebrow="Web hosting"
       title="Scheduled tasks"
-      description="Cron tasks run as each site's Unix user through a managed wrapper. Every change is planned first and applied after review."
+      description="Run commands on a schedule as each site's Unix user. Every change is planned first so you can review it before it reaches the host."
     >
       <AppButton variant="primary" icon="plus" :disabled="!selectedSite" @click="form = {}">New task</AppButton>
     </PageHeader>
 
-    <AppAlert v-if="sitesQuery.isPending.value" tone="info">Loading sites…</AppAlert>
-    <AppAlert v-else-if="sitesQuery.isError.value" tone="danger">The site list is unavailable.</AppAlert>
+    <div v-if="sitesQuery.isPending.value" class="space-y-1">
+      <SkeletonRow v-for="index in 3" :key="index" />
+    </div>
+    <AppAlert v-else-if="sitesQuery.isError.value" tone="danger">
+      <p>The site list could not be loaded.</p>
+      <AppButton size="sm" class="mt-2" @click="sitesQuery.refetch()">Retry</AppButton>
+    </AppAlert>
     <EmptyState
       v-else-if="!activeSites.length"
       icon="clock"
       title="No active sites"
-      description="Scheduled tasks become available once a site reaches the active state."
-    />
+      description="Scheduled tasks run on active sites."
+    >
+      <template #action>
+        <RouterLink
+          to="/sites"
+          class="text-[13px] font-medium text-accent-300 underline-offset-2 transition-colors hover:text-accent-200 hover:underline"
+        >
+          Create a site first →
+        </RouterLink>
+      </template>
+    </EmptyState>
 
     <template v-else>
       <div class="flex flex-wrap items-center gap-3">
@@ -296,11 +451,16 @@ watch(siteId, () => {
         The selected site is not active or not accessible. Choose another site.
       </AppAlert>
 
-      <AppAlert v-if="runner.error.value && !planDialog" tone="danger">{{ runner.error.value }}</AppAlert>
-      <JobProgress v-if="runner.progress.value && !planDialog" :event="runner.progress.value" />
+      <JobFailureNotice v-if="runner.error.value && !planDialog" :message="runner.error.value" v-bind="runnerJobLink" />
+      <JobProgress
+        v-if="runner.progress.value && !planDialog"
+        :event="runner.progress.value"
+        :messages="runner.messages.value"
+        v-bind="runnerElapsed"
+      />
 
       <!-- Manual run result -->
-      <AppCard v-if="runResult" eyebrow="Manual run" :title="runResult.task.name">
+      <AppCard v-if="runResult" eyebrow="Manual run" :title="runResult.task.name" aria-live="polite">
         <template #actions>
           <StatusPill
             :tone="runResult.result.exitCode === 0 ? 'success' : 'danger'"
@@ -313,7 +473,7 @@ watch(siteId, () => {
             Duration {{ formatDurationMs(runResult.result.durationMs) }}
             <template v-if="runResult.result.startedAt"> · started {{ formatDateTime(runResult.result.startedAt) }}</template>
           </p>
-          <AppAlert v-if="runResult.result.timedOut" tone="warning">The run hit its timeout and was terminated.</AppAlert>
+          <AppAlert v-if="runResult.result.timedOut" tone="warning">The run hit its timeout and was stopped.</AppAlert>
           <pre
             v-if="runResult.result.outputTail"
             class="max-h-64 overflow-auto rounded-xl border border-outline bg-canvas/60 p-3 font-mono text-xs leading-5 whitespace-pre-wrap text-ink-secondary"
@@ -327,142 +487,203 @@ watch(siteId, () => {
       <!-- Task table -->
       <AppCard
         v-if="selectedSite"
-        eyebrow="Desired state"
+        eyebrow="Tasks"
         :title="`${tasks.length} scheduled ${tasks.length === 1 ? 'task' : 'tasks'}`"
         flush
       >
-        <div class="px-3 pb-3 sm:px-4 sm:pb-4">
-          <AppAlert v-if="tasksQuery.isPending.value" tone="info" class="m-2">Loading tasks…</AppAlert>
-          <AppAlert v-else-if="tasksError" tone="danger" class="m-2">{{ tasksError }}</AppAlert>
-          <div v-else-if="tasks.length" class="overflow-x-auto">
-            <table class="w-full border-collapse text-left">
-              <thead>
-                <tr class="border-b border-outline">
-                  <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Name</th>
-                  <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Schedule</th>
-                  <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Command</th>
-                  <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Timeout</th>
-                  <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Enabled</th>
-                  <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Status</th>
-                  <th class="px-3 py-2.5"><span class="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-outline">
-                <template v-for="task in tasks" :key="task.id">
-                  <tr>
-                    <td class="max-w-[14rem] px-3 py-2.5">
-                      <span class="block truncate text-[13px] font-medium text-ink" :title="task.name">{{ task.name }}</span>
-                    </td>
-                    <td class="px-3 py-2.5 font-mono text-xs whitespace-nowrap text-accent-200">{{ task.cronExpression }}</td>
-                    <td class="max-w-[16rem] px-3 py-2.5">
-                      <span class="block truncate font-mono text-xs text-ink-secondary" :title="task.command">{{ task.command }}</span>
-                    </td>
-                    <td class="px-3 py-2.5 font-mono text-xs whitespace-nowrap text-ink-secondary">{{ task.timeoutSeconds }}s</td>
-                    <td class="px-3 py-2.5">
-                      <StatusPill :tone="task.enabled ? 'success' : 'neutral'" :label="task.enabled ? 'Enabled' : 'Disabled'" :pulse="false" />
-                    </td>
-                    <td class="px-3 py-2.5">
-                      <span class="flex flex-wrap items-center gap-1.5">
-                        <StatusPill :status="task.status" />
-                        <StatusPill v-if="task.pendingRemoval" tone="warning" label="Removal pending" :pulse="false" />
-                      </span>
-                      <p
-                        v-if="task.status === 'failed' && task.failure"
-                        class="mt-1 max-w-[18rem] truncate text-xs text-rose-300"
-                        :title="task.failure"
-                      >
-                        {{ task.failure }}
-                      </p>
-                    </td>
-                    <td class="px-3 py-2.5 text-right">
-                      <span class="flex items-center justify-end gap-1">
-                        <AppButton
-                          v-if="canReview(task)"
-                          size="sm"
-                          :variant="task.status === 'failed' ? 'danger' : 'primary'"
-                          :disabled="runner.busy.value"
-                          @click="openPlan(task)"
-                        >
-                          {{ task.status === 'failed' ? 'Review failure' : 'Review plan' }}
-                        </AppButton>
-                        <AppButton
-                          v-if="canRun(task)"
-                          size="sm"
-                          variant="ghost"
-                          icon="play"
-                          :disabled="runner.busy.value"
-                          :aria-label="`Run ${task.name} now`"
-                          @click="runNow(task)"
-                        />
-                        <AppButton
-                          size="sm"
-                          variant="ghost"
-                          icon="history"
-                          :aria-label="`Run history for ${task.name}`"
-                          :aria-expanded="expandedTaskId === task.id"
-                          @click="toggleRuns(task)"
-                        />
-                        <AppButton
-                          size="sm"
-                          variant="ghost"
-                          icon="pencil"
-                          :disabled="!canMutate(task)"
-                          :aria-label="`Edit ${task.name}`"
-                          @click="form = { task }"
-                        />
-                        <AppButton
-                          size="sm"
-                          variant="ghost"
-                          icon="trash"
-                          class="text-rose-300"
-                          :disabled="!canMutate(task)"
-                          :aria-label="`Delete ${task.name}`"
-                          @click="openDelete(task)"
-                        />
-                      </span>
-                    </td>
-                  </tr>
-                  <tr v-if="expandedTaskId === task.id">
-                    <td colspan="7" class="bg-canvas/30 px-4 py-3">
-                      <AppAlert v-if="runsQuery.isPending.value" tone="info">Loading run history…</AppAlert>
-                      <AppAlert v-else-if="runsError" tone="danger">{{ runsError }}</AppAlert>
-                      <p v-else-if="!runs.length" class="text-[13px] text-ink-muted">No runs recorded yet for this task.</p>
-                      <table v-else class="w-full border-collapse text-left">
-                        <thead>
-                          <tr class="border-b border-outline">
-                            <th class="px-3 py-2 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Started</th>
-                            <th class="px-3 py-2 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Duration</th>
-                            <th class="px-3 py-2 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Exit code</th>
-                            <th class="px-3 py-2 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Trigger</th>
-                          </tr>
-                        </thead>
-                        <tbody class="divide-y divide-outline">
-                          <tr v-for="(run, index) in runs" :key="`${run.startedAt}-${index}`">
-                            <td class="px-3 py-2 text-xs whitespace-nowrap text-ink-secondary">{{ formatDateTime(run.startedAt) }}</td>
-                            <td class="px-3 py-2 font-mono text-xs whitespace-nowrap text-ink-secondary">
-                              {{ run.exitCode === -1 ? '—' : formatDurationSeconds(run.durationSeconds) }}
-                            </td>
-                            <td class="px-3 py-2">
-                              <StatusPill v-if="run.exitCode === -1" tone="neutral" label="skipped (overlap)" :pulse="false" />
-                              <StatusPill v-else :tone="run.exitCode === 0 ? 'success' : 'danger'" :label="`exit ${run.exitCode}`" :pulse="false" />
-                            </td>
-                            <td class="px-3 py-2 text-xs text-ink-secondary">{{ run.trigger }}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
+        <div class="space-y-3 px-3 pb-3 sm:px-4 sm:pb-4">
+          <div v-if="tasksQuery.isPending.value" class="space-y-1">
+            <SkeletonRow v-for="index in 3" :key="index" />
           </div>
+          <AppAlert v-else-if="tasksError" tone="danger">
+            <p>The task list could not be loaded. {{ tasksError }}</p>
+            <AppButton size="sm" class="mt-2" @click="tasksQuery.refetch()">Retry</AppButton>
+          </AppAlert>
           <EmptyState
-            v-else
+            v-else-if="!tasks.length"
             icon="clock"
             title="No scheduled tasks"
-            description="Create the first task to generate its reviewed cron plan."
-            class="m-2"
-          />
+            description="Tasks run commands on a schedule as the site's Unix user. Create the first one to review its cron plan."
+          >
+            <template #action>
+              <AppButton variant="primary" icon="plus" @click="form = {}">New task</AppButton>
+            </template>
+          </EmptyState>
+          <template v-else>
+            <ListToolbar
+              v-model:search="collection.search.value"
+              :count="collection.matching.value"
+              count-label="tasks"
+              placeholder="Search by name or command"
+            />
+            <EmptyState
+              v-if="!collection.items.value.length"
+              icon="search"
+              title="No matching tasks"
+              description="No tasks match your search. Clear it to see every task."
+            />
+            <div v-else class="overflow-x-auto">
+              <table class="w-full border-collapse text-left">
+                <thead>
+                  <tr class="border-b border-outline">
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Name</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Schedule</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Command</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Timeout</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Enabled</th>
+                    <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Status</th>
+                    <th class="px-3 py-2.5"><span class="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-outline">
+                  <template v-for="task in collection.items.value" :key="task.id">
+                    <tr
+                      :id="`task-row-${task.id}`"
+                      :class="expandedTaskId === task.id ? 'bg-accent-500/[0.05]' : ''"
+                      :aria-current="expandedTaskId === task.id ? 'true' : undefined"
+                    >
+                      <td class="max-w-[14rem] px-3 py-2.5">
+                        <span class="block truncate text-[13px] font-medium text-ink" :title="task.name">{{ task.name }}</span>
+                      </td>
+                      <td class="max-w-[14rem] px-3 py-2.5">
+                        <span class="block cursor-help truncate text-[13px] text-ink-secondary" :title="task.cronExpression">
+                          {{ scheduleSentence(task) }}
+                        </span>
+                      </td>
+                      <td class="max-w-[16rem] px-3 py-2.5">
+                        <span class="block truncate font-mono text-xs text-ink-secondary" :title="task.command">{{ task.command }}</span>
+                      </td>
+                      <td class="px-3 py-2.5 font-mono text-xs whitespace-nowrap text-ink-secondary">{{ task.timeoutSeconds }}s</td>
+                      <td class="px-3 py-2.5">
+                        <StatusPill :tone="task.enabled ? 'success' : 'neutral'" :label="task.enabled ? 'Enabled' : 'Disabled'" :pulse="false" />
+                      </td>
+                      <td class="px-3 py-2.5">
+                        <span class="flex flex-wrap items-center gap-1.5">
+                          <StatusPill :status="task.status" />
+                          <StatusPill v-if="task.pendingRemoval" tone="warning" label="Removal pending" :pulse="false" />
+                        </span>
+                        <p
+                          v-if="task.status === 'failed' && task.failure"
+                          class="mt-1 max-w-[18rem] truncate text-xs text-rose-300"
+                          :title="task.failure"
+                        >
+                          {{ task.failure }}
+                        </p>
+                      </td>
+                      <td class="px-3 py-2.5 text-right">
+                        <span class="flex items-center justify-end gap-1">
+                          <AppButton
+                            v-if="canReview(task)"
+                            size="sm"
+                            :variant="task.status === 'failed' ? 'danger' : 'primary'"
+                            :disabled="runner.busy.value"
+                            @click="openPlan(task)"
+                          >
+                            {{ task.status === 'failed' ? 'Review failure' : 'Review plan' }}
+                          </AppButton>
+                          <AppButton
+                            v-if="canRun(task)"
+                            size="sm"
+                            variant="ghost"
+                            icon="play"
+                            :disabled="runner.busy.value"
+                            :aria-label="`Run ${task.name} now`"
+                            @click="runNow(task)"
+                          />
+                          <AppButton
+                            size="sm"
+                            variant="ghost"
+                            icon="history"
+                            :aria-label="`Run history for ${task.name}`"
+                            :aria-expanded="expandedTaskId === task.id"
+                            @click="toggleRuns(task)"
+                          />
+                          <AppButton
+                            size="sm"
+                            variant="ghost"
+                            icon="pencil"
+                            :disabled="!canMutate(task)"
+                            :aria-label="`Edit ${task.name}`"
+                            @click="form = { task }"
+                          />
+                          <AppButton
+                            size="sm"
+                            variant="ghost"
+                            icon="trash"
+                            class="text-rose-300"
+                            :disabled="!canMutate(task)"
+                            :aria-label="`Delete ${task.name}`"
+                            @click="openDelete(task)"
+                          />
+                        </span>
+                      </td>
+                    </tr>
+                    <tr v-if="expandedTaskId === task.id">
+                      <td colspan="7" class="bg-canvas/30 px-4 py-3">
+                        <div v-if="runsQuery.isPending.value" class="space-y-1">
+                          <SkeletonRow v-for="index in 3" :key="index" />
+                        </div>
+                        <AppAlert v-else-if="runsError" tone="danger">
+                          <p>The run history could not be loaded. {{ runsError }}</p>
+                          <AppButton size="sm" class="mt-2" @click="runsQuery.refetch()">Retry</AppButton>
+                        </AppAlert>
+                        <p v-else-if="!runs.length" class="text-[13px] text-ink-muted">
+                          No runs yet. The task runs on its schedule once active, or right away with the run button.
+                        </p>
+                        <table v-else class="w-full border-collapse text-left">
+                          <thead>
+                            <tr class="border-b border-outline">
+                              <th class="px-3 py-2 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Started</th>
+                              <th class="px-3 py-2 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Duration</th>
+                              <th class="px-3 py-2 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Exit code</th>
+                              <th class="px-3 py-2 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Trigger</th>
+                            </tr>
+                          </thead>
+                          <tbody class="divide-y divide-outline">
+                            <tr v-for="(run, index) in runs" :key="`${run.startedAt}-${index}`">
+                              <td
+                                class="cursor-help px-3 py-2 text-xs whitespace-nowrap text-ink-secondary"
+                                :title="formatDateTime(run.startedAt)"
+                              >
+                                {{ formatRelative(run.startedAt) }}
+                              </td>
+                              <td class="px-3 py-2 font-mono text-xs whitespace-nowrap text-ink-secondary">
+                                {{ run.exitCode === -1 ? '—' : formatDurationSeconds(run.durationSeconds) }}
+                              </td>
+                              <td class="px-3 py-2">
+                                <StatusPill v-if="run.exitCode === -1" tone="neutral" label="skipped (overlap)" :pulse="false" />
+                                <StatusPill v-else :tone="run.exitCode === 0 ? 'success' : 'danger'" :label="`exit ${run.exitCode}`" :pulse="false" />
+                              </td>
+                              <td class="px-3 py-2 text-xs text-ink-secondary">{{ run.trigger }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+            <div v-if="collection.pageCount.value > 1" class="flex items-center justify-end gap-2">
+              <AppButton
+                size="sm"
+                variant="ghost"
+                icon="chevron-left"
+                :disabled="collection.page.value <= 1"
+                aria-label="Previous page"
+                @click="collection.page.value -= 1"
+              />
+              <span class="text-xs text-ink-muted tabular-nums">Page {{ collection.page.value }} of {{ collection.pageCount.value }}</span>
+              <AppButton
+                size="sm"
+                variant="ghost"
+                icon="chevron-right"
+                :disabled="collection.page.value >= collection.pageCount.value"
+                aria-label="Next page"
+                @click="collection.page.value += 1"
+              />
+            </div>
+          </template>
         </div>
       </AppCard>
     </template>
@@ -470,100 +691,95 @@ watch(siteId, () => {
     <!-- Create / edit dialog -->
     <TaskFormDialog v-if="form && selectedSite" :site-id="siteId" :task="form.task" @close="form = undefined" @queued="onTaskQueued" />
 
-    <!-- Plan preview dialog -->
-    <div v-if="planDialog" class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-      <div class="absolute inset-0 bg-canvas/70 backdrop-blur-sm" aria-hidden="true" @click="closePlan" />
-      <div class="relative w-full max-w-3xl">
-        <AppCard :eyebrow="planDialog.task.pendingRemoval ? 'Removal plan' : 'Configuration plan'" :title="planDialog.task.name">
-          <template #actions>
-            <StatusPill v-if="planExpiry" :tone="planExpiry.expired ? 'danger' : 'warning'" :label="planExpiry.label" :pulse="false" />
-            <StatusPill :status="planDialog.task.status" />
-          </template>
-          <div class="max-h-[70vh] space-y-4 overflow-y-auto">
-            <AppAlert v-if="planDialog.loading" tone="info">Loading the task plan…</AppAlert>
-            <AppAlert v-else-if="planDialog.error" tone="danger">{{ planDialog.error }}</AppAlert>
-            <template v-else>
-              <AppAlert v-if="planDialog.task.pendingRemoval" tone="warning">
-                Applying this plan removes the task's cron entry and wrapper script from the host, then deletes the task.
-              </AppAlert>
-
-              <template v-if="planDialog.plan">
-                <div v-for="artifact in planDialog.plan.artifacts" :key="artifact.path" class="rounded-xl border border-outline bg-canvas/40">
-                  <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5" :class="artifact.remove ? '' : 'border-b border-outline'">
-                    <code class="min-w-0 font-mono text-xs break-all text-accent-200">{{ artifact.path }}</code>
-                    <span class="flex shrink-0 items-center gap-2">
-                      <small class="text-[11px] text-ink-muted">Mode {{ artifact.mode.toString(8) }}</small>
-                      <StatusPill v-if="artifact.remove" tone="danger" label="Remove" :pulse="false" />
-                    </span>
-                  </div>
-                  <pre
-                    v-if="artifact.content && !artifact.remove"
-                    class="max-h-56 overflow-auto p-4 font-mono text-xs leading-5 whitespace-pre text-ink-secondary"
-                    >{{ artifact.content }}</pre
-                  >
-                </div>
-                <AppAlert v-if="planDialog.plan.warnings.length" tone="warning">
-                  <ul class="list-inside list-disc space-y-1">
-                    <li v-for="warning in planDialog.plan.warnings" :key="warning">{{ warning }}</li>
-                  </ul>
-                </AppAlert>
-              </template>
-              <AppAlert v-else-if="planDialog.task.status !== 'failed'" tone="info">
-                No unexpired plan is available for this task. Save the task again to generate a fresh one.
-              </AppAlert>
-
-              <AppAlert v-if="planDialog.task.status === 'failed'" tone="danger" title="The last apply failed">
-                {{ planDialog.task.failure ?? 'The host reported a failure. Inspect Jobs for the durable record.' }}
-              </AppAlert>
-
-              <AppAlert v-if="runner.error.value" tone="danger">{{ runner.error.value }}</AppAlert>
-              <JobProgress v-if="runner.progress.value" :event="runner.progress.value" />
-
-              <div class="flex flex-wrap justify-end gap-2">
-                <AppButton :disabled="runner.busy.value" @click="closePlan">Close</AppButton>
-                <AppButton
-                  v-if="planDialog.task.status === 'failed'"
-                  variant="danger"
-                  icon="rotate-ccw"
-                  :loading="runner.busy.value"
-                  @click="rollbackPlan"
-                >
-                  Roll back
-                </AppButton>
-                <AppButton
-                  v-if="planDialog.task.status === 'plan_ready' && planDialog.plan"
-                  variant="primary"
-                  :loading="runner.busy.value"
-                  :disabled="planExpiry?.expired === true"
-                  @click="applyPlan"
-                >
-                  {{ planDialog.task.pendingRemoval ? 'Apply removal' : 'Apply plan' }}
-                </AppButton>
-              </div>
-            </template>
-          </div>
-        </AppCard>
+    <!-- Failure review: the apply failed on the host; offer the rollback -->
+    <AppDialog v-if="planDialog && planFailed" :open="true" title="Review failure" @close="closePlan">
+      <div class="space-y-4">
+        <JobFailureNotice
+          :message="planDialog.task.failure ?? 'The last apply failed on the host.'"
+          v-bind="planFailureLink"
+        />
+        <p class="text-[13px] leading-relaxed text-ink-secondary">
+          Rolling back removes the partially applied cron entry and wrapper script from
+          <strong class="font-semibold text-ink">{{ planDialog.task.name }}</strong> so the host returns to a clean state.
+        </p>
+        <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="runnerJobLink" />
+        <JobProgress
+          v-if="runner.progress.value"
+          :event="runner.progress.value"
+          :messages="runner.messages.value"
+          v-bind="runnerElapsed"
+        />
       </div>
-    </div>
+      <template #footer>
+        <AppButton :disabled="runner.busy.value" @click="closePlan">Close</AppButton>
+        <AppButton variant="danger" icon="rotate-ccw" :loading="runner.busy.value" @click="rollbackPlan">Roll back</AppButton>
+      </template>
+    </AppDialog>
+
+    <!-- Plan review dialog -->
+    <PlanReviewDialog
+      v-else-if="planDialog"
+      :open="true"
+      :title="planDialog.task.pendingRemoval ? 'Review removal plan' : 'Review plan'"
+      :facts="planFacts"
+      :warnings="planWarnings"
+      v-bind="planExpiry"
+      :busy="runner.busy.value || planDialog.loading"
+      :approve-label="planDialog.task.pendingRemoval ? 'Apply removal' : 'Apply plan'"
+      @approve="applyPlan"
+      @regenerate="regeneratePlan"
+      @close="closePlan"
+    >
+      <div class="space-y-4">
+        <div v-if="planDialog.loading" class="space-y-1">
+          <SkeletonRow v-for="index in 2" :key="index" />
+        </div>
+        <AppAlert v-else-if="planDialog.error" tone="danger">
+          <p>{{ planDialog.error }}</p>
+          <AppButton size="sm" class="mt-2" @click="openPlan(planDialog.task)">Try again</AppButton>
+        </AppAlert>
+        <template v-else-if="planDialog.plan">
+          <div v-for="artifact in planDialog.plan.artifacts" :key="artifact.path" class="rounded-xl border border-outline bg-canvas/40">
+            <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5" :class="artifact.remove ? '' : 'border-b border-outline'">
+              <code class="min-w-0 font-mono text-xs break-all text-accent-200">{{ artifact.path }}</code>
+              <span class="flex shrink-0 items-center gap-2">
+                <small class="text-[11px] text-ink-muted">Mode {{ artifact.mode.toString(8) }}</small>
+                <StatusPill v-if="artifact.remove" tone="danger" label="Remove" :pulse="false" />
+              </span>
+            </div>
+            <pre
+              v-if="artifact.content && !artifact.remove"
+              class="max-h-56 overflow-auto p-4 font-mono text-xs leading-5 whitespace-pre text-ink-secondary"
+              >{{ artifact.content }}</pre
+            >
+          </div>
+        </template>
+
+        <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="runnerJobLink" />
+        <JobProgress
+          v-if="runner.progress.value"
+          :event="runner.progress.value"
+          :messages="runner.messages.value"
+          v-bind="runnerElapsed"
+        />
+      </div>
+    </PlanReviewDialog>
 
     <!-- Delete confirmation -->
-    <div v-if="deleteTarget" class="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-      <div class="absolute inset-0 bg-canvas/70 backdrop-blur-sm" aria-hidden="true" @click="deleteBusy ? undefined : (deleteTarget = undefined)" />
-      <div class="relative w-full max-w-md">
-        <AppCard eyebrow="Removal" title="Delete scheduled task">
-          <div class="space-y-4">
-            <p class="text-[13px] leading-relaxed text-ink-secondary">
-              Deleting <strong class="font-semibold text-ink">{{ deleteTarget.name }}</strong> prepares a removal plan for its cron
-              entry and wrapper script. The task is only removed from the host after you review and apply that plan.
-            </p>
-            <AppAlert v-if="deleteError" tone="danger">{{ deleteError }}</AppAlert>
-            <div class="flex justify-end gap-2">
-              <AppButton :disabled="deleteBusy" @click="deleteTarget = undefined">Cancel</AppButton>
-              <AppButton variant="danger" :loading="deleteBusy" @click="confirmDelete">Prepare removal plan</AppButton>
-            </div>
-          </div>
-        </AppCard>
-      </div>
-    </div>
+    <AppConfirmDialog
+      :open="Boolean(deleteTarget)"
+      title="Delete scheduled task"
+      confirm-label="Prepare removal plan"
+      tone="danger"
+      :busy="deleteBusy"
+      @confirm="confirmDelete"
+      @close="closeDelete"
+    >
+      <p>
+        Deleting <strong class="font-semibold text-ink">{{ deleteTarget?.name }}</strong> prepares a removal plan for its cron
+        entry and wrapper script. Nothing is removed from the host until you review and apply that plan.
+      </p>
+      <AppAlert v-if="deleteError" tone="danger" class="mt-3">{{ deleteError }}</AppAlert>
+    </AppConfirmDialog>
   </section>
 </template>

@@ -8,10 +8,12 @@ import {
   AppAlert,
   AppButton,
   AppCard,
+  AppConfirmDialog,
   AppTextarea,
   EmptyState,
   FactList,
   FormField,
+  JobFailureNotice,
   JobProgress,
   StatusPill,
   PageHeader,
@@ -24,36 +26,64 @@ const desiredContent = ref('managed=true\n')
 const plan = ref<OperationPlan>()
 const applied = ref(false)
 const planning = ref(false)
+const planError = ref('')
+const confirmRollbackOpen = ref(false)
 
 const runner = useJobRunner()
 
+// Spread-bound so the optional props are omitted (not passed as undefined),
+// which exactOptionalPropertyTypes requires.
+const runnerJobLink = computed(() => (runner.jobId.value === undefined ? {} : { jobId: runner.jobId.value }))
+const runnerTiming = computed(() => (runner.startedAtMs.value === undefined ? {} : { startedAtMs: runner.startedAtMs.value }))
+
 const observationQuery = useQuery({ queryKey: ['node', 'probe'], queryFn: observeProbe, retry: false })
 const current = computed(() => observationQuery.data.value)
+
+function capitalize(value: string): string {
+  return (value[0]?.toUpperCase() ?? '') + value.slice(1)
+}
 
 function shortDigest(value?: string): string {
   return value ? `${value.slice(0, 12)}…` : 'Not present'
 }
 
+const planTitle = computed(() => {
+  const currentPlan = plan.value
+  if (!currentPlan) return ''
+  return currentPlan.action === 'none' ? 'No changes required' : `${capitalize(currentPlan.action)} managed probe`
+})
+
 const planFacts = computed(() =>
   plan.value
     ? [
-        { label: 'Fixed target', value: plan.value.target, mono: true },
-        { label: 'Before', value: shortDigest(plan.value.before.digest) },
-        { label: 'Desired', value: shortDigest(plan.value.desired.digest) },
+        { label: 'Plan kind', value: plan.value.kind, mono: true },
+        { label: 'Target path', value: plan.value.target, mono: true },
+        { label: 'Action', value: capitalize(plan.value.action) },
         { label: 'Expires', value: formatTime(plan.value.expiresAt) },
       ]
     : [],
 )
 
+/** Before/desired snapshots labeled by state, with digests demoted to secondary mono text. */
+const snapshotEntries = computed(() => {
+  const currentPlan = plan.value
+  if (!currentPlan) return []
+  return [
+    { label: 'Before', state: currentPlan.before.exists ? 'File present' : 'File absent', digest: currentPlan.before.digest },
+    { label: 'Desired', state: currentPlan.desired.exists ? 'File present' : 'File absent', digest: currentPlan.desired.digest },
+  ]
+})
+
 async function createPlan() {
   planning.value = true
+  planError.value = ''
   runner.error.value = ''
   runner.progress.value = undefined
   applied.value = false
   try {
     plan.value = await planProbe(desiredPresent.value ? { present: true, content: desiredContent.value } : { present: false })
   } catch (caught) {
-    runner.error.value = caught instanceof Error ? caught.message : 'The operation could not be planned.'
+    planError.value = caught instanceof Error ? caught.message : 'The operation could not be planned.'
   } finally {
     planning.value = false
   }
@@ -68,8 +98,13 @@ async function queueOperation(rollback: boolean) {
       if (rollback && event.state === 'succeeded') plan.value = undefined
       await observationQuery.refetch()
     },
-    failureMessage: 'The node operation failed. Check the Jobs page for the durable failure record.',
+    failureMessage: 'The node operation failed.',
   })
+}
+
+function confirmRollback() {
+  confirmRollbackOpen.value = false
+  void queueOperation(true)
 }
 </script>
 
@@ -123,18 +158,36 @@ async function queueOperation(rollback: boolean) {
           >
             Preview plan
           </AppButton>
+
+          <AppAlert v-if="planError" tone="danger">{{ planError }}</AppAlert>
         </div>
       </AppCard>
 
-      <AppCard v-if="plan" :eyebrow="`Plan ${plan.id.slice(0, 8)}`" :title="plan.action === 'none' ? 'No changes required' : `${plan.action} managed probe`" class="capitalize-first">
+      <AppCard v-if="plan" :eyebrow="`Plan ${plan.id.slice(0, 8)}`" :title="planTitle">
         <template #actions>
           <StatusPill :tone="plan.changed ? 'warning' : 'success'" :label="plan.changed ? 'Review required' : 'In sync'" />
         </template>
 
         <div class="space-y-4">
           <FactList :facts="planFacts" />
-          <JobProgress v-if="runner.progress.value" :event="runner.progress.value" />
-          <AppAlert v-if="runner.error.value" tone="danger">{{ runner.error.value }}</AppAlert>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div v-for="entry in snapshotEntries" :key="entry.label" class="rounded-xl border border-outline bg-canvas/40 px-4 py-3">
+              <span class="block text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">{{ entry.label }}</span>
+              <strong class="mt-0.5 block text-sm font-semibold text-ink">{{ entry.state }}</strong>
+              <code v-if="entry.digest" class="mt-1 block truncate font-mono text-[11px] text-ink-muted" :title="entry.digest">
+                {{ entry.digest }}
+              </code>
+            </div>
+          </div>
+
+          <JobProgress
+            v-if="runner.progress.value"
+            :event="runner.progress.value"
+            :messages="runner.messages.value"
+            v-bind="runnerTiming"
+          />
+          <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="runnerJobLink" />
 
           <div class="flex flex-wrap gap-2">
             <AppButton
@@ -146,8 +199,14 @@ async function queueOperation(rollback: boolean) {
             >
               Approve and apply
             </AppButton>
-            <AppButton v-else variant="danger" icon="rotate-ccw" :loading="runner.busy.value" @click="queueOperation(true)">
-              Rollback this plan
+            <AppButton
+              v-else
+              variant="danger"
+              icon="rotate-ccw"
+              :loading="runner.busy.value"
+              @click="confirmRollbackOpen = true"
+            >
+              Roll back this plan
             </AppButton>
           </div>
         </div>
@@ -161,5 +220,17 @@ async function queueOperation(rollback: boolean) {
         />
       </AppCard>
     </div>
+
+    <AppConfirmDialog
+      :open="confirmRollbackOpen"
+      title="Roll back this plan"
+      confirm-label="Roll back"
+      :busy="runner.busy.value"
+      @confirm="confirmRollback"
+      @close="confirmRollbackOpen = false"
+    >
+      The probe file returns to the state captured before this plan was applied
+      ({{ plan?.before.exists ? 'file present' : 'file absent' }}). A new job records the change.
+    </AppConfirmDialog>
   </section>
 </template>

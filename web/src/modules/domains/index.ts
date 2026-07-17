@@ -4,7 +4,7 @@ export const domainsModule: FeatureModule = {
   id: 'domains',
   name: 'Domains',
   description: 'Hostnames, DNS preflight, aliases, subdomains, and redirects.',
-  navigation: { label: 'Domains', to: '/domains', icon: 'globe', group: 'Web hosting', order: 21 },
+  navigation: { label: 'Domains', to: '/domains', icon: 'globe', group: 'Web hosting', order: 11 },
   routes: [
     {
       path: '/domains',

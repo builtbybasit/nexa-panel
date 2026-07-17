@@ -1118,6 +1118,188 @@ Current implementation progress:
 **Exit:** a developer role can manage only its assigned site and cannot escape
 the site's filesystem or execute a scheduled task as root.
 
+### Milestone 6.5: UI/UX uplift (frontend only)
+
+Every module is functional but the panel does not yet feel easy to use next to
+mature panels such as FastPanel: modules are silos with no cross-links, lists
+have no search or state honesty, creation forms dominate pages, the mandatory
+plan-approval step renders off-screen, and failures point at a Jobs page that
+cannot show the failure. This milestone is Vue-only work over existing
+endpoints — no new backend modules. Items marked **needs-API** require a small
+additive endpoint or query parameter and must be confirmed before scheduling.
+
+Benchmark: FastPanel's documented UX (kb.fastpanel.direct) — site-centric
+navigation, one-mandatory-field creation with generated defaults, per-site
+hub ("site card"), ambient health stats, credentials handed off explicitly,
+and plain task language throughout.
+
+Sequencing: A first (four later workstreams depend on the dialog primitive),
+then B–D in any order; E items are independent one-offs.
+
+#### 6.5.A Shared primitives
+
+- `AppDialog` on native `<dialog>` (Escape, focus trap, scroll lock,
+  autofocus); the missing primitive behind list-first forms, plan review,
+  confirmations, and the Files destination picker.
+- `AppConfirmDialog`: consequence-naming copy, danger tone, optional
+  type-to-confirm (reuse the FilesView pattern).
+- `ToastHost` + `useToasts`, mounted once in `App.vue`; `useJobRunner` emits
+  terminal-state toasts so every module gets outcome feedback, including
+  after navigating away.
+- `SkeletonRow`/`SkeletonCard`, and a standard branch order in every list:
+  pending → skeletons; error → danger alert naming the resource with a Retry
+  button; only then empty state. An API outage must never render as "no
+  databases".
+- `ListToolbar` + `useCollection` composable: client-side search, filter,
+  sort, and pagination over already-fetched arrays.
+- `FormField` `error` prop (aria-describedby) plus invalid visual states on
+  `AppInput`/`AppSelect`/`AppTextarea`; map server 4xx validation into the
+  per-field slot.
+- `StatusPill` plain-language tooltips from a central status→explanation map
+  ("Plan ready — a reviewed change is waiting for your approval").
+- `PageHeader` breadcrumbs slot; optional `to` link props on `MetricCard`,
+  `FactList` items, and `ResourceRow` meta references.
+- `JobProgress`: accumulated step history with timestamps, elapsed-time
+  counter, `aria-live` announcements, and inline failure text with a job
+  link instead of only a red bar.
+
+#### 6.5.B Navigation and wayfinding
+
+- Per-site hub at `/sites/:siteId`: overview facts, domains and TLS cards via
+  the existing unused `listDomains(siteId)`/`listCertificates(siteId)`
+  filters, relocated plan/approve actions, and shortcut tiles to
+  `/files?site=`, `/logs?site=`, `/schedules?site=`. Site list rows navigate
+  here; this is the FastPanel "site card" equivalent and the milestone's
+  largest item.
+- Global command palette (Cmd/Ctrl+K + top-bar search button): navigation
+  destinations from the module registry plus cached inventories (sites,
+  domains, certificates, databases) fuzzy-filtered client-side.
+- Sidebar IA cleanup in module registrations: rename "Admin tools" to a
+  DB-client name users will hunt for, distinct icons for Logs vs Audit,
+  Overview ungrouped, groups mirroring what users own (Web hosting /
+  Databases / Server / Administration).
+- Wayfinding basics: per-route `document.title`, a real 404 view instead of
+  the silent catch-all redirect, and TopBar stops duplicating the page title
+  (freeing space for search, jobs indicator, and quick stats).
+- URL-addressable selection everywhere: `?selected=` on Domains,
+  Certificates, and database views (row highlight + `aria-current` +
+  scroll-into-view), `?path=` in Files so refresh/back keep the working
+  directory.
+
+#### 6.5.C Task flows
+
+- List-first layout: move every permanent create form into an `AppDialog`
+  behind a primary "Create" button in `PageHeader` and empty-state actions;
+  inventories become the first page content. Support `?create=1` deep links.
+- `PlanReviewDialog` anchored to the triggering action (generalize the
+  SchedulesView `openPlan` pattern): `PlanSteps` + facts + warnings + expiry
+  countdown, Approve disabled after expiry with a "Regenerate plan" action,
+  and a "Review" button on every `plan_ready` resource row (including
+  grants) so abandoned plans are always recoverable. Decision: no
+  auto-apply-after-planning checkbox — it bypasses the reviewed-plan
+  security model.
+- Inline validation before the job round-trip: auto-derive the site slug
+  from the display name (editable, live pattern feedback), duplicate
+  hostname checks against loaded inventory, naming-rule hints on every
+  pattern-constrained field.
+- Human-readable cron: client-side parse/describe with next-3-runs preview
+  and real pre-submit errors; presets for every 5/15/30 minutes and twice
+  daily; schedule column shows the sentence with the raw expression in a
+  tooltip.
+- Cross-links and next steps: site facts link to Files/Logs, certificate
+  and database references link to their owners, and a success panel after
+  activation offers "Upload files / Add hostname / Enable HTTPS / View
+  logs"; Certificates and Domains read `?site=` to preselect.
+- Files: bulk toolbar for the existing selection (delete, move, archive), a
+  "Browse…" directory-picker dialog for every destination input, drag-and-
+  drop upload, and in-directory name filter plus column sort.
+- Users: render the developer site-scoping checklist in the create dialog
+  (it exists only in edit today), add filter + select-all, list granted
+  slugs in the table; add a password generator button with visibility
+  toggle (also on database role/account forms); explain each role inline at
+  the point of selection.
+- Copy pass replacing implementation jargon with task language: "Attach
+  hostname" → "Add domain", "durable failure record" → plain words, explain
+  the plan-first model once in context; consequence microcopy on toggles
+  and destructive buttons.
+- Stretch: guided "New site" flow chaining the site → domain → certificate
+  dialogs over existing endpoints, FastPanel-wizard style.
+
+#### 6.5.D Feedback, status, and trust
+
+- Failure diagnosability: `/jobs?job=<id>` deep links; Jobs rows expandable
+  (request summary, duration, result, failure in a danger alert) with
+  auto-expand + highlight from the query param; a shared `JobFailureNotice`
+  ("View job #N →") replacing every plain-text "Open Jobs" string; failed
+  resource rows render their stored `failure` and `lastJobId` link. Jobs
+  gains state/kind filters over the fetched page (full-history queries are
+  **needs-API**: server-side filter params beyond the 50-job window).
+- Persistent top-bar jobs indicator: spinner + count while anything is
+  queued/running, popover listing active jobs with live progress, rows
+  linking to `/jobs?job=`.
+- Certificates: absolute issued/expires facts with warning/danger tones,
+  SAN list, default sort by soonest expiry, Overview TLS card links to the
+  filtered view; per-hostname DNS preflight rows ("no records" verdict +
+  "add an A record" hint) instead of "DNS checked: 3 hostnames" (a positive
+  "points at this server" verdict is **needs-API**: node public IP).
+- Confirmation gates via `AppConfirmDialog`: site rollback, credential
+  rotate, restore approve (type the database name), certificate revoke,
+  node-operation rollback.
+- Credential handoff: confirm before consuming the one-time reveal, the
+  revealed card names its account and connection facts, "Download .txt"
+  action, visible copy failure with text auto-selected; recovery codes get
+  the same download + explicit "I saved these" confirm.
+- Ambient honesty: the sidebar node dot binds to the system query (green /
+  warnings-amber / unreachable-rose with last-check tooltip), the
+  "Development" badge derives from build mode, and the top bar gains a
+  memory micro-gauge linking to `/system` (add the missing amber band to
+  `ProgressBar`).
+- Empty states that teach: every `EmptyState` uses its action slot ("Create
+  a site →"), `AppSelect` gains an `emptyMessage` explaining how to fill it,
+  disabled launch buttons say why.
+- Audit legibility: severity tones by action pattern (danger for deletes,
+  revokes, failed logins), actor UUIDs resolved to usernames client-side
+  from `listUsers` for admins, subject expansion, render the metadata field.
+- Scope the mutation busy-lock in database views to the affected form
+  instead of disabling every button on the page.
+
+#### 6.5.E Independent fixes
+
+- `FileEditorDialog`: dirty-state guard on close, Cmd/Ctrl+S saves, save
+  without closing.
+- MySQL restore points: render the existing `verifiedAt` timestamp — a
+  restore choice currently shows no dates.
+- `AuthGate`: a way back to login from the MFA challenge/enrollment phases,
+  autofocus + numeric TOTP input handling, retry on enrollment failure.
+- TopBar user menu: session/role info and MFA status behind the avatar,
+  sign-out moved inside (self-service password change and MFA reset are
+  **needs-API**).
+- Mobile drawer accessibility: Escape close, focus trap, `aria-expanded`,
+  body scroll lock.
+- Admin tools launch opens in a new tab instead of replacing the panel.
+- Logs: keep the buffer when toggling filters while following, in-buffer
+  search with match highlighting, a visible marker when the 5000-line trim
+  drops output.
+- ACME email defaults to the last-used value.
+- Operations plan review: label artifacts beyond truncated hashes and fix
+  the undefined `capitalize-first` class.
+
+Deferred as backend-gated, acknowledged so their absence is a decision:
+resource deletion lifecycle (sites, domains, databases, roles, grants),
+self-service password change and MFA reset, a services start/restart table,
+per-site log rotation settings, login-as-user impersonation, temporary
+pre-DNS preview links, site enable/disable toggle, disk/CPU/load metrics
+with interpretation bands, backups UI (Milestone 7), firewall, email, and
+one-click application installs.
+
+**Exit:** creating a site through the dialog flow ends with the plan review
+in view and no resource can strand in `plan_ready` without a visible Review
+affordance; every failure surface links to the failing job's detail; an API
+outage renders as an error with retry, never as an empty inventory; every
+destructive action names its consequence and requires confirmation; and any
+managed resource is reachable from anywhere in two interactions via the
+command palette or the site hub.
+
 ### Milestone 7: Remote backups and restores
 
 - Restic repository lifecycle.
