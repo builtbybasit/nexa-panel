@@ -1,24 +1,14 @@
 <script setup lang="ts">
+import { Icon } from '@iconify/vue'
 import { computed } from 'vue'
 
-import { iconPaths } from './icons'
+import { lucideName } from './icons'
 
 const props = withDefaults(defineProps<{ name: string; size?: number }>(), { size: 16 })
 
-const markup = computed(() => iconPaths[props.name] ?? iconPaths.info)
+const icon = computed(() => lucideName(props.name))
 </script>
 
 <template>
-  <svg
-    :width="size"
-    :height="size"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="1.75"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    aria-hidden="true"
-    v-html="markup"
-  />
+  <Icon :icon="icon" :width="size" :height="size" aria-hidden="true" />
 </template>

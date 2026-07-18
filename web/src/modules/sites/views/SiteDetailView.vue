@@ -14,15 +14,13 @@ import {
   AppConfirmDialog,
   AppIcon,
   EmptyState,
-  FactList,
+  FeatureTile,
   JobFailureNotice,
   JobProgress,
-  MetricCard,
   PageHeader,
   ResourceRow,
   SkeletonRow,
   StatusPill,
-  type Fact,
 } from '@/shared/ui'
 
 import { activateSite, getSitePlan, listSites, prepareSitePlan, rollbackSite, type SitePlan } from '../api'
@@ -61,42 +59,61 @@ const artifactLabels: Record<string, string> = {
   'nginx-site': 'Nginx site',
 }
 
-const facts = computed<Fact[]>(() => {
+const createdAtText = computed(() => (site.value ? formatDateTime(site.value.createdAt) : ''))
+
+interface HeroFact {
+  icon: string
+  label: string
+  value: string
+  mono?: boolean
+  to?: string
+}
+
+const heroFacts = computed<HeroFact[]>(() => {
   const current = site.value
   if (!current) return []
   return [
-    { label: 'Primary domain', value: current.primaryDomain, mono: true },
-    { label: 'Runtime', value: `PHP ${current.phpVersion}` },
-    { label: 'Unix owner', value: current.unixUser, mono: true },
-    { label: 'Site root', value: current.rootPath, mono: true, to: `/files?site=${current.id}` },
-    { label: 'FPM socket', value: current.socketPath, mono: true },
-    { label: 'Logs', value: 'View site logs', to: `/logs?site=${current.id}` },
+    { icon: 'user', label: 'Site user', value: current.unixUser, mono: true },
+    { icon: 'folder', label: 'Root directory', value: current.rootPath, mono: true, to: `/files?site=${current.id}` },
+    { icon: 'plug', label: 'FPM socket', value: current.socketPath, mono: true },
+    { icon: 'globe', label: 'Primary domain', value: current.primaryDomain, mono: true },
+    { icon: 'file-code-2', label: 'Runtime', value: `PHP ${current.phpVersion} · PHP-FPM + Nginx` },
+    { icon: 'clock', label: 'Created', value: createdAtText.value },
   ]
 })
 
-const shortcuts = computed(() => [
-  {
-    label: 'Files',
-    value: 'Browse files',
-    detail: 'Upload and manage everything under the site root',
-    icon: 'folder',
-    to: `/files?site=${siteId.value}`,
-  },
-  {
-    label: 'Logs',
-    value: 'View logs',
-    detail: 'Follow the access and error logs',
-    icon: 'file-text',
-    to: `/logs?site=${siteId.value}`,
-  },
-  {
-    label: 'Scheduled tasks',
-    value: 'Manage tasks',
-    detail: 'Commands that run on a schedule for this site',
-    icon: 'clock',
-    to: `/schedules?site=${siteId.value}`,
-  },
-])
+interface ManageTile {
+  label: string
+  icon: string
+  to?: string
+  soon?: boolean
+  tone?: 'default' | 'danger'
+}
+
+// "Site managing" launchers — working links first, "Soon" placeholders next,
+// destructive actions last. Ids resolve through siteId so the routes point at
+// this site.
+const tiles = computed<ManageTile[]>(() => {
+  const id = siteId.value
+  return [
+    { label: 'Files', icon: 'folder', to: `/files?site=${id}` },
+    { label: 'Databases', icon: 'database', to: '/databases' },
+    { label: 'Domains (DNS)', icon: 'globe', to: `/domains?site=${id}` },
+    { label: 'SSL certificates', icon: 'lock', to: `/certificates?site=${id}` },
+    { label: 'Scheduler', icon: 'clock', to: `/schedules?site=${id}` },
+    { label: 'Logs', icon: 'file-text', to: `/logs?site=${id}` },
+    { label: 'Subdomains', icon: 'network', to: `/domains?site=${id}` },
+    { label: 'Mail', icon: 'mail', soon: true },
+    { label: 'Backup copies', icon: 'archive', soon: true },
+    { label: 'PHP settings', icon: 'file-code-2', soon: true },
+    { label: 'Terminal', icon: 'terminal', soon: true },
+    { label: 'Scanning', icon: 'scan', soon: true },
+    { label: 'Manual settings', icon: 'settings-2', soon: true },
+    { label: 'Site access', icon: 'key-round', soon: true },
+    { label: 'Disable website', icon: 'power', soon: true },
+    { label: 'Delete website', icon: 'trash', soon: true, tone: 'danger' },
+  ]
+})
 
 const nextSteps = computed(() => [
   { label: 'Upload files', icon: 'upload', to: `/files?site=${siteId.value}` },
@@ -357,9 +374,41 @@ watch(siteId, () => {
       <JobFailureNotice v-else-if="runner.error.value" :message="runner.error.value" v-bind="runnerFailureLink" />
       <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="progressExtras" />
 
-      <AppCard eyebrow="Overview">
-        <FactList :facts="facts" />
-      </AppCard>
+      <div class="rounded-2xl border border-outline bg-surface/80 p-5 sm:p-6">
+        <div class="flex items-center gap-3.5">
+          <div
+            class="grid size-12 shrink-0 place-items-center rounded-xl border border-accent-400/20 bg-gradient-to-br from-accent-500/25 to-accent-500/[0.06] text-lg font-bold text-accent-200"
+          >
+            {{ site.displayName.charAt(0).toUpperCase() || '·' }}
+          </div>
+          <div class="min-w-0">
+            <p class="truncate text-[15px] font-semibold text-ink">{{ site.displayName }}</p>
+            <p class="truncate font-mono text-xs text-accent-200">{{ site.primaryDomain }}</p>
+          </div>
+        </div>
+        <dl class="mt-5 grid gap-x-6 gap-y-4 border-t border-outline pt-5 sm:grid-cols-2 lg:grid-cols-3">
+          <div v-for="fact in heroFacts" :key="fact.label" class="flex min-w-0 items-start gap-2.5">
+            <span
+              class="mt-px grid size-7 shrink-0 place-items-center rounded-lg border border-outline bg-white/[0.02] text-ink-muted"
+            >
+              <AppIcon :name="fact.icon" :size="14" />
+            </span>
+            <div class="min-w-0">
+              <dt class="text-[10px] font-bold tracking-[0.1em] text-ink-muted uppercase">{{ fact.label }}</dt>
+              <dd class="mt-0.5 truncate" :class="fact.mono ? 'font-mono text-xs text-accent-200' : 'text-[13px] text-ink'" :title="fact.value">
+                <RouterLink
+                  v-if="fact.to"
+                  :to="fact.to"
+                  class="underline-offset-2 transition-colors hover:text-accent-100 hover:underline"
+                >
+                  {{ fact.value }}
+                </RouterLink>
+                <template v-else>{{ fact.value }}</template>
+              </dd>
+            </div>
+          </div>
+        </dl>
+      </div>
 
       <section ref="planSection" tabindex="-1" class="scroll-mt-6 focus:outline-none" aria-label="Configuration plan">
         <!-- Plan ready: review and approve -->
@@ -472,6 +521,12 @@ watch(siteId, () => {
         </AppCard>
       </section>
 
+      <AppCard eyebrow="Manage" title="Site managing">
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <FeatureTile v-for="tile in tiles" :key="tile.label" v-bind="tile" />
+        </div>
+      </AppCard>
+
       <div class="grid items-start gap-4 lg:grid-cols-2">
         <AppCard eyebrow="Routing" title="Domains">
           <template #actions>
@@ -552,18 +607,6 @@ watch(siteId, () => {
             </div>
           </div>
         </AppCard>
-      </div>
-
-      <div class="grid gap-4 sm:grid-cols-3">
-        <MetricCard
-          v-for="shortcut in shortcuts"
-          :key="shortcut.to"
-          :label="shortcut.label"
-          :value="shortcut.value"
-          :detail="shortcut.detail"
-          :icon="shortcut.icon"
-          :to="shortcut.to"
-        />
       </div>
 
       <AppConfirmDialog

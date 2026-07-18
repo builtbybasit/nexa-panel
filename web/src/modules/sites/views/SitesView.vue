@@ -1,22 +1,17 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { computed, nextTick, ref, watch, type ComponentPublicInstance } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 
 import { useCollection } from '@/shared/composables/useCollection'
-import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { humanize } from '@/shared/formatters'
 import {
   AppAlert,
   AppButton,
   AppCard,
-  AppDialog,
-  AppInput,
+  AppIcon,
   AppSelect,
   EmptyState,
-  FormField,
-  JobFailureNotice,
-  JobProgress,
   ListToolbar,
   PageHeader,
   ResourceRow,
@@ -24,16 +19,12 @@ import {
   StatusPill,
 } from '@/shared/ui'
 
-import { createSite, listRuntimes, listSites, type Site, type SiteStatus } from '../api'
+import { listSites, type SiteStatus } from '../api'
 
-const route = useRoute()
 const router = useRouter()
-const runner = useJobRunner()
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
-const runtimesQuery = useQuery({ queryKey: ['runtimes'], queryFn: listRuntimes, retry: false })
 const sites = computed(() => sitesQuery.data.value ?? [])
-const runtimes = computed(() => runtimesQuery.data.value ?? [])
 
 const siteStatuses: SiteStatus[] = ['draft', 'planning', 'plan_ready', 'activating', 'active', 'rolling_back', 'rolled_back', 'failed']
 const statusFilter = ref<SiteStatus | ''>('')
@@ -46,123 +37,8 @@ const { search, page, pageCount, items, matching } = useCollection(() => filtere
   searchText: (site) => `${site.displayName} ${site.primaryDomain} ${site.slug}`,
 })
 
-// --- Create dialog ---------------------------------------------------------
-
-const createOpen = computed(() => route.query.create === '1')
-
-const displayName = ref('')
-const slug = ref('')
-const slugLocked = ref(true)
-const primaryDomain = ref('')
-const phpVersion = ref('')
-const slugError = ref('')
-const domainError = ref('')
-const slugField = ref<ComponentPublicInstance>()
-const createdSite = ref<Site>()
-
-const SLUG_PATTERN = /^[a-z][a-z0-9-]{1,31}$/
-
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 32)
-}
-
-watch(displayName, (name) => {
-  if (slugLocked.value) slug.value = slugify(name)
-})
-watch(slug, () => {
-  slugError.value = ''
-})
-watch(primaryDomain, () => {
-  domainError.value = ''
-})
-// A fresh open never shows a previous attempt's failed progress or values.
-watch(createOpen, (open) => {
-  if (open && !runner.busy.value) {
-    runner.error.value = ''
-    runner.progress.value = undefined
-    resetForm()
-  }
-})
-
-function unlockSlug() {
-  slugLocked.value = false
-  void nextTick(() => (slugField.value?.$el as HTMLInputElement | undefined)?.focus())
-}
-
 function openCreate() {
-  void router.replace({ query: { ...route.query, create: '1' } })
-}
-
-function closeCreate() {
-  const { create: _create, ...rest } = route.query
-  void router.replace({ query: rest })
-}
-
-function resetForm() {
-  displayName.value = ''
-  slug.value = ''
-  slugLocked.value = true
-  primaryDomain.value = ''
-  phpVersion.value = ''
-  slugError.value = ''
-  domainError.value = ''
-}
-
-function validate(): boolean {
-  const candidateSlug = slug.value.trim()
-  const candidateDomain = primaryDomain.value.trim().toLowerCase()
-  slugError.value = ''
-  domainError.value = ''
-  if (!SLUG_PATTERN.test(candidateSlug)) {
-    slugError.value = 'Use 2–32 lowercase letters, digits, or hyphens, starting with a letter.'
-  } else if (sites.value.some((site) => site.slug === candidateSlug)) {
-    slugError.value = 'Another site already uses this slug. Choose a different one.'
-  }
-  if (sites.value.some((site) => site.primaryDomain.toLowerCase() === candidateDomain)) {
-    domainError.value = 'Another site already uses this domain.'
-  }
-  return !slugError.value && !domainError.value
-}
-
-// exactOptionalPropertyTypes: only bind optional props when a value exists.
-const failureLink = computed(() =>
-  runner.progress.value?.state === 'failed' && runner.jobId.value !== undefined ? { jobId: runner.jobId.value } : {},
-)
-const progressExtras = computed(() => ({
-  messages: runner.messages.value,
-  ...(runner.startedAtMs.value !== undefined ? { startedAtMs: runner.startedAtMs.value } : {}),
-}))
-
-async function submit() {
-  if (runner.busy.value || !validate()) return
-  await runner.run(
-    async () => {
-      const result = await createSite({
-        displayName: displayName.value.trim(),
-        slug: slug.value.trim(),
-        primaryDomain: primaryDomain.value.trim(),
-        phpVersion: phpVersion.value,
-      })
-      createdSite.value = result.site
-      await sitesQuery.refetch()
-      return result.job.id
-    },
-    {
-      onSettled: async () => {
-        await sitesQuery.refetch()
-      },
-      onSuccess: () => {
-        const created = createdSite.value
-        resetForm()
-        if (created) void router.push(`/sites/${created.id}`)
-      },
-      failureMessage: 'Site planning failed',
-    },
-  )
+  void router.push('/sites/new')
 }
 </script>
 
@@ -218,7 +94,16 @@ async function submit() {
           description="Try a different search or status filter."
         />
         <template v-else>
-          <div class="space-y-1">
+          <div class="grid gap-2 sm:grid-cols-2">
+            <!-- FastPanel-style dashed launcher sits alongside the site cards. -->
+            <button
+              type="button"
+              class="flex min-h-[68px] items-center justify-center gap-2 rounded-xl border border-dashed border-outline-strong text-[13px] font-medium text-ink-secondary transition-colors hover:border-accent-400/40 hover:bg-white/[0.03] hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400"
+              @click="openCreate"
+            >
+              <AppIcon name="plus" :size="16" />
+              Create site
+            </button>
             <RouterLink
               v-for="site in items"
               :key="site.id"
@@ -229,7 +114,7 @@ async function submit() {
                 :title="site.displayName"
                 :subtitle="site.primaryDomain"
                 :avatar="site.displayName.slice(0, 1).toUpperCase()"
-                class="hover:border-outline hover:bg-white/[0.03]"
+                class="h-full hover:border-outline hover:bg-white/[0.03]"
               >
                 <template #meta>
                   <span
@@ -255,80 +140,5 @@ async function submit() {
         </template>
       </div>
     </AppCard>
-
-    <AppDialog :open="createOpen" title="Create site" @close="closeCreate">
-      <form id="create-site-form" class="space-y-4" @submit.prevent="submit">
-        <AppAlert v-if="runtimesQuery.isSuccess.value && runtimes.length === 0" tone="warning">
-          No installed PHP runtime was found under <code class="font-mono">/etc/php</code>. Install and enable one before
-          creating a site.
-        </AppAlert>
-        <AppAlert v-if="runtimesQuery.isError.value" tone="danger">
-          PHP runtimes could not be loaded.
-          <AppButton size="sm" class="mt-2" @click="runtimesQuery.refetch()">Retry</AppButton>
-        </AppAlert>
-
-        <FormField label="Display name">
-          <AppInput v-model="displayName" maxlength="80" autocomplete="off" placeholder="Customer portal" required />
-        </FormField>
-        <FormField
-          label="Slug"
-          :error="slugError"
-          :hint="
-            slugLocked
-              ? 'Created from the display name. Names the Unix user and folders; cannot be changed later.'
-              : 'Lowercase letters, digits, and hyphens. Cannot be changed later.'
-          "
-        >
-          <div class="flex gap-2">
-            <AppInput
-              ref="slugField"
-              v-model="slug"
-              maxlength="32"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="customer-portal"
-              class="font-mono"
-              :readonly="slugLocked"
-              :invalid="Boolean(slugError)"
-              required
-            />
-            <AppButton v-if="slugLocked" icon="pencil" aria-label="Edit slug" @click="unlockSlug">Edit</AppButton>
-          </div>
-        </FormField>
-        <FormField label="Primary domain" :error="domainError">
-          <AppInput
-            v-model="primaryDomain"
-            maxlength="253"
-            autocomplete="url"
-            placeholder="portal.example.com"
-            :invalid="Boolean(domainError)"
-            required
-          />
-        </FormField>
-        <FormField label="PHP version">
-          <AppSelect v-model="phpVersion" empty-message="No PHP runtime found" required>
-            <option disabled value="">Select a PHP version</option>
-            <option v-for="runtime in runtimes" :key="runtime.version" :value="runtime.version">
-              PHP {{ runtime.version }}{{ runtime.supportStatus === 'end_of_life_allowed' ? ' — no longer supported' : '' }}
-            </option>
-          </AppSelect>
-        </FormField>
-
-        <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="failureLink" />
-        <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="progressExtras" />
-      </form>
-      <template #footer>
-        <AppButton :disabled="runner.busy.value" @click="closeCreate">Cancel</AppButton>
-        <AppButton
-          form="create-site-form"
-          type="submit"
-          variant="primary"
-          :loading="runner.busy.value"
-          :disabled="runtimes.length === 0"
-        >
-          Create site
-        </AppButton>
-      </template>
-    </AppDialog>
   </section>
 </template>

@@ -11,6 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@iconify-json/lucide": "^1.2.117",
+    "@iconify/vue": "^5.0.1",
     "@tanstack/vue-query": "^5.83.0",
     "clsx": "^2.1.1",
     "pinia": "^3.0.3",

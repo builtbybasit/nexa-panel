@@ -13,6 +13,12 @@ export const sitesModule: FeatureModule = {
       meta: { moduleId: 'sites' },
     },
     {
+      path: '/sites/new',
+      name: 'site-create',
+      component: () => import('./views/SiteCreateView.vue'),
+      meta: { moduleId: 'sites' },
+    },
+    {
       path: '/sites/:siteId',
       name: 'site-detail',
       component: () => import('./views/SiteDetailView.vue'),
