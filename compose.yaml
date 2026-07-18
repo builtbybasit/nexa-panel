@@ -3,14 +3,20 @@
 # PID 1, so it needs a privileged, cgroup-mounted setup — this is a test node,
 # not a production deployment.
 #
-# /usr/bin/nexa is bind-mounted from dist/nexa-linux-amd64 (built by
-# scripts/build-linux-release.sh), not baked into the image, so after the
-# first build, iterating on the binary is just:
+# /usr/bin/nexa is bind-mounted from a release binary in dist/ (built by
+# scripts/build-linux-release.sh), NOT baked into the image. $NEXA_BIN selects
+# which one — set it in the gitignored .env to match the HOST arch. Apple Silicon
+# is arm64, which is what build-linux-release.sh and the mount default below use.
 #
-#   bash scripts/build-linux-release.sh amd64 && docker compose restart nexa-node
+# Build the SAME arch you run, then RESTART so the process re-execs the new
+# binary. `up --build` only rebuilds the IMAGE (which does not contain the
+# binary), so on its own it will NOT pick up a rebuilt binary:
 #
-# On an arm64 host, point at the arm64 binary instead:
-#   NEXA_BIN=./dist/nexa-linux-arm64 docker compose up -d
+#   bash scripts/build-linux-release.sh && docker compose restart nexa-node   # arm64 (default)
+#
+# On an amd64 host, build amd64 and point the mount at it:
+#   bash scripts/build-linux-release.sh amd64
+#   NEXA_BIN=./dist/nexa-linux-amd64 docker compose restart nexa-node
 #
 #   docker compose up --build -d      # build image + start (first run)
 #   docker compose logs -f            # follow systemd/service logs
@@ -38,7 +44,9 @@ services:
       - "8080:8080"
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
-      - ${NEXA_BIN:-./dist/nexa-linux-amd64}:/usr/bin/nexa:ro
+      # Default matches the host (Apple Silicon = arm64) and the gitignored .env;
+      # amd64 hosts override with NEXA_BIN=./dist/nexa-linux-amd64.
+      - ${NEXA_BIN:-./dist/nexa-linux-arm64}:/usr/bin/nexa:ro
     tmpfs:
       - /run
       - /run/lock

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ARCH="${1:-amd64}"
+ARCH="${1:-arm64}"
 VERSION="${VERSION:-0.1.0-dev}"
 COMMIT="${COMMIT:-unknown}"
 BUILT_AT="${BUILT_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
