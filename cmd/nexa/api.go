@@ -46,6 +46,8 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/adapters/podman"
 	"github.com/nexa-panel/nexa-panel/internal/modules/admintools"
 	"github.com/nexa-panel/nexa-panel/internal/modules/applications"
+	"github.com/nexa-panel/nexa-panel/internal/modules/backups"
+	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/files"
@@ -169,6 +171,18 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize applications module: %w", err)
 	}
+	backupsModule, err := backups.New(setupCtx, backups.Dependencies{
+		Database: database, Jobs: jobsModule, Cipher: secretBox,
+		Operator:    backupoperator.NewUnixClient(*agentSocket, *agentToken),
+		Sites:       siteBackupResolver{sites: sitesModule},
+		Postgres:    postgresBackupResolver{postgres: postgresDatabasesModule},
+		Mysql:       mysqlBackupResolver{mysql: mysqlDatabasesModule},
+		StateDBPath: *state,
+		Logger:      logger,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize backups module: %w", err)
+	}
 
 	jobsModule.Start(context.Background())
 	defer jobsModule.Close()
@@ -189,6 +203,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		logsModule,
 		schedulesModule,
 		applicationsModule,
+		backupsModule,
 		system.New(capacity.NewProcReader(), podman.NewInspector()),
 	}
 
@@ -231,4 +246,39 @@ func serveHTTP(server *http.Server, logger *slog.Logger) error {
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
 	}
+}
+
+// --- backups resolver adapters ---------------------------------------------
+// The backups module reads site and database details through narrow interfaces
+// so it need not import those modules. These composition-root adapters bridge
+// each module's own getter to the operator's target types.
+
+type siteBackupResolver struct{ sites *sites.Module }
+
+func (r siteBackupResolver) BackupSite(ctx context.Context, id string) (backupoperator.SiteTarget, error) {
+	site, err := r.sites.Get(ctx, id)
+	if err != nil {
+		return backupoperator.SiteTarget{}, err
+	}
+	return backupoperator.SiteTarget{Slug: site.Slug, RootPath: site.RootPath, UnixUser: site.UnixUser}, nil
+}
+
+type postgresBackupResolver struct{ postgres *postgres.Module }
+
+func (r postgresBackupResolver) BackupDatabase(ctx context.Context, id string) (backupoperator.DatabaseTarget, error) {
+	name, version, port, socket, err := r.postgres.BackupTarget(ctx, id)
+	if err != nil {
+		return backupoperator.DatabaseTarget{}, err
+	}
+	return backupoperator.DatabaseTarget{Engine: "postgres", Name: name, Version: version, Port: port, Socket: socket}, nil
+}
+
+type mysqlBackupResolver struct{ mysql *mysql.Module }
+
+func (r mysqlBackupResolver) BackupDatabase(ctx context.Context, id string) (backupoperator.DatabaseTarget, error) {
+	name, kind, socket, err := r.mysql.BackupTarget(ctx, id)
+	if err != nil {
+		return backupoperator.DatabaseTarget{}, err
+	}
+	return backupoperator.DatabaseTarget{Engine: kind, Name: name, Socket: socket}, nil
 }

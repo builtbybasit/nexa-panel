@@ -1,0 +1,252 @@
+backups_accounts:
+  get:
+    operationId: listBackupAccounts
+    tags:
+    - Backups
+    x-permission: backups.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Configured backup storage accounts (rclone remotes)
+  post:
+    operationId: createBackupAccount
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    responses:
+      '201':
+        description: The created backup account
+      '422':
+        description: Validation failed
+backups_accounts_id:
+  get:
+    operationId: getBackupAccount
+    tags:
+    - Backups
+    x-permission: backups.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: A single backup account
+      '404':
+        description: Not found
+  put:
+    operationId: updateBackupAccount
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: The updated backup account
+  delete:
+    operationId: deleteBackupAccount
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '204':
+        description: Deleted
+      '409':
+        description: The account is still used by a backup plan
+backups_accounts_id_test:
+  post:
+    operationId: testBackupAccount
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Connectivity result (ok plus a message); a failed connection is 200 with ok=false
+backups_plans:
+  get:
+    operationId: listBackupPlans
+    tags:
+    - Backups
+    x-permission: backups.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Backup plans
+  post:
+    operationId: createBackupPlan
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    responses:
+      '201':
+        description: The created backup plan
+      '422':
+        description: Validation failed
+backups_plans_id:
+  get:
+    operationId: getBackupPlan
+    tags:
+    - Backups
+    x-permission: backups.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: A single backup plan
+  put:
+    operationId: updateBackupPlan
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: The updated backup plan
+  delete:
+    operationId: deleteBackupPlan
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '204':
+        description: Deleted (its systemd timer is removed)
+backups_plans_id_toggle:
+  post:
+    operationId: toggleBackupPlan
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '204':
+        description: Enabled/disabled; the plan's timer is installed or removed to match
+backups_plans_id_run:
+  post:
+    operationId: runBackupPlan
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: A backup.run job was queued (Location header points at the job)
+backups_plans_id_copies:
+  get:
+    operationId: listBackupCopies
+    tags:
+    - Backups
+    x-permission: backups.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Stored copies for the plan, newest first
+backups_copies_copyId_restore:
+  post:
+    operationId: restoreBackupCopy
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: copyId
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: A backup.restore job was queued
+      '422':
+        description: A selected item is not part of the copy, or nothing was selected
+backups_copies_copyId:
+  delete:
+    operationId: deleteBackupCopy
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: copyId
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '204':
+        description: The copy was purged from storage and its record removed

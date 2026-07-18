@@ -142,3 +142,18 @@ func (m *Module) getDatabaseModel(ctx context.Context, id string) (databaseModel
 	err := m.database.NewSelect().Model(&model).Where("id = ?", id).Scan(ctx)
 	return model, err
 }
+
+// BackupTarget resolves a managed database to the connection details a logical
+// backup needs: its name and the owning instance's binary series, port, and
+// socket directory. Used by the backups module to dump a plan's databases.
+func (m *Module) BackupTarget(ctx context.Context, databaseID string) (name, version string, port int, socket string, err error) {
+	database, err := m.getDatabaseModel(ctx, databaseID)
+	if err != nil {
+		return "", "", 0, "", err
+	}
+	instance, err := m.getInstanceModel(ctx, database.InstanceID)
+	if err != nil {
+		return "", "", 0, "", err
+	}
+	return database.Name, instance.Version, instance.Port, instance.SocketPath, nil
+}

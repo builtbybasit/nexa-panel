@@ -27,6 +27,8 @@ import (
 
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 
+	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
+
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
 
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
@@ -87,10 +89,14 @@ func runAgent(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create schedules operator: %w", err)
 	}
+	backupOperator, err := backupoperator.NewHostOperator(nil)
+	if err != nil {
+		return fmt.Errorf("create backups operator: %w", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	server := agent.New(*socket, version.Version, token, operator, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator))
+	server := agent.New(*socket, version.Version, token, operator, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator))
 	return server.Serve(ctx)
 }

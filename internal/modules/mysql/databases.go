@@ -127,3 +127,18 @@ func (m *Module) getDatabaseModel(ctx context.Context, id string) (databaseModel
 	err := m.database.NewSelect().Model(&model).Where("id = ?", id).Scan(ctx)
 	return model, err
 }
+
+// BackupTarget resolves a managed database to the details a logical backup
+// needs: its name, the owning engine's kind ("mysql"/"mariadb"), and its socket
+// path. Used by the backups module to dump a plan's databases.
+func (m *Module) BackupTarget(ctx context.Context, databaseID string) (name, kind, socket string, err error) {
+	database, err := m.getDatabaseModel(ctx, databaseID)
+	if err != nil {
+		return "", "", "", err
+	}
+	engine := new(engineModel)
+	if err := m.database.NewSelect().Model(engine).Where("id = ?", database.EngineID).Scan(ctx); err != nil {
+		return "", "", "", err
+	}
+	return database.Name, engine.Kind, engine.SocketPath, nil
+}

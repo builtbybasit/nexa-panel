@@ -29,6 +29,8 @@ func run(args []string, logger *slog.Logger) error {
 		return runAPI(args[1:], logger)
 	case "agent":
 		return runAgent(args[1:], logger)
+	case "backup":
+		return runBackup(args[1:], logger)
 	case "doctor":
 		return runDoctor(logger)
 	case "version":

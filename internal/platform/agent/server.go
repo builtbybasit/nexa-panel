@@ -12,6 +12,8 @@ import (
 
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 
+	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
+
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
 
 	"crypto/subtle"
@@ -51,6 +53,7 @@ type Server struct {
 	files        filesoperator.Operator
 	logs         logsoperator.Operator
 	schedules    scheduleoperator.Operator
+	backups      backupoperator.Operator
 	logger       *slog.Logger
 }
 
@@ -149,6 +152,14 @@ func (s *Server) Serve(ctx context.Context) error {
 		mux.HandleFunc("POST /v1/schedules/rollback", s.scheduleRollbackHTTP)
 		mux.HandleFunc("POST /v1/schedules/run", s.scheduleRunHTTP)
 		mux.HandleFunc("POST /v1/schedules/runs", s.scheduleRunsHTTP)
+	}
+	if s.backups != nil {
+		mux.HandleFunc("POST /v1/backups/accounts/test", s.backupTestAccountHTTP)
+		mux.HandleFunc("POST /v1/backups/run", s.backupRunHTTP)
+		mux.HandleFunc("POST /v1/backups/restore", s.backupRestoreHTTP)
+		mux.HandleFunc("POST /v1/backups/copies/delete", s.backupDeleteCopyHTTP)
+		mux.HandleFunc("POST /v1/backups/schedules/install", s.backupInstallScheduleHTTP)
+		mux.HandleFunc("POST /v1/backups/schedules/remove", s.backupRemoveScheduleHTTP)
 	}
 	httpServer := &http.Server{
 		Handler:           s.authenticate(mux),

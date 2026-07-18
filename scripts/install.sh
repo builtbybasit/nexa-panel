@@ -69,6 +69,8 @@ apt-get install -y --no-install-recommends \
   nginx cron certbot \
   postgresql-common libjson-perl \
   passwd util-linux \
+  rclone \
+  podman \
   ca-certificates curl gnupg software-properties-common
 
 # --- package repositories ---------------------------------------------------
