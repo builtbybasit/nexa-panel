@@ -3,6 +3,8 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed'
 export interface Job {
   id: number
   kind: string
+  /** Human-readable summary set at submit time (e.g. "Install nginx"); may be empty. */
+  title?: string
   state: JobState
   progress: number
   actorUserId?: string

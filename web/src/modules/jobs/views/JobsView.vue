@@ -51,7 +51,7 @@ const filteredJobs = computed(() =>
 )
 
 const collection = useCollection(() => filteredJobs.value, {
-  searchText: (job) => `#${job.id} ${job.kind} ${formatJobKind(job.kind)} ${job.failure ?? ''}`,
+  searchText: (job) => `#${job.id} ${job.kind} ${job.title ?? ''} ${formatJobKind(job.kind)} ${job.failure ?? ''}`,
   pageSize: 50,
 })
 
@@ -292,8 +292,12 @@ async function runDiagnostics() {
               </button>
               <span class="w-10 shrink-0 font-mono text-xs text-ink-muted">#{{ row.job.id }}</span>
               <div class="min-w-0 flex-1">
-                <strong class="block truncate text-[13px] font-semibold text-ink">{{ formatJobKind(row.job.kind) }}</strong>
-                <small class="block text-xs text-ink-muted">{{ formatDateTime(row.job.createdAt) }}</small>
+                <strong class="block truncate text-[13px] font-semibold text-ink">
+                  {{ row.job.title || formatJobKind(row.job.kind) }}
+                </strong>
+                <small class="block truncate text-xs text-ink-muted">
+                  <template v-if="row.job.title">{{ formatJobKind(row.job.kind) }} · </template>{{ formatDateTime(row.job.createdAt) }}
+                </small>
               </div>
               <div class="hidden w-36 items-center gap-2 sm:flex">
                 <ProgressBar :value="row.job.progress" class="flex-1" :tone="row.job.state === 'failed' ? 'danger' : 'accent'" />

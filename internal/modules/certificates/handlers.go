@@ -76,7 +76,14 @@ func (m *Module) prepareHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "authentication_required", "Sign in to continue.")
 		return
 	}
-	job, err := m.jobs.Submit(r.Context(), "certificate.plan", map[string]string{"certificateId": r.PathValue("id"), "operation": request.Operation}, &user.ID)
+	verb := "Issue"
+	switch request.Operation {
+	case "renew":
+		verb = "Renew"
+	case "revoke":
+		verb = "Revoke"
+	}
+	job, err := m.jobs.SubmitTitled(r.Context(), "certificate.plan", verb+" certificate", map[string]string{"certificateId": r.PathValue("id"), "operation": request.Operation}, &user.ID)
 	if err != nil {
 		writeError(w, 500, "job_submission_failed", "Certificate planning could not be queued.")
 		return
@@ -105,7 +112,7 @@ func (m *Module) applyHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "authentication_required", "Sign in to continue.")
 		return
 	}
-	job, err := m.jobs.Submit(r.Context(), "certificate.execute", plan, &user.ID)
+	job, err := m.jobs.SubmitTitled(r.Context(), "certificate.execute", "Apply certificate change", plan, &user.ID)
 	if err != nil {
 		writeError(w, 500, "job_submission_failed", "Certificate operation could not be queued.")
 		return

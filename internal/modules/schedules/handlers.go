@@ -212,7 +212,7 @@ func (m *Module) deleteHTTP(w http.ResponseWriter, r *http.Request) {
 // submitPlan queues the planning job with the validated scope embedded, so
 // the job worker never needs the requesting user.
 func (m *Module) submitPlan(w http.ResponseWriter, r *http.Request, task Task, scope sitefs.Scope, user identity.User, removal bool) {
-	job, err := m.jobs.Submit(r.Context(), "schedule.plan", planPayload{Task: task.operatorTask(scope), Removal: removal}, &user.ID)
+	job, err := m.jobs.SubmitTitled(r.Context(), "schedule.plan", "Update scheduled task", planPayload{Task: task.operatorTask(scope), Removal: removal}, &user.ID)
 	if err != nil {
 		m.markFailed(r.Context(), task.ID, err)
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "Schedule planning could not be queued.")
@@ -293,7 +293,7 @@ func (m *Module) runHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "schedule_not_runnable", "Only an applied, enabled scheduled task can be run.")
 		return
 	}
-	job, err := m.jobs.Submit(r.Context(), "schedule.run", runPayload{Task: task.operatorTask(scope)}, &user.ID)
+	job, err := m.jobs.SubmitTitled(r.Context(), "schedule.run", "Run scheduled task", runPayload{Task: task.operatorTask(scope)}, &user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The task run could not be queued.")
 		return

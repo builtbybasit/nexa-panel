@@ -30,7 +30,7 @@ func (m *Module) ApplyPlan(ctx context.Context, resourceType, resourceID string,
 	if err != nil || status != StatusPlanReady {
 		return jobs.Job{}, errors.New("only a plan-ready MySQL-family resource can be applied")
 	}
-	job, err := m.jobs.Submit(ctx, "mysql_family.apply", map[string]string{"planId": plan.ID}, actor)
+	job, err := m.jobs.SubmitTitled(ctx, "mysql_family.apply", "Apply MySQL "+resourceType, map[string]string{"planId": plan.ID}, actor)
 	if err != nil {
 		return jobs.Job{}, err
 	}
@@ -45,7 +45,7 @@ func (m *Module) ApplyPlan(ctx context.Context, resourceType, resourceID string,
 }
 
 func (m *Module) submitPlan(ctx context.Context, resourceType, resourceID string, action mysqloperator.Action, actor *string) (jobs.Job, error) {
-	return m.jobs.Submit(ctx, "mysql_family.plan", map[string]string{"resourceType": resourceType, "resourceId": resourceID, "action": string(action)}, actor)
+	return m.jobs.SubmitTitled(ctx, "mysql_family.plan", "Plan MySQL "+resourceType, map[string]string{"resourceType": resourceType, "resourceId": resourceID, "action": string(action)}, actor)
 }
 
 func (m *Module) planJob(ctx context.Context, raw json.RawMessage, report func(int, string) error) (any, error) {

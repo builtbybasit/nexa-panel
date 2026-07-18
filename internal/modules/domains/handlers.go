@@ -72,7 +72,7 @@ func (m *Module) activateHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "authentication_required", "Sign in to continue.")
 		return
 	}
-	job, err := m.jobs.Submit(r.Context(), "domain.activate", plan, &user.ID)
+	job, err := m.jobs.SubmitTitled(r.Context(), "domain.activate", "Activate domain "+domain.Hostname, plan, &user.ID)
 	if err != nil {
 		writeError(w, 500, "job_submission_failed", "Domain activation could not be queued.")
 		return

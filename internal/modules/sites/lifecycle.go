@@ -49,7 +49,7 @@ func (m *Module) Create(ctx context.Context, request CreateRequest, actorUserID 
 		}
 		return Site{}, jobs.Job{}, fmt.Errorf("create site: %w", err)
 	}
-	job, err := m.jobs.Submit(ctx, "site.plan", map[string]string{"siteId": model.ID}, actorUserID)
+	job, err := m.jobs.SubmitTitled(ctx, "site.plan", "Plan site "+model.DisplayName, map[string]string{"siteId": model.ID}, actorUserID)
 	if err != nil {
 		failure := "The site configuration plan could not be queued."
 		_, _ = m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", StatusFailed).

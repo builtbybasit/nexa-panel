@@ -56,7 +56,11 @@ func (m *Module) submitPlanMutation(w http.ResponseWriter, r *http.Request, kind
 		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	job, err := m.jobs.Submit(r.Context(), kind, plan, &user.ID)
+	title := "Activate " + plan.Site.PrimaryDomain
+	if kind == "site.rollback" {
+		title = "Roll back " + plan.Site.PrimaryDomain
+	}
+	job, err := m.jobs.SubmitTitled(r.Context(), kind, title, plan, &user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The site operation could not be queued.")
 		return

@@ -9,7 +9,15 @@ import (
 	"fmt"
 )
 
+// Submit queues a job with no display title; the UI falls back to the formatted
+// kind. Prefer SubmitTitled so the Jobs list reads "Install nginx", not "Applications · Apply".
 func (m *Module) Submit(ctx context.Context, kind string, request any, actorUserID *string) (Job, error) {
+	return m.SubmitTitled(ctx, kind, "", request, actorUserID)
+}
+
+// SubmitTitled queues a job with a human-readable title (e.g. "Activate portal.example.com")
+// shown in the Jobs list and progress views in place of the bare kind.
+func (m *Module) SubmitTitled(ctx context.Context, kind, title string, request any, actorUserID *string) (Job, error) {
 	m.handlersMu.RLock()
 	_, supported := m.handlers[kind]
 	m.handlersMu.RUnlock()
@@ -22,7 +30,7 @@ func (m *Module) Submit(ctx context.Context, kind string, request any, actorUser
 	}
 	now := m.now().UTC()
 	model := &jobModel{
-		Kind: kind, State: string(StateQueued), Progress: 0, ActorUserID: actorUserID,
+		Kind: kind, Title: title, State: string(StateQueued), Progress: 0, ActorUserID: actorUserID,
 		RequestJSON: string(encoded), CreatedAt: now, UpdatedAt: now,
 	}
 	err = m.database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -83,7 +91,7 @@ func (m *Module) EventsAfter(ctx context.Context, jobID, sequence int64) ([]Even
 
 func (model *jobModel) toJob() Job {
 	job := Job{
-		ID: model.ID, Kind: model.Kind, State: State(model.State), Progress: model.Progress,
+		ID: model.ID, Kind: model.Kind, Title: model.Title, State: State(model.State), Progress: model.Progress,
 		ActorUserID: model.ActorUserID, Request: json.RawMessage(model.RequestJSON),
 		CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
 		StartedAt: model.StartedAt, CompletedAt: model.CompletedAt,

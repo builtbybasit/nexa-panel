@@ -138,7 +138,11 @@ func (m *Module) RequestChange(ctx context.Context, id string, action packagesop
 	if _, err := m.getOrCreate(ctx, id, entry, now); err != nil {
 		return Application{}, jobs.Job{}, err
 	}
-	job, err := m.jobs.Submit(ctx, "applications.plan", map[string]string{"id": id, "action": string(action)}, actor)
+	verb := "Install"
+	if action == packagesoperator.ActionRemove {
+		verb = "Remove"
+	}
+	job, err := m.jobs.SubmitTitled(ctx, "applications.plan", verb+" "+entry.Label, map[string]string{"id": id, "action": string(action)}, actor)
 	if err != nil {
 		return Application{}, jobs.Job{}, err
 	}
@@ -174,7 +178,11 @@ func (m *Module) ApplyPlan(ctx context.Context, id string, actor *string) (jobs.
 	if err != nil || Status(model.Status) != StatusPlanReady {
 		return jobs.Job{}, errors.New("only a plan-ready application can be applied")
 	}
-	job, err := m.jobs.Submit(ctx, "applications.apply", map[string]string{"planId": plan.ID}, actor)
+	verb := "Install"
+	if plan.Operation == packagesoperator.ActionRemove {
+		verb = "Remove"
+	}
+	job, err := m.jobs.SubmitTitled(ctx, "applications.apply", verb+" "+id, map[string]string{"planId": plan.ID}, actor)
 	if err != nil {
 		return jobs.Job{}, err
 	}

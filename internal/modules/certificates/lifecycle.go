@@ -38,7 +38,7 @@ func (m *Module) Create(ctx context.Context, request CreateRequest, actor *strin
 		}
 		return Certificate{}, jobs.Job{}, err
 	}
-	job, err := m.jobs.Submit(ctx, "certificate.plan", map[string]string{"certificateId": model.ID, "operation": "issue"}, actor)
+	job, err := m.jobs.SubmitTitled(ctx, "certificate.plan", "Issue certificate", map[string]string{"certificateId": model.ID, "operation": "issue"}, actor)
 	if err != nil {
 		m.fail(ctx, model.ID, err)
 		return model.toCertificate(now), jobs.Job{}, err

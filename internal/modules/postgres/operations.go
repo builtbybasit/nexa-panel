@@ -29,7 +29,7 @@ func (m *Module) ApplyPlan(ctx context.Context, resourceType, resourceID string,
 	if err != nil || status != StatusPlanReady {
 		return jobs.Job{}, errors.New("only a plan-ready PostgreSQL resource can be applied")
 	}
-	job, err := m.jobs.Submit(ctx, "postgresql.apply", map[string]string{"planId": plan.ID}, actor)
+	job, err := m.jobs.SubmitTitled(ctx, "postgresql.apply", "Apply PostgreSQL "+resourceType, map[string]string{"planId": plan.ID}, actor)
 	if err != nil {
 		return jobs.Job{}, err
 	}
@@ -44,7 +44,7 @@ func (m *Module) ApplyPlan(ctx context.Context, resourceType, resourceID string,
 }
 
 func (m *Module) submitPlan(ctx context.Context, resourceType, resourceID string, action postgresoperator.Action, actor *string) (jobs.Job, error) {
-	return m.jobs.Submit(ctx, "postgresql.plan", map[string]string{"resourceType": resourceType, "resourceId": resourceID, "action": string(action)}, actor)
+	return m.jobs.SubmitTitled(ctx, "postgresql.plan", "Plan PostgreSQL "+resourceType, map[string]string{"resourceType": resourceType, "resourceId": resourceID, "action": string(action)}, actor)
 }
 
 func (m *Module) planJob(ctx context.Context, raw json.RawMessage, report func(int, string) error) (any, error) {

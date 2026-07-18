@@ -29,6 +29,7 @@ const schema = `
 	CREATE TABLE jobs (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		kind TEXT NOT NULL,
+		title TEXT NOT NULL DEFAULT '',
 		state TEXT NOT NULL,
 		progress INTEGER NOT NULL DEFAULT 0,
 		actor_user_id TEXT,
@@ -68,6 +69,7 @@ func (s State) Terminal() bool {
 type Job struct {
 	ID          int64           `json:"id"`
 	Kind        string          `json:"kind"`
+	Title       string          `json:"title,omitempty"`
 	State       State           `json:"state"`
 	Progress    int             `json:"progress"`
 	ActorUserID *string         `json:"actorUserId,omitempty"`
@@ -115,6 +117,7 @@ type jobModel struct {
 	bun.BaseModel `bun:"table:jobs,alias:job"`
 	ID            int64 `bun:",pk,autoincrement"`
 	Kind          string
+	Title         string
 	State         string
 	Progress      int
 	ActorUserID   *string

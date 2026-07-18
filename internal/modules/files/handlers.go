@@ -335,7 +335,7 @@ func (m *Module) archiveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "files_invalid", "The archive target must be a site-relative path ending in .tar.gz.")
 		return
 	}
-	job, err := m.jobs.Submit(r.Context(), "files.archive", archivePayload{Scope: scope, Paths: request.Paths, Target: request.Target}, &user.ID)
+	job, err := m.jobs.SubmitTitled(r.Context(), "files.archive", "Compress files", archivePayload{Scope: scope, Paths: request.Paths, Target: request.Target}, &user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The archive job could not be queued.")
 		return
@@ -366,7 +366,7 @@ func (m *Module) extractHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "files_invalid", "The target directory is not allowed: "+err.Error()+".")
 		return
 	}
-	job, err := m.jobs.Submit(r.Context(), "files.extract", extractPayload{Scope: scope, Path: request.Path, TargetDir: request.TargetDir}, &user.ID)
+	job, err := m.jobs.SubmitTitled(r.Context(), "files.extract", "Extract archive", extractPayload{Scope: scope, Path: request.Path, TargetDir: request.TargetDir}, &user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The extraction job could not be queued.")
 		return
@@ -391,7 +391,7 @@ func (m *Module) sizeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "files_invalid", "The path is not allowed: "+err.Error()+".")
 		return
 	}
-	job, err := m.jobs.Submit(r.Context(), "files.size", sizePayload{Scope: scope, Path: request.Path}, &user.ID)
+	job, err := m.jobs.SubmitTitled(r.Context(), "files.size", "Measure size", sizePayload{Scope: scope, Path: request.Path}, &user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The directory size job could not be queued.")
 		return

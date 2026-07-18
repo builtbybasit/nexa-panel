@@ -46,7 +46,7 @@ func (m *Module) Create(ctx context.Context, request CreateRequest, actor *strin
 		}
 		return Domain{}, jobs.Job{}, err
 	}
-	job, err := m.jobs.Submit(ctx, "domain.plan", map[string]string{"domainId": model.ID}, actor)
+	job, err := m.jobs.SubmitTitled(ctx, "domain.plan", "Plan domain "+model.Hostname, map[string]string{"domainId": model.ID}, actor)
 	if err != nil {
 		m.fail(ctx, model.ID, err)
 		return model.toDomain(), jobs.Job{}, err

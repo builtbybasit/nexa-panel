@@ -68,7 +68,7 @@ func (m *Module) diagnosticsHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	job, err := m.Submit(r.Context(), "platform.diagnostics", input, &user.ID)
+	job, err := m.SubmitTitled(r.Context(), "platform.diagnostics", "Run diagnostics", input, &user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The diagnostic job could not be queued.")
 		return

@@ -139,7 +139,7 @@ func (m *Module) replanHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	job, err := m.jobs.Submit(r.Context(), "site.plan", map[string]string{"siteId": site.ID}, &user.ID)
+	job, err := m.jobs.SubmitTitled(r.Context(), "site.plan", "Plan site "+site.DisplayName, map[string]string{"siteId": site.ID}, &user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "Site planning could not be queued.")
 		return

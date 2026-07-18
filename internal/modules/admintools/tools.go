@@ -105,7 +105,14 @@ func (m *Module) RequestChange(ctx context.Context, kind admintooloperator.Kind,
 	if err != nil {
 		return Tool{}, jobs.Job{}, err
 	}
-	job, err := m.jobs.Submit(ctx, "admin-tools.plan", map[string]string{"kind": string(kind), "action": string(action)}, actor)
+	verb := "Deploy"
+	switch action {
+	case admintooloperator.ActionStart:
+		verb = "Start"
+	case admintooloperator.ActionStop:
+		verb = "Stop"
+	}
+	job, err := m.jobs.SubmitTitled(ctx, "admin-tools.plan", verb+" "+string(kind), map[string]string{"kind": string(kind), "action": string(action)}, actor)
 	if err != nil {
 		return model.toTool(), jobs.Job{}, err
 	}
@@ -133,7 +140,7 @@ func (m *Module) ApplyPlan(ctx context.Context, kind admintooloperator.Kind, act
 	if err != nil || Status(model.Status) != StatusPlanReady {
 		return jobs.Job{}, errors.New("only a plan-ready admin tool can be applied")
 	}
-	job, err := m.jobs.Submit(ctx, "admin-tools.apply", map[string]string{"planId": plan.ID}, actor)
+	job, err := m.jobs.SubmitTitled(ctx, "admin-tools.apply", "Apply "+string(kind)+" change", map[string]string{"planId": plan.ID}, actor)
 	if err != nil {
 		return jobs.Job{}, err
 	}

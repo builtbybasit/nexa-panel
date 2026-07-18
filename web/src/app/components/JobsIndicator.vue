@@ -79,7 +79,7 @@ watch(visible, (nowVisible) => {
           @click="open = false"
         >
           <span class="mb-1.5 flex items-center justify-between gap-2">
-            <span class="truncate text-[13px] font-medium text-ink">{{ formatJobKind(job.kind) }}</span>
+            <span class="truncate text-[13px] font-medium text-ink">{{ job.title || formatJobKind(job.kind) }}</span>
             <span class="shrink-0 text-[11px] text-ink-muted tabular-nums">#{{ job.id }}</span>
           </span>
           <ProgressBar :value="job.progress" />
@@ -95,7 +95,7 @@ watch(visible, (nowVisible) => {
           class="flex items-center justify-between gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-white/[0.04]"
           @click="open = false"
         >
-          <span class="truncate text-[13px] text-ink-secondary">{{ formatJobKind(job.kind) }}</span>
+          <span class="truncate text-[13px] text-ink-secondary">{{ job.title || formatJobKind(job.kind) }}</span>
           <StatusPill :status="job.state" />
         </RouterLink>
       </template>
