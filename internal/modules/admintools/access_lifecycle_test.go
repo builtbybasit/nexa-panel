@@ -160,6 +160,44 @@ func TestDeployAndStopUseReviewedJobs(t *testing.T) {
 		t.Fatal("pgAdmin not persisted")
 	}
 }
+func TestSyncKeepsPlanReadyStatusApplicable(t *testing.T) {
+	ctx := context.Background()
+	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	auditLog, err := audit.New(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, err := jobs.NewWithConfig(ctx, database, auditLog, slog.New(slog.NewTextHandler(io.Discard, nil)), jobs.Config{PollInterval: 5 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Discover reports the container as stopped (systemd is-active) — the state
+	// a not-yet-deployed tool is really in while its plan awaits approval.
+	operator := &fakeOperator{tools: admintooloperator.Defaults()}
+	module, err := New(ctx, database, queue, operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue.Start(ctx)
+	defer queue.Close()
+	tool, planJob, err := module.RequestChange(ctx, admintooloperator.PGAdmin, admintooloperator.ActionDeploy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitAdminJob(t, queue, planJob.ID, jobs.StateSucceeded)
+	// Mirror the frontend refetching the admin-tools list after the plan job:
+	// the resulting Sync must not clobber plan_ready with the observed status.
+	if _, err = module.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = module.ApplyPlan(ctx, tool.Kind, nil); err != nil {
+		t.Fatalf("plan_ready tool was not applicable after Sync: %v", err)
+	}
+}
 func waitAdminJob(t *testing.T, queue *jobs.Module, id int64, wanted jobs.State) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

@@ -12,6 +12,7 @@ import {
   AppCard,
   AppConfirmDialog,
   AppDialog,
+  AppIcon,
   AppInput,
   AppSelect,
   CredentialReveal,
@@ -32,6 +33,8 @@ import {
   TablePager,
   type Fact,
 } from '@/shared/ui'
+
+import { useToolLaunch } from '@/modules/admintools/composables/useToolLaunch'
 
 import {
   createAccount,
@@ -99,6 +102,13 @@ async function refreshAll() {
 }
 
 const plans = usePlanReview(refreshAll)
+
+// One-click phpMyAdmin launch, logged in as the database's owner account.
+const toolLaunch = useToolLaunch()
+
+function openPhpMyAdmin(database: Database) {
+  void toolLaunch.launch('phpmyadmin', 'mysql', database.id)
+}
 
 /** The host is part of an account's identity: `app_usr@localhost` ≠ `app_usr@%`. */
 function accountLabel(id: string) {
@@ -476,6 +486,19 @@ watch(engine, () => {
             v-bind="progressProps(backupRunner)"
           />
         </div>
+        <AppAlert v-if="toolLaunch.error.value" tone="danger">{{ toolLaunch.error.value }}</AppAlert>
+        <AppAlert v-if="toolLaunch.blocked.value" tone="info">
+          <p>The browser blocked the phpMyAdmin tab.</p>
+          <a
+            :href="toolLaunch.blocked.value.url"
+            target="_blank"
+            rel="noopener"
+            class="mt-1 inline-flex items-center gap-1.5 font-medium underline underline-offset-2"
+          >
+            Open phpMyAdmin
+            <AppIcon name="external-link" :size="14" />
+          </a>
+        </AppAlert>
         <div v-if="databasesQuery.isPending.value" class="space-y-1">
           <SkeletonRow v-for="index in 3" :key="index" />
         </div>
@@ -547,15 +570,31 @@ watch(engine, () => {
                     </td>
                     <td class="px-3 py-2.5"><StatusPill :status="item.status" /></td>
                     <td class="px-3 py-2.5 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger as-child>
-                          <AppButton
-                            size="sm"
-                            variant="ghost"
-                            icon="more-horizontal"
-                            :aria-label="`Actions for ${item.name}`"
-                          />
-                        </DropdownMenuTrigger>
+                      <span class="flex items-center justify-end gap-1">
+                        <AppButton
+                          v-if="item.status === 'active'"
+                          size="sm"
+                          variant="ghost"
+                          icon="external-link"
+                          :loading="toolLaunch.launchingId.value === item.id"
+                          :disabled="!toolLaunch.isReady('phpmyadmin')"
+                          :aria-label="`Open phpMyAdmin for ${item.name}`"
+                          :title="
+                            toolLaunch.isReady('phpmyadmin')
+                              ? `Open phpMyAdmin for ${item.name}`
+                              : 'Install phpMyAdmin from the Applications page to enable this'
+                          "
+                          @click="openPhpMyAdmin(item)"
+                        />
+                        <DropdownMenu>
+                          <DropdownMenuTrigger as-child>
+                            <AppButton
+                              size="sm"
+                              variant="ghost"
+                              icon="more-horizontal"
+                              :aria-label="`Actions for ${item.name}`"
+                            />
+                          </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
                             v-if="item.status === 'plan_ready'"
@@ -575,7 +614,8 @@ watch(engine, () => {
                             <RouterLink :to="detailLink(item)">Access and backups</RouterLink>
                           </DropdownMenuItem>
                         </DropdownMenuContent>
-                      </DropdownMenu>
+                        </DropdownMenu>
+                      </span>
                     </td>
                   </tr>
                 </tbody>

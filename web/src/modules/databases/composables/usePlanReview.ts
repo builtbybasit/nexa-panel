@@ -83,7 +83,9 @@ export function usePlanReview(refresh: () => Promise<void>) {
   const warnings = computed(() => {
     const current = plan.value
     if (!current) return []
-    const items = [...current.agentPlan.warnings]
+    // The agent omits warnings entirely for plans that have none (create
+    // role/database, grants), so it arrives as null — guard the spread.
+    const items = [...(current.agentPlan.warnings ?? [])]
     if (current.agentPlan.interruption) items.push('Active connections are terminated while this plan is applied.')
     return items
   })

@@ -15,7 +15,6 @@ export interface Application {
   status: string
   installedVersion?: string
   managed: boolean
-  manageHref?: string
   lastJobId?: number
   failure?: string
 }

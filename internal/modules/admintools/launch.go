@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -144,6 +145,16 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "admin_tool_unavailable", "Admin tool is not active.")
 		return
 	}
+	// pgAdmin restarts during launch bootstrap to reload its per-database server
+	// catalog, and systemd reports the unit active the instant the container
+	// forks — several seconds before gunicorn binds its port. Wait for the
+	// loopback listener so this navigation does not race the boot and surface as
+	// a 502. It returns on the first successful dial, so an already-running tool
+	// pays only a single local connect.
+	if err := waitForUpstreamReady(r.Context(), tool.Port, 22*time.Second); err != nil {
+		writeError(w, 502, "admin_tool_upstream_failed", "Admin tool did not respond.")
+		return
+	}
 	target := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", tool.Port)}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	original := proxy.Director
@@ -239,6 +250,35 @@ func (m *Module) sessionByHash(ctx context.Context, hash string) (launchModel, e
 	err := m.database.NewSelect().Model(&model).Where("session_token_hash = ?", hash).Scan(ctx)
 	return model, err
 }
+
+// waitForUpstreamReady blocks until the tool's loopback port accepts a
+// connection or the timeout elapses, returning immediately on the first
+// successful dial. A refused connection on loopback returns instantly, so the
+// poll cycles quickly while the container is still booting.
+func waitForUpstreamReady(ctx context.Context, port int, timeout time.Duration) error {
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+	dialer := net.Dialer{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(timeout)
+	for {
+		conn, err := dialer.DialContext(ctx, "tcp", address)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !time.Now().Before(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
 func secureToken() (string, error) {
 	value := make([]byte, 32)
 	if _, err := rand.Read(value); err != nil {

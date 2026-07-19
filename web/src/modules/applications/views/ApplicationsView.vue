@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
 
 import { useCollection } from '@/shared/composables/useCollection'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
@@ -21,9 +20,16 @@ import {
   StatusPill,
 } from '@/shared/ui'
 
-import { applyPlan, getPlan, listApplications, prepareChange, type Application, type ApplicationPlan, type AppAction } from '../api'
+import {
+  applyPlan as applyToolPlan,
+  getPlan as getToolPlan,
+  prepareChange as prepareToolChange,
+  type AdminToolPlan,
+  type ToolAction,
+  type ToolKind,
+} from '@/modules/admintools/api'
 
-const router = useRouter()
+import { applyPlan, getPlan, listApplications, prepareChange, type Application, type ApplicationPlan, type AppAction } from '../api'
 
 const appsQuery = useQuery({ queryKey: ['applications'], queryFn: listApplications, retry: false })
 const applications = computed(() => appsQuery.data.value ?? [])
@@ -149,8 +155,90 @@ async function approve() {
   })
 }
 
-function goManage(app: Application) {
-  if (app.manageHref) void router.push(app.manageHref)
+// --- Database web clients (phpMyAdmin / pgAdmin) ---
+// These are hardened Podman containers, not apt packages, so they run through
+// the admin-tools plan/apply endpoints. Install = deploy the container, Remove =
+// stop it. Same review dialog, different backend.
+
+const toolPendingId = ref<string>()
+const toolSelected = ref<Application>()
+const toolPlan = ref<AdminToolPlan>()
+
+function isWebClient(app: Application) {
+  return app.category === 'web-client'
+}
+function canDeployTool(app: Application) {
+  return isWebClient(app) && (app.status === 'stopped' || app.status === 'inactive' || app.status === 'failed')
+}
+function canStopTool(app: Application) {
+  return isWebClient(app) && app.status === 'active'
+}
+function canReviewTool(app: Application) {
+  return isWebClient(app) && app.status === 'plan_ready'
+}
+
+const toolReviewFacts = computed<Fact[]>(() => {
+  const app = toolSelected.value
+  const plan = toolPlan.value
+  if (!app || !plan) return []
+  return [
+    { label: 'Web client', value: app.label },
+    { label: 'Action', value: plan.operation === 'tool.stop' ? 'Stop' : 'Deploy' },
+  ]
+})
+
+const toolApproveLabel = computed(() => (toolPlan.value?.operation === 'tool.stop' ? 'Stop' : 'Deploy'))
+
+async function loadToolPlan(app: Application) {
+  toolSelected.value = app
+  planError.value = ''
+  toolPlan.value = undefined
+  try {
+    toolPlan.value = (await getToolPlan(app.app as ToolKind)).plan
+  } catch (caught) {
+    planError.value = caught instanceof Error ? caught.message : 'The plan is not ready yet.'
+  }
+}
+
+async function prepareTool(app: Application, action: ToolAction) {
+  toolPendingId.value = app.id
+  await runner.run(async () => (await prepareToolChange(app.app as ToolKind, action)).job.id, {
+    onSettled: async () => {
+      await appsQuery.refetch()
+    },
+    onSuccess: async () => {
+      await loadToolPlan(app)
+    },
+    failureMessage: `Preparing the ${app.label} change failed`,
+  })
+  toolPendingId.value = undefined
+}
+
+function closeToolReview() {
+  toolPlan.value = undefined
+  toolSelected.value = undefined
+}
+
+function regenerateTool() {
+  const app = toolSelected.value
+  const operation = toolPlan.value?.operation
+  if (!app || !operation) return
+  toolPlan.value = undefined
+  void prepareTool(app, operation)
+}
+
+async function approveTool() {
+  const app = toolSelected.value
+  if (!app) return
+  const stopping = toolPlan.value?.operation === 'tool.stop'
+  await applyRunner.run(async () => (await applyToolPlan(app.app as ToolKind)).id, {
+    onSettled: async () => {
+      closeToolReview()
+      await appsQuery.refetch()
+    },
+    successToast: `${app.label} ${stopping ? 'stopped' : 'deployed'}`,
+    failureMessage: `The ${app.label} operation failed`,
+  })
 }
 </script>
 
@@ -159,7 +247,7 @@ function goManage(app: Application) {
     <PageHeader
       eyebrow="Software catalog"
       title="Applications"
-      description="Install and remove server software — PHP versions, PostgreSQL, Node.js, and Composer — through reviewed, agent-signed apt plans. Database web clients are deployed from the DB web clients page."
+      description="Install and remove server software — PHP versions, PostgreSQL, Node.js, Composer, and the phpMyAdmin and pgAdmin database web clients — through reviewed, agent-signed plans. Once a web client is installed, open it from the launch icon on any database row."
     >
       <StatusPill tone="accent" label="apt · reviewed installs" :pulse="false" />
     </PageHeader>
@@ -237,8 +325,29 @@ function goManage(app: Application) {
                 >
                   Uninstall
                 </AppButton>
-                <AppButton v-if="!app.managed" icon="external-link" @click="goManage(app)">
-                  Manage
+                <!-- Database web clients: deploy/stop the Podman container inline. -->
+                <AppButton
+                  v-if="canDeployTool(app)"
+                  variant="primary"
+                  icon="download"
+                  :loading="toolPendingId === app.id"
+                  :disabled="anyBusy"
+                  @click="prepareTool(app, 'tool.deploy')"
+                >
+                  Install
+                </AppButton>
+                <AppButton v-if="canReviewTool(app)" icon="eye" :disabled="anyBusy" @click="loadToolPlan(app)">
+                  Review plan
+                </AppButton>
+                <AppButton
+                  v-if="canStopTool(app)"
+                  variant="danger"
+                  icon="stop"
+                  :loading="toolPendingId === app.id"
+                  :disabled="anyBusy"
+                  @click="prepareTool(app, 'tool.stop')"
+                >
+                  Uninstall
                 </AppButton>
               </div>
             </div>
@@ -259,6 +368,20 @@ function goManage(app: Application) {
       @approve="approve"
       @regenerate="regenerate"
       @close="closeReview"
+    />
+
+    <PlanReviewDialog
+      :open="!!toolPlan"
+      :title="toolSelected ? `Review ${toolSelected.label} plan` : 'Review plan'"
+      :facts="toolReviewFacts"
+      :steps="toolPlan?.agentPlan.steps ?? []"
+      :warnings="toolPlan?.agentPlan.warnings ?? []"
+      :expires-at="toolPlan?.agentPlan.expiresAt"
+      :busy="applyRunner.busy.value"
+      :approve-label="toolApproveLabel"
+      @approve="approveTool"
+      @regenerate="regenerateTool"
+      @close="closeToolReview"
     />
 
     <AppConfirmDialog

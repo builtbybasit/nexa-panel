@@ -19,7 +19,13 @@ func (m *Module) ResolveAdminToolCredential(ctx context.Context, databaseID, rol
 	if err != nil || Status(database.Status) != StatusActive {
 		return AdminToolCredential{}, errors.New("PostgreSQL database must be active")
 	}
-	role, err := m.getRoleModel(ctx, strings.TrimSpace(roleID))
+	// A one-click launch from the database table sends no role, so log in as the
+	// database's owner role — the role that already holds privileges on it.
+	roleID = strings.TrimSpace(roleID)
+	if roleID == "" {
+		roleID = database.OwnerRoleID
+	}
+	role, err := m.getRoleModel(ctx, roleID)
 	if err != nil || Status(role.Status) != StatusActive || role.InstanceID != database.InstanceID || role.CredentialCiphertext == nil {
 		return AdminToolCredential{}, errors.New("PostgreSQL role must be active on the selected database instance")
 	}

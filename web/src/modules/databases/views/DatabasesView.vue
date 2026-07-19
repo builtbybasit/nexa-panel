@@ -12,6 +12,7 @@ import {
   AppCard,
   AppConfirmDialog,
   AppDialog,
+  AppIcon,
   AppInput,
   AppSelect,
   CredentialReveal,
@@ -32,6 +33,8 @@ import {
   TablePager,
   type Fact,
 } from '@/shared/ui'
+
+import { useToolLaunch } from '@/modules/admintools/composables/useToolLaunch'
 
 import {
   createBackup,
@@ -92,6 +95,13 @@ async function refreshAll() {
 }
 
 const plans = usePlanReview(refreshAll)
+
+// One-click pgAdmin launch, logged in as the database's owner role.
+const toolLaunch = useToolLaunch()
+
+function openPgAdmin(database: ManagedDatabase) {
+  void toolLaunch.launch('pgadmin', 'postgresql', database.id)
+}
 
 function roleLabel(id: string) {
   return roles.value.find((role) => role.id === id)?.name ?? id
@@ -523,6 +533,19 @@ watch(databaseInstance, () => {
             v-bind="progressProps(backupRunner)"
           />
         </div>
+        <AppAlert v-if="toolLaunch.error.value" tone="danger">{{ toolLaunch.error.value }}</AppAlert>
+        <AppAlert v-if="toolLaunch.blocked.value" tone="info">
+          <p>The browser blocked the pgAdmin tab.</p>
+          <a
+            :href="toolLaunch.blocked.value.url"
+            target="_blank"
+            rel="noopener"
+            class="mt-1 inline-flex items-center gap-1.5 font-medium underline underline-offset-2"
+          >
+            Open pgAdmin
+            <AppIcon name="external-link" :size="14" />
+          </a>
+        </AppAlert>
         <div v-if="databasesQuery.isPending.value" class="space-y-1">
           <SkeletonRow v-for="index in 3" :key="index" />
         </div>
@@ -598,35 +621,52 @@ watch(databaseInstance, () => {
                     </td>
                     <td class="px-3 py-2.5"><StatusPill :status="item.status" /></td>
                     <td class="px-3 py-2.5 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger as-child>
-                          <AppButton
-                            size="sm"
-                            variant="ghost"
-                            icon="more-horizontal"
-                            :aria-label="`Actions for ${item.name}`"
-                          />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            v-if="item.status === 'plan_ready'"
-                            @select="plans.open({ type: 'databases', id: item.id, label: item.name })"
-                          >
-                            Review plan…
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            v-if="item.status === 'active'"
-                            :disabled="backupRunner.busy.value"
-                            @select="backupDatabase(item)"
-                          >
-                            Back up now
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator v-if="item.status === 'plan_ready' || item.status === 'active'" />
-                          <DropdownMenuItem as-child>
-                            <RouterLink :to="detailLink(item)">Access and backups</RouterLink>
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <span class="flex items-center justify-end gap-1">
+                        <AppButton
+                          v-if="item.status === 'active'"
+                          size="sm"
+                          variant="ghost"
+                          icon="external-link"
+                          :loading="toolLaunch.launchingId.value === item.id"
+                          :disabled="!toolLaunch.isReady('pgadmin')"
+                          :aria-label="`Open pgAdmin for ${item.name}`"
+                          :title="
+                            toolLaunch.isReady('pgadmin')
+                              ? `Open pgAdmin for ${item.name}`
+                              : 'Install pgAdmin from the Applications page to enable this'
+                          "
+                          @click="openPgAdmin(item)"
+                        />
+                        <DropdownMenu>
+                          <DropdownMenuTrigger as-child>
+                            <AppButton
+                              size="sm"
+                              variant="ghost"
+                              icon="more-horizontal"
+                              :aria-label="`Actions for ${item.name}`"
+                            />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              v-if="item.status === 'plan_ready'"
+                              @select="plans.open({ type: 'databases', id: item.id, label: item.name })"
+                            >
+                              Review plan…
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              v-if="item.status === 'active'"
+                              :disabled="backupRunner.busy.value"
+                              @select="backupDatabase(item)"
+                            >
+                              Back up now
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator v-if="item.status === 'plan_ready' || item.status === 'active'" />
+                            <DropdownMenuItem as-child>
+                              <RouterLink :to="detailLink(item)">Access and backups</RouterLink>
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </span>
                     </td>
                   </tr>
                 </tbody>

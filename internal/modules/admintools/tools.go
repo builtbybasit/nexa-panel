@@ -73,7 +73,12 @@ func (m *Module) Sync(ctx context.Context) ([]Tool, error) {
 	now := m.now().UTC()
 	for _, item := range observed {
 		model := toolModel{Kind: string(item.Kind), Image: item.Image, ContainerName: item.ContainerName, Port: item.Port, MemoryMB: item.MemoryMB, PIDsLimit: item.PIDsLimit, Status: item.Status, SystemdUnit: item.SystemdUnit, OnDemand: item.OnDemand, CreatedAt: now, UpdatedAt: now}
-		_, err = m.database.NewInsert().Model(&model).On("CONFLICT (kind) DO UPDATE").Set("image = EXCLUDED.image").Set("container_name = EXCLUDED.container_name").Set("port = EXCLUDED.port").Set("memory_mb = EXCLUDED.memory_mb").Set("pids_limit = EXCLUDED.pids_limit").Set("status = EXCLUDED.status").Set("systemd_unit = EXCLUDED.systemd_unit").Set("on_demand = EXCLUDED.on_demand").Set("updated_at = EXCLUDED.updated_at").Exec(ctx)
+		// Preserve in-flight lifecycle statuses: a concurrent Sync (e.g. the
+		// admin-tools list refetch) must not clobber planning/plan_ready/applying
+		// with the container's observed systemd status, or the queued plan can no
+		// longer be applied. Unqualified `status` on the RHS is the pre-update
+		// value; EXCLUDED.status is the freshly observed one.
+		_, err = m.database.NewInsert().Model(&model).On("CONFLICT (kind) DO UPDATE").Set("image = EXCLUDED.image").Set("container_name = EXCLUDED.container_name").Set("port = EXCLUDED.port").Set("memory_mb = EXCLUDED.memory_mb").Set("pids_limit = EXCLUDED.pids_limit").Set("status = CASE WHEN status IN ('planning', 'plan_ready', 'applying') THEN status ELSE EXCLUDED.status END").Set("systemd_unit = EXCLUDED.systemd_unit").Set("on_demand = EXCLUDED.on_demand").Set("updated_at = EXCLUDED.updated_at").Exec(ctx)
 		if err != nil {
 			return nil, err
 		}

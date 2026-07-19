@@ -18,7 +18,13 @@ func (m *Module) ResolveAdminToolCredential(ctx context.Context, databaseID, acc
 	if err != nil || Status(database.Status) != StatusActive {
 		return AdminToolCredential{}, errors.New("MySQL-family database must be active")
 	}
-	account, err := m.getAccountModel(ctx, strings.TrimSpace(accountID))
+	// A one-click launch from the database table sends no account, so log in as
+	// the database's owner — the account that already holds privileges on it.
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		accountID = database.OwnerAccountID
+	}
+	account, err := m.getAccountModel(ctx, accountID)
 	if err != nil || Status(account.Status) != StatusActive || account.EngineID != database.EngineID || account.CredentialCiphertext == nil {
 		return AdminToolCredential{}, errors.New("MySQL-family account must be active on the selected database engine")
 	}

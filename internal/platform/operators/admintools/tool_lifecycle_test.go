@@ -60,10 +60,24 @@ func TestDeployRendersHardenedLocalhostQuadlet(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	for _, wanted := range []string{"PublishPort=127.0.0.1:18081:5050", "Memory=256M", "PidsLimit=192", "ReadOnly=true", "NoNewPrivileges=true", "DropCapability=ALL", "config_local.py:/pgadmin4/config_local.py:ro", "PGADMIN_REPLACE_SERVERS_ON_STARTUP=True", "PGPASS_FILE=/nexa-config/pgpass"} {
+	for _, wanted := range []string{"PublishPort=127.0.0.1:18081:5050", "PodmanArgs=--memory=256m", "PidsLimit=192", "ReadOnly=true", "NoNewPrivileges=true", "DropCapability=ALL", "config_local.py:/pgadmin4/config_local.py:ro", "PGADMIN_REPLACE_SERVERS_ON_STARTUP=True", "PGPASS_FILE=/nexa-config/pgpass"} {
 		if !strings.Contains(text, wanted) {
 			t.Errorf("quadlet missing %q:\n%s", wanted, text)
 		}
+	}
+}
+
+func TestPhpMyAdminQuadletGrantsPrivilegedPortBind(t *testing.T) {
+	// Apache binds port 80 during startup, which needs CAP_NET_BIND_SERVICE. The
+	// hardened base drops all capabilities, so the tool's Quadlet must add this
+	// one back or the container crash-loops with "could not bind to 0.0.0.0:80".
+	quadlet := renderQuadlet(Tool{Kind: PHPMyAdmin, Port: 18080, MemoryMB: 128, PIDsLimit: 128, Image: "docker.io/library/phpmyadmin:5.2.3", ContainerName: "nexa-phpmyadmin"}, t.TempDir())
+	if !strings.Contains(quadlet, "AddCapability=NET_BIND_SERVICE") {
+		t.Fatalf("phpMyAdmin quadlet missing NET_BIND_SERVICE grant:\n%s", quadlet)
+	}
+	pgadmin := renderQuadlet(Tool{Kind: PGAdmin, Port: 18081, MemoryMB: 256, PIDsLimit: 192, Image: "docker.io/dpage/pgadmin4:9.16", ContainerName: "nexa-pgadmin"}, t.TempDir())
+	if strings.Contains(pgadmin, "AddCapability") {
+		t.Fatalf("pgAdmin listens on an unprivileged port and must not add capabilities:\n%s", pgadmin)
 	}
 }
 

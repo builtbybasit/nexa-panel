@@ -71,6 +71,15 @@ func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observat
 		verb = "stop"
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{verb, change.Tool.SystemdUnit}}); err != nil {
+		// A deploy writes the Quadlet .container file and reloads systemd; the
+		// Podman Quadlet generator turns it into the .service unit during that
+		// reload. If the unit is still missing here, the generator refused the
+		// file — usually an unsupported key for this podman version (the generator
+		// drops the whole unit on one bad key). Point at the diagnostic rather
+		// than systemctl's opaque "Unit not found".
+		if change.Action == ActionDeploy && mentionsMissingUnit(output) {
+			return Observation{}, fmt.Errorf("%s was not generated from its Quadlet definition — the Podman Quadlet generator rejected it (run `/usr/libexec/podman/quadlet -dryrun` to see which key); ensure Podman with Quadlet support is installed: %w", change.Tool.SystemdUnit, err)
+		}
 		return Observation{}, commandError(verb+" admin tool", output, err)
 	}
 	output, verifyErr := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"is-active", change.Tool.SystemdUnit}})

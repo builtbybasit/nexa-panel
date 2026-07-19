@@ -70,8 +70,36 @@ apt-get install -y --no-install-recommends \
   postgresql-common libjson-perl \
   passwd util-linux \
   rclone \
-  podman \
+  podman fuse-overlayfs \
   ca-certificates curl gnupg software-properties-common
+
+# The database web clients (phpMyAdmin, pgAdmin) deploy as Podman Quadlet units:
+# a `.container` file the systemd generator turns into a `.service` on reload.
+# That generator ships with Podman >= 4.4. Without it, deploying a web client
+# fails with a bare "Unit not found"; warn now so the cause is obvious. The rest
+# of the panel does not depend on it, so this is a warning, not a hard failure.
+if [[ ! -x /usr/lib/systemd/system-generators/podman-system-generator ]]; then
+  warn "Podman Quadlet generator not found (podman $(podman --version 2>/dev/null | awk '{print $3}')); the phpMyAdmin/pgAdmin database web clients will not deploy. Upgrade to podman >= 4.4 (Ubuntu 24.04+ ships it)."
+fi
+
+# Podman storage driver. On a normal host the kernel's native overlay driver
+# works. When the node itself runs inside a container whose backing filesystem
+# is overlayfs (the CI test image, some nested setups), the kernel refuses
+# overlay-on-overlay and Podman needs the fuse-overlayfs mount program instead —
+# without it every `podman run` fails with "'overlay' is not supported over
+# overlayfs". Enable fuse-overlayfs only when native overlay is unavailable, so
+# real hosts keep the faster in-kernel driver.
+if ! podman info >/dev/null 2>&1 && podman info 2>&1 | grep -q "not supported over overlayfs"; then
+  log "Native overlay unavailable (overlayfs backing filesystem); enabling fuse-overlayfs for Podman"
+  install -d -m 0755 /etc/containers
+  cat > /etc/containers/storage.conf <<'EOF'
+[storage]
+driver = "overlay"
+
+[storage.options.overlay]
+mount_program = "/usr/bin/fuse-overlayfs"
+EOF
+fi
 
 # --- package repositories ---------------------------------------------------
 # The Applications catalog lists what this node's repositories actually offer,

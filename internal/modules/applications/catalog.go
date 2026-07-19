@@ -38,8 +38,10 @@ func (m *Module) catalogByID(ctx context.Context, id string) (packagesoperator.C
 }
 
 // webClientApplication maps an admin-tools container into an Applications card.
-// These are not installed via apt here; the action links to the DB web clients
-// page where the existing Podman deployment flow lives.
+// These are not apt packages: the card's install/uninstall actions drive the
+// admin-tools plan/apply endpoints (a hardened Podman deploy), so Managed is
+// false to mark them as the non-apt install path the Applications page handles
+// specially. Once deployed, they are launched per-database from the DB tables.
 func webClientApplication(tool admintools.Tool) Application {
 	label, summary := "phpMyAdmin", "Web UI for MySQL and MariaDB databases"
 	if string(tool.Kind) == "pgadmin" {
@@ -47,7 +49,7 @@ func webClientApplication(tool admintools.Tool) Application {
 	}
 	return Application{
 		ID: string(tool.Kind), App: string(tool.Kind), Label: label, Summary: summary,
-		Category: "web-client", Status: tool.Status, Managed: false, ManageHref: "/admin-tools",
+		Category: "web-client", Status: tool.Status, Managed: false,
 		LastJobID: tool.LastJobID, Failure: tool.Failure,
 	}
 }

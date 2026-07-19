@@ -55,7 +55,6 @@ type Application struct {
 	Status           string `json:"status"`
 	InstalledVersion string `json:"installedVersion,omitempty"`
 	Managed          bool   `json:"managed"`
-	ManageHref       string `json:"manageHref,omitempty"`
 	LastJobID        *int64 `json:"lastJobId,omitempty"`
 	Failure          string `json:"failure,omitempty"`
 }
