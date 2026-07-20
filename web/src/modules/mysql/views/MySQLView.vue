@@ -43,6 +43,8 @@ import {
   createAccount,
   createBackup,
   createDatabase,
+  dropAccount,
+  dropDatabase,
   getPlan,
   listAccounts,
   listDatabases,
@@ -90,6 +92,7 @@ const accountRunner = useJobRunner()
 const databaseRunner = useJobRunner()
 const rotateRunner = useJobRunner()
 const backupRunner = useJobRunner()
+const dropRunner = useJobRunner()
 
 type Runner = ReturnType<typeof useJobRunner>
 
@@ -115,7 +118,9 @@ const plans = usePlanReview<ResourceType, Plan>({
   refresh: refreshAll,
   canApply: () => identity.can('operations.apply'),
   isDestructive: (target, plan) =>
-    target.type === 'restore-points' && (plan.operation.toLowerCase().includes('restore') || plan.agentPlan.interruption),
+    plan.operation.toLowerCase().includes('drop') ||
+    plan.operation.toLowerCase().includes('revoke') ||
+    (target.type === 'restore-points' && (plan.operation.toLowerCase().includes('restore') || plan.agentPlan.interruption)),
 })
 
 // One-click phpMyAdmin launch, logged in as the database's owner account.
@@ -353,6 +358,36 @@ function backupDatabase(database: Database) {
     onSettled: refreshAll,
     successToast: `Backed up ${database.name}`,
     failureMessage: 'The backup failed',
+  })
+}
+
+// --- Delete (drop) ---
+// A drop follows the same review path as everything else: the DELETE request
+// produces a plan-ready resource, then the destructive plan is opened for a
+// final approval before the schema or account is actually removed.
+const dropDatabaseTarget = ref<Database>()
+const dropAccountTarget = ref<Account>()
+
+function confirmDropDatabase() {
+  const database = dropDatabaseTarget.value
+  if (!database || !canWrite.value) return
+  dropDatabaseTarget.value = undefined
+  void dropRunner.run(async () => (await dropDatabase(database.id)).job.id, {
+    onSettled: refreshAll,
+    onSuccess: () => plans.open({ type: 'databases', id: database.id, label: `Delete ${database.name}` }),
+    failureMessage: 'Deleting the database failed',
+  })
+}
+
+function confirmDropAccount() {
+  const account = dropAccountTarget.value
+  if (!account || !canWrite.value) return
+  dropAccountTarget.value = undefined
+  void dropRunner.run(async () => (await dropAccount(account.id)).job.id, {
+    onSettled: refreshAll,
+    onSuccess: () =>
+      plans.open({ type: 'accounts', id: account.id, label: `Delete ${account.name}@${account.host}` }),
+    failureMessage: 'Deleting the account failed',
   })
 }
 
@@ -657,6 +692,16 @@ watch(engine, () => {
                           <DropdownMenuItem as-child>
                             <RouterLink :to="detailLink(item)">Access and backups</RouterLink>
                           </DropdownMenuItem>
+                          <template v-if="canWrite && (item.status === 'active' || item.status === 'failed')">
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              class="text-rose-300"
+                              :disabled="dropRunner.busy.value"
+                              @select="dropDatabaseTarget = item"
+                            >
+                              Delete database…
+                            </DropdownMenuItem>
+                          </template>
                         </DropdownMenuContent>
                         </DropdownMenu>
                       </span>
@@ -771,6 +816,15 @@ watch(engine, () => {
                       :disabled="rotateRunner.busy.value"
                       @click="rotateTarget = account"
                     />
+                    <AppButton
+                      v-if="canWrite && (account.status === 'active' || account.status === 'failed')"
+                      size="sm"
+                      variant="ghost"
+                      icon="trash"
+                      :aria-label="`Delete ${account.name}@${account.host}`"
+                      :disabled="dropRunner.busy.value"
+                      @click="dropAccountTarget = account"
+                    />
                   </span>
                 </td>
               </tr>
@@ -865,6 +919,30 @@ watch(engine, () => {
     >
       Connected applications will fail until the new password is deployed. You review a plan before anything changes, and
       the new password is shown exactly once.
+    </AppConfirmDialog>
+
+    <AppConfirmDialog
+      :open="canWrite && !!dropDatabaseTarget"
+      :title="dropDatabaseTarget ? `Delete database ${dropDatabaseTarget.name}?` : 'Delete database?'"
+      confirm-label="Delete database"
+      tone="danger"
+      @confirm="confirmDropDatabase"
+      @close="dropDatabaseTarget = undefined"
+    >
+      This permanently deletes the database and everything in it. You review a final plan before it is removed, but there
+      is no undo — back it up first if you might need the data.
+    </AppConfirmDialog>
+
+    <AppConfirmDialog
+      :open="canWrite && !!dropAccountTarget"
+      :title="dropAccountTarget ? `Delete account ${dropAccountTarget.name}@${dropAccountTarget.host}?` : 'Delete account?'"
+      confirm-label="Delete account"
+      tone="danger"
+      @confirm="confirmDropAccount"
+      @close="dropAccountTarget = undefined"
+    >
+      Applications signing in as this account will lose access. Databases it owns must keep at least one other user, or the
+      deletion is refused.
     </AppConfirmDialog>
 
     <AppConfirmDialog

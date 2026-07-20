@@ -61,20 +61,33 @@ func (m *Module) changeFor(ctx context.Context, resourceType, resourceID string,
 		return mysqloperator.Change{}, errors.New("MySQL-family engines are discovered, not changed through resource plans")
 	case resourceAccount:
 		account, err := m.getAccountModel(ctx, resourceID)
-		if err != nil || account.PendingSecretDigest == nil {
-			return mysqloperator.Change{}, errors.New("pending account credential is unavailable")
+		if err != nil {
+			return mysqloperator.Change{}, err
 		}
-		return mysqloperator.Change{Action: action, EngineID: account.EngineID, Account: account.Name, AccountHost: account.Host, SecretSHA256: *account.PendingSecretDigest}, nil
+		change := mysqloperator.Change{Action: action, EngineID: account.EngineID, Account: account.Name, AccountHost: account.Host}
+		if action == mysqloperator.ActionCreateAccount || action == mysqloperator.ActionRotateAccount {
+			if account.PendingSecretDigest == nil {
+				return mysqloperator.Change{}, errors.New("pending account credential is unavailable")
+			}
+			change.SecretSHA256 = *account.PendingSecretDigest
+		}
+		return change, nil
 	case resourceDatabase:
 		database, err := m.getDatabaseModel(ctx, resourceID)
 		if err != nil {
 			return mysqloperator.Change{}, err
 		}
-		owner, err := m.getAccountModel(ctx, database.OwnerAccountID)
-		if err != nil {
-			return mysqloperator.Change{}, err
+		change := mysqloperator.Change{Action: action, EngineID: database.EngineID, Database: database.Name}
+		// Dropping needs only the schema name; the owner account may already be
+		// gone and is irrelevant to DROP DATABASE.
+		if action != mysqloperator.ActionDropDatabase {
+			owner, err := m.getAccountModel(ctx, database.OwnerAccountID)
+			if err != nil {
+				return mysqloperator.Change{}, err
+			}
+			change.Account, change.AccountHost = owner.Name, owner.Host
 		}
-		return mysqloperator.Change{Action: action, EngineID: database.EngineID, Database: database.Name, Account: owner.Name, AccountHost: owner.Host}, nil
+		return change, nil
 	case resourceGrant:
 		grant, err := m.getGrantModel(ctx, resourceID)
 		if err != nil {
@@ -113,6 +126,9 @@ func (m *Module) changeFor(ctx context.Context, resourceType, resourceID string,
 
 func (m *Module) commitObservation(ctx context.Context, stored StoredPlan, observation mysqloperator.Observation) error {
 	now := m.now().UTC()
+	if isDropOperation(stored.Operation) {
+		return m.commitDrop(ctx, stored)
+	}
 	switch stored.ResourceType {
 	case resourceAccount:
 		_, err := m.database.NewUpdate().Model((*accountModel)(nil)).Set("credential_ciphertext = pending_credential_ciphertext").Set("pending_credential_ciphertext = NULL").Set("pending_secret_digest = NULL").Set("credential_revealed = FALSE").Set("credential_version = credential_version + 1").Set("status = ?", StatusActive).Set("failure = NULL").Set("updated_at = ?", now).Where("id = ?", stored.ResourceID).Exec(ctx)

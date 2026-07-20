@@ -105,6 +105,7 @@ const (
 	StatusBackingUp Status = "backing_up"
 	StatusVerified  Status = "verified"
 	StatusRestoring Status = "restoring"
+	StatusDeleting  Status = "deleting"
 	StatusFailed    Status = "failed"
 )
 

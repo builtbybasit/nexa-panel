@@ -68,6 +68,18 @@ func validateChange(change Change, root string) error {
 		if !namePattern.MatchString(change.Database) || !namePattern.MatchString(change.Account) || !hostPattern.MatchString(change.AccountHost) {
 			return errors.New("a valid database and primary account are required")
 		}
+	case ActionDropDatabase:
+		if !namePattern.MatchString(change.Database) {
+			return errors.New("a valid database is required")
+		}
+	case ActionDropAccount:
+		if !namePattern.MatchString(change.Account) || !hostPattern.MatchString(change.AccountHost) {
+			return errors.New("account and host are required")
+		}
+	case ActionRevokeGrant:
+		if !namePattern.MatchString(change.Database) || !namePattern.MatchString(change.Account) || !hostPattern.MatchString(change.AccountHost) {
+			return errors.New("database, account, and host are required")
+		}
 	case ActionCreateAccount, ActionRotateAccount:
 		if !namePattern.MatchString(change.Account) || !hostPattern.MatchString(change.AccountHost) || !hashPattern.MatchString(change.SecretSHA256) {
 			return errors.New("account, host, and credential digest are required")
@@ -108,6 +120,12 @@ func planDescription(change Change) ([]string, []string, bool) {
 	switch change.Action {
 	case ActionCreateDatabase:
 		return []string{"Create the UTF8MB4 database.", "Verify local connectivity."}, nil, false
+	case ActionDropDatabase:
+		return []string{"Drop the database and all of its tables.", "Verify the schema no longer exists."}, []string{"This permanently deletes the database and everything in it. Back it up first."}, true
+	case ActionDropAccount:
+		return []string{"Drop the login account and its privilege grants.", "Verify the account no longer exists."}, []string{"Applications still using this account will lose access."}, false
+	case ActionRevokeGrant:
+		return []string{"Revoke the account's database-scoped privileges.", "Flush privileges."}, []string{"The account will lose the access this grant provided."}, false
 	case ActionCreateAccount:
 		return []string{"Create a least-privilege login account.", "Verify the account without returning its password."}, nil, false
 	case ActionRotateAccount:

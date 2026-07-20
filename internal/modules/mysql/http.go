@@ -20,11 +20,14 @@ func (m *Module) registerHTTP(registry module.Registry) error {
 		{"GET /api/v1/mysql-family/accounts", "databases.read", http.HandlerFunc(m.accountsHTTP)},
 		{"POST /api/v1/mysql-family/accounts", "databases.write", http.HandlerFunc(m.createAccountHTTP)},
 		{"POST /api/v1/mysql-family/accounts/{id}/rotate", "databases.write", http.HandlerFunc(m.rotateAccountHTTP)},
+		{"DELETE /api/v1/mysql-family/accounts/{id}", "databases.write", http.HandlerFunc(m.dropAccountHTTP)},
 		{"POST /api/v1/mysql-family/accounts/{id}/credential", "operations.apply", http.HandlerFunc(m.credentialHTTP)},
 		{"GET /api/v1/mysql-family/databases", "databases.read", http.HandlerFunc(m.databasesHTTP)},
 		{"POST /api/v1/mysql-family/databases", "databases.write", http.HandlerFunc(m.createDatabaseHTTP)},
+		{"DELETE /api/v1/mysql-family/databases/{id}", "databases.write", http.HandlerFunc(m.dropDatabaseHTTP)},
 		{"GET /api/v1/mysql-family/grants", "databases.read", http.HandlerFunc(m.grantsHTTP)},
 		{"POST /api/v1/mysql-family/grants", "databases.write", http.HandlerFunc(m.createGrantHTTP)},
+		{"DELETE /api/v1/mysql-family/grants/{id}", "databases.write", http.HandlerFunc(m.dropGrantHTTP)},
 		{"GET /api/v1/mysql-family/restore-points", "databases.read", http.HandlerFunc(m.restorePointsHTTP)},
 		{"POST /api/v1/mysql-family/databases/{id}/backups", "databases.write", http.HandlerFunc(m.createBackupHTTP)},
 		{"POST /api/v1/mysql-family/restore-points/{id}/restore", "databases.write", http.HandlerFunc(m.prepareRestoreHTTP)},
@@ -155,6 +158,48 @@ func (m *Module) createGrantHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 202, map[string]any{"grant": grant, "job": job})
+}
+
+func (m *Module) dropDatabaseHTTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := actorID(r)
+	if !ok {
+		writeError(w, 401, "authentication_required", "Sign in to continue.")
+		return
+	}
+	job, err := m.DropDatabase(r.Context(), r.PathValue("id"), actor)
+	if err != nil {
+		writeError(w, 409, "mysql_family_database_not_removable", err.Error())
+		return
+	}
+	writeJSON(w, 202, map[string]any{"job": job})
+}
+
+func (m *Module) dropAccountHTTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := actorID(r)
+	if !ok {
+		writeError(w, 401, "authentication_required", "Sign in to continue.")
+		return
+	}
+	job, err := m.DropAccount(r.Context(), r.PathValue("id"), actor)
+	if err != nil {
+		writeError(w, 409, "mysql_family_account_not_removable", err.Error())
+		return
+	}
+	writeJSON(w, 202, map[string]any{"job": job})
+}
+
+func (m *Module) dropGrantHTTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := actorID(r)
+	if !ok {
+		writeError(w, 401, "authentication_required", "Sign in to continue.")
+		return
+	}
+	job, err := m.DropGrant(r.Context(), r.PathValue("id"), actor)
+	if err != nil {
+		writeError(w, 409, "mysql_family_grant_not_removable", err.Error())
+		return
+	}
+	writeJSON(w, 202, map[string]any{"job": job})
 }
 
 func (m *Module) restorePointsHTTP(w http.ResponseWriter, r *http.Request) {

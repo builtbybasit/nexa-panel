@@ -10,6 +10,7 @@ type Status =
   | 'backing_up'
   | 'verified'
   | 'restoring'
+  | 'deleting'
   | 'failed'
   | 'online'
 
@@ -151,6 +152,18 @@ export function createGrant(input: { databaseId: string; accountId: string; acce
     method: 'POST',
     body: JSON.stringify(input),
   })
+}
+
+export function dropDatabase(id: string) {
+  return request<{ job: Job }>(`/api/v1/mysql-family/databases/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function dropAccount(id: string) {
+  return request<{ job: Job }>(`/api/v1/mysql-family/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function dropGrant(id: string) {
+  return request<{ job: Job }>(`/api/v1/mysql-family/grants/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function createBackup(id: string) {

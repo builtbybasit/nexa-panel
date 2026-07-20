@@ -65,20 +65,40 @@ func (m *Module) changeFor(ctx context.Context, resourceType, resourceID string,
 		return postgresoperator.Change{Action: action, InstanceID: instance.ID, Version: instance.Version, Cluster: instance.ClusterName, Port: instance.Port}, nil
 	case resourceRole:
 		role, err := m.getRoleModel(ctx, resourceID)
-		if err != nil || role.PendingSecretDigest == nil {
-			return postgresoperator.Change{}, errors.New("pending role credential is unavailable")
+		if err != nil {
+			return postgresoperator.Change{}, err
 		}
-		return postgresoperator.Change{Action: action, InstanceID: role.InstanceID, Role: role.Name, SecretSHA256: *role.PendingSecretDigest}, nil
+		change := postgresoperator.Change{Action: action, InstanceID: role.InstanceID, Role: role.Name}
+		if action == postgresoperator.ActionCreateRole || action == postgresoperator.ActionRotateRole {
+			if role.PendingSecretDigest == nil {
+				return postgresoperator.Change{}, errors.New("pending role credential is unavailable")
+			}
+			change.SecretSHA256 = *role.PendingSecretDigest
+		}
+		if action == postgresoperator.ActionDropRole {
+			roleDatabases, err := m.roleDatabasesFor(ctx, role.ID)
+			if err != nil {
+				return postgresoperator.Change{}, err
+			}
+			change.RoleDatabases = roleDatabases
+		}
+		return change, nil
 	case resourceDatabase:
 		database, err := m.getDatabaseModel(ctx, resourceID)
 		if err != nil {
 			return postgresoperator.Change{}, err
 		}
-		owner, err := m.getRoleModel(ctx, database.OwnerRoleID)
-		if err != nil {
-			return postgresoperator.Change{}, err
+		change := postgresoperator.Change{Action: action, InstanceID: database.InstanceID, Database: database.Name}
+		// Dropping needs only the database name; the owner role may already be
+		// gone and dropdb does not use it.
+		if action != postgresoperator.ActionDropDatabase {
+			owner, err := m.getRoleModel(ctx, database.OwnerRoleID)
+			if err != nil {
+				return postgresoperator.Change{}, err
+			}
+			change.OwnerRole = owner.Name
 		}
-		return postgresoperator.Change{Action: action, InstanceID: database.InstanceID, Database: database.Name, OwnerRole: owner.Name}, nil
+		return change, nil
 	case resourceGrant:
 		grant, err := m.getGrantModel(ctx, resourceID)
 		if err != nil {
@@ -125,6 +145,9 @@ func (m *Module) changeFor(ctx context.Context, resourceType, resourceID string,
 
 func (m *Module) commitObservation(ctx context.Context, stored StoredPlan, observation postgresoperator.Observation) error {
 	now := m.now().UTC()
+	if isDropOperation(stored.Operation) {
+		return m.commitDrop(ctx, stored)
+	}
 	switch stored.ResourceType {
 	case resourceInstance:
 		if observation.Instance == nil {

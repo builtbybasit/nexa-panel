@@ -10,6 +10,7 @@ type DatabaseStatus =
   | 'backing_up'
   | 'verified'
   | 'restoring'
+  | 'deleting'
   | 'failed'
   | 'online'
   | 'down'
@@ -190,6 +191,18 @@ export function createGrant(input: {
     method: 'POST',
     body: JSON.stringify(input),
   })
+}
+
+export function dropRole(id: string): Promise<{ job: Job }> {
+  return request(`/api/v1/postgresql/roles/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function dropDatabase(id: string): Promise<{ job: Job }> {
+  return request(`/api/v1/postgresql/databases/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function dropGrant(id: string): Promise<{ job: Job }> {
+  return request(`/api/v1/postgresql/grants/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function createBackup(databaseId: string): Promise<{ restorePoint: RestorePoint; job: Job }> {

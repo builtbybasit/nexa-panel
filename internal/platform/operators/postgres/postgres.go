@@ -16,8 +16,11 @@ const (
 	ActionProvision      Action = "instance.provision"
 	ActionCreateRole     Action = "role.create"
 	ActionRotateRole     Action = "role.rotate"
+	ActionDropRole       Action = "role.drop"
 	ActionCreateDatabase Action = "database.create"
+	ActionDropDatabase   Action = "database.drop"
 	ActionApplyGrant     Action = "grant.apply"
+	ActionRevokeGrant    Action = "grant.revoke"
 	ActionCreateBackup   Action = "backup.create"
 	ActionRestoreBackup  Action = "backup.restore"
 )
@@ -55,11 +58,24 @@ type Change struct {
 	OwnerRole    string      `json:"ownerRole,omitempty"`
 	Role         string      `json:"role,omitempty"`
 	Access       AccessLevel `json:"access,omitempty"`
+	// RoleDatabases lists every database the role being dropped is entangled
+	// with, so its objects and privileges can be cleared before DROP ROLE — which
+	// Postgres refuses while a role still owns or is granted anything. A NewOwner
+	// marks a database the role owns and names the role that inherits it.
+	RoleDatabases []RoleDatabase `json:"roleDatabases,omitempty"`
 	BackupID     string      `json:"backupId,omitempty"`
 	BackupPath   string      `json:"backupPath,omitempty"`
 	BackupSHA256 string      `json:"backupSha256,omitempty"`
 	SecretSHA256 string      `json:"secretSha256,omitempty"`
 	RestoreToken string      `json:"restoreToken,omitempty"`
+}
+
+// RoleDatabase is one database a role being dropped touches. NewOwner is set
+// only for a database the role owns; it names the role that inherits ownership
+// so the database survives the drop.
+type RoleDatabase struct {
+	Name     string `json:"name"`
+	NewOwner string `json:"newOwner,omitempty"`
 }
 
 type Plan struct {

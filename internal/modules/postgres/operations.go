@@ -38,6 +38,8 @@ func (m *Module) ApplyPlan(ctx context.Context, resourceType, resourceID string,
 		applyStatus = StatusBackingUp
 	} else if plan.Operation == postgresoperator.ActionRestoreBackup {
 		applyStatus = StatusRestoring
+	} else if isDropOperation(plan.Operation) {
+		applyStatus = StatusDeleting
 	}
 	_, err = m.attachJob(ctx, resourceType, resourceID, job.ID, applyStatus)
 	return job, err

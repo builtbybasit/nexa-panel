@@ -33,6 +33,10 @@ func (o *HostOperator) normalizeChange(ctx context.Context, change Change, insta
 	change.Database = strings.ToLower(strings.TrimSpace(change.Database))
 	change.OwnerRole = strings.ToLower(strings.TrimSpace(change.OwnerRole))
 	change.Role = strings.ToLower(strings.TrimSpace(change.Role))
+	for index := range change.RoleDatabases {
+		change.RoleDatabases[index].Name = strings.ToLower(strings.TrimSpace(change.RoleDatabases[index].Name))
+		change.RoleDatabases[index].NewOwner = strings.ToLower(strings.TrimSpace(change.RoleDatabases[index].NewOwner))
+	}
 	change.BackupID = strings.TrimSpace(change.BackupID)
 	change.BackupPath = filepath.Clean(strings.TrimSpace(change.BackupPath))
 	change.BackupSHA256 = strings.ToLower(strings.TrimSpace(change.BackupSHA256))
@@ -87,9 +91,26 @@ func validateResourceChange(change Change, backupRoot string) error {
 		if !namePattern.MatchString(change.Role) || !hashPattern.MatchString(change.SecretSHA256) {
 			return errors.New("role and credential digest are required")
 		}
+	case ActionDropRole:
+		if !namePattern.MatchString(change.Role) {
+			return errors.New("a valid role is required")
+		}
+		for _, item := range change.RoleDatabases {
+			if !namePattern.MatchString(item.Name) || (item.NewOwner != "" && !namePattern.MatchString(item.NewOwner)) {
+				return errors.New("role database references must be valid identifiers")
+			}
+		}
 	case ActionCreateDatabase:
 		if !namePattern.MatchString(change.Database) || !namePattern.MatchString(change.OwnerRole) {
 			return errors.New("database and owner role are required")
+		}
+	case ActionDropDatabase:
+		if !namePattern.MatchString(change.Database) {
+			return errors.New("a valid database is required")
+		}
+	case ActionRevokeGrant:
+		if !namePattern.MatchString(change.Database) || !namePattern.MatchString(change.OwnerRole) || !namePattern.MatchString(change.Role) {
+			return errors.New("database, owner role, and grantee role are required")
 		}
 	case ActionApplyGrant:
 		if !namePattern.MatchString(change.Database) || !namePattern.MatchString(change.OwnerRole) || !namePattern.MatchString(change.Role) {
@@ -131,10 +152,25 @@ func planDescription(change Change) ([]string, []string, bool) {
 		return []string{fmt.Sprintf("Create non-superuser login role %s.", change.Role), "Verify the role exists without returning its password."}, nil, false
 	case ActionRotateRole:
 		return []string{fmt.Sprintf("Rotate the credential for role %s without placing it in command arguments.", change.Role), "Verify the role can still log in."}, []string{"Existing clients must be updated with the new credential."}, false
+	case ActionDropRole:
+		steps := []string{}
+		warnings := []string{fmt.Sprintf("Applications signing in as %s will lose access.", change.Role)}
+		for _, item := range change.RoleDatabases {
+			if item.NewOwner != "" {
+				steps = append(steps, fmt.Sprintf("Transfer ownership of database %s to %s.", item.Name, item.NewOwner))
+				warnings = append(warnings, fmt.Sprintf("Database %s is owned by %s; ownership moves to %s.", item.Name, change.Role, item.NewOwner))
+			}
+		}
+		steps = append(steps, fmt.Sprintf("Reassign owned objects, revoke privileges, and drop role %s.", change.Role), "Verify the role no longer exists.")
+		return steps, warnings, false
 	case ActionCreateDatabase:
 		return []string{fmt.Sprintf("Create database %s from template0 owned by %s.", change.Database, change.OwnerRole), "Verify ownership and connectivity."}, nil, false
+	case ActionDropDatabase:
+		return []string{fmt.Sprintf("Drop database %s and everything in it.", change.Database), "Verify the database no longer exists."}, []string{fmt.Sprintf("This permanently deletes database %s. Back it up first.", change.Database)}, true
 	case ActionApplyGrant:
 		return []string{fmt.Sprintf("Apply %s access on %s to %s.", change.Access, change.Database, change.Role), "Set matching privileges for existing and future public-schema objects."}, nil, false
+	case ActionRevokeGrant:
+		return []string{fmt.Sprintf("Revoke %s's access on %s.", change.Role, change.Database)}, []string{fmt.Sprintf("%s will lose the access this grant provided.", change.Role)}, false
 	case ActionCreateBackup:
 		return []string{fmt.Sprintf("Create a custom-format logical backup of %s.", change.Database), "Hash and verify the archive before recording a restore point."}, nil, false
 	case ActionRestoreBackup:

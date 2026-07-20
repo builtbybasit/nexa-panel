@@ -45,10 +45,16 @@ func (o *HostOperator) execute(ctx context.Context, change Change, secret string
 		return o.createRole(ctx, change, secret)
 	case ActionRotateRole:
 		return o.rotateRole(ctx, change, secret)
+	case ActionDropRole:
+		return o.dropRole(ctx, change)
 	case ActionCreateDatabase:
 		return o.createDatabase(ctx, change)
+	case ActionDropDatabase:
+		return o.dropRoleDatabase(ctx, change)
 	case ActionApplyGrant:
 		return o.applyGrant(ctx, change)
+	case ActionRevokeGrant:
+		return o.revokeGrant(ctx, change)
 	case ActionCreateBackup:
 		return o.createBackup(ctx, change)
 	case ActionRestoreBackup:

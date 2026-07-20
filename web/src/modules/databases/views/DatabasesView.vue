@@ -44,6 +44,8 @@ import {
   createDatabase,
   createInstance,
   createRole,
+  dropDatabase,
+  dropRole,
   getPlan,
   listDatabases,
   listInstances,
@@ -83,6 +85,7 @@ const roleRunner = useJobRunner()
 const databaseRunner = useJobRunner()
 const rotateRunner = useJobRunner()
 const backupRunner = useJobRunner()
+const dropRunner = useJobRunner()
 
 type Runner = ReturnType<typeof useJobRunner>
 
@@ -108,7 +111,9 @@ const plans = usePlanReview<ResourceType, PostgresPlan>({
   refresh: refreshAll,
   canApply: () => identity.can('operations.apply'),
   isDestructive: (target, plan) =>
-    target.type === 'restore-points' && (plan.operation.toLowerCase().includes('restore') || plan.agentPlan.interruption),
+    plan.operation.toLowerCase().includes('drop') ||
+    plan.operation.toLowerCase().includes('revoke') ||
+    (target.type === 'restore-points' && (plan.operation.toLowerCase().includes('restore') || plan.agentPlan.interruption)),
 })
 
 // One-click pgAdmin launch, logged in as the database's owner role.
@@ -394,6 +399,35 @@ function backupDatabase(database: ManagedDatabase) {
     onSettled: refreshAll,
     successToast: `Backed up ${database.name}`,
     failureMessage: 'The backup failed',
+  })
+}
+
+// --- Delete (drop) ---
+// A drop follows the same review path: the DELETE request produces a plan-ready
+// resource, then the destructive plan is opened for a final approval before the
+// database or role is actually removed.
+const dropDatabaseTarget = ref<ManagedDatabase>()
+const dropRoleTarget = ref<DatabaseRole>()
+
+function confirmDropDatabase() {
+  const database = dropDatabaseTarget.value
+  if (!database || !canWrite.value) return
+  dropDatabaseTarget.value = undefined
+  void dropRunner.run(async () => (await dropDatabase(database.id)).job.id, {
+    onSettled: refreshAll,
+    onSuccess: () => plans.open({ type: 'databases', id: database.id, label: `Delete ${database.name}` }),
+    failureMessage: 'Deleting the database failed',
+  })
+}
+
+function confirmDropRole() {
+  const role = dropRoleTarget.value
+  if (!role || !canWrite.value) return
+  dropRoleTarget.value = undefined
+  void dropRunner.run(async () => (await dropRole(role.id)).job.id, {
+    onSettled: refreshAll,
+    onSuccess: () => plans.open({ type: 'roles', id: role.id, label: `Delete ${role.name}` }),
+    failureMessage: 'Deleting the role failed',
   })
 }
 
@@ -704,6 +738,16 @@ watch(databaseInstance, () => {
                             <DropdownMenuItem as-child>
                               <RouterLink :to="detailLink(item)">Access and backups</RouterLink>
                             </DropdownMenuItem>
+                            <template v-if="canWrite && (item.status === 'active' || item.status === 'failed')">
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                class="text-rose-300"
+                                :disabled="dropRunner.busy.value"
+                                @select="dropDatabaseTarget = item"
+                              >
+                                Delete database…
+                              </DropdownMenuItem>
+                            </template>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </span>
@@ -805,6 +849,15 @@ watch(databaseInstance, () => {
                       :loading="rotateRunner.busy.value && rotatePendingId === role.id"
                       :disabled="rotateRunner.busy.value"
                       @click="rotateTarget = role"
+                    />
+                    <AppButton
+                      v-if="canWrite && (role.status === 'active' || role.status === 'failed')"
+                      size="sm"
+                      variant="ghost"
+                      icon="trash"
+                      :aria-label="`Delete ${role.name}`"
+                      :disabled="dropRunner.busy.value"
+                      @click="dropRoleTarget = role"
                     />
                   </span>
                 </td>
@@ -933,6 +986,30 @@ watch(databaseInstance, () => {
     >
       Connected applications will fail until the new password is deployed. You review a plan before anything changes, and
       the new password is shown exactly once.
+    </AppConfirmDialog>
+
+    <AppConfirmDialog
+      :open="canWrite && !!dropDatabaseTarget"
+      :title="dropDatabaseTarget ? `Delete database ${dropDatabaseTarget.name}?` : 'Delete database?'"
+      confirm-label="Delete database"
+      tone="danger"
+      @confirm="confirmDropDatabase"
+      @close="dropDatabaseTarget = undefined"
+    >
+      This permanently deletes the database and everything in it. You review a final plan before it is removed, but there
+      is no undo — back it up first if you might need the data.
+    </AppConfirmDialog>
+
+    <AppConfirmDialog
+      :open="canWrite && !!dropRoleTarget"
+      :title="dropRoleTarget ? `Delete role ${dropRoleTarget.name}?` : 'Delete role?'"
+      confirm-label="Delete role"
+      tone="danger"
+      @confirm="confirmDropRole"
+      @close="dropRoleTarget = undefined"
+    >
+      Applications signing in as this role will lose access. A database this role owns must keep at least one other role,
+      or the deletion is refused; if another role remains, it inherits ownership.
     </AppConfirmDialog>
 
     <AppConfirmDialog

@@ -22,9 +22,12 @@ type Action string
 
 const (
 	ActionCreateDatabase Action = "database.create"
+	ActionDropDatabase   Action = "database.drop"
 	ActionCreateAccount  Action = "account.create"
 	ActionRotateAccount  Action = "account.rotate"
+	ActionDropAccount    Action = "account.drop"
 	ActionApplyGrant     Action = "grant.apply"
+	ActionRevokeGrant    Action = "grant.revoke"
 	ActionCreateBackup   Action = "backup.create"
 	ActionRestoreBackup  Action = "backup.restore"
 )

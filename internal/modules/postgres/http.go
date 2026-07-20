@@ -21,11 +21,14 @@ func (m *Module) registerHTTP(registry module.Registry) error {
 		{"GET /api/v1/postgresql/roles", "databases.read", http.HandlerFunc(m.rolesHTTP)},
 		{"POST /api/v1/postgresql/roles", "databases.write", http.HandlerFunc(m.createRoleHTTP)},
 		{"POST /api/v1/postgresql/roles/{id}/rotate", "databases.write", http.HandlerFunc(m.rotateRoleHTTP)},
+		{"DELETE /api/v1/postgresql/roles/{id}", "databases.write", http.HandlerFunc(m.dropRoleHTTP)},
 		{"POST /api/v1/postgresql/roles/{id}/credential", "operations.apply", http.HandlerFunc(m.credentialHTTP)},
 		{"GET /api/v1/postgresql/databases", "databases.read", http.HandlerFunc(m.databasesHTTP)},
 		{"POST /api/v1/postgresql/databases", "databases.write", http.HandlerFunc(m.createDatabaseHTTP)},
+		{"DELETE /api/v1/postgresql/databases/{id}", "databases.write", http.HandlerFunc(m.dropDatabaseHTTP)},
 		{"GET /api/v1/postgresql/grants", "databases.read", http.HandlerFunc(m.grantsHTTP)},
 		{"POST /api/v1/postgresql/grants", "databases.write", http.HandlerFunc(m.createGrantHTTP)},
+		{"DELETE /api/v1/postgresql/grants/{id}", "databases.write", http.HandlerFunc(m.dropGrantHTTP)},
 		{"GET /api/v1/postgresql/restore-points", "databases.read", http.HandlerFunc(m.restorePointsHTTP)},
 		{"POST /api/v1/postgresql/databases/{id}/backups", "databases.write", http.HandlerFunc(m.createBackupHTTP)},
 		{"POST /api/v1/postgresql/restore-points/{id}/restore", "databases.write", http.HandlerFunc(m.prepareRestoreHTTP)},
@@ -128,6 +131,48 @@ func (m *Module) databasesHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
+}
+
+func (m *Module) dropRoleHTTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := actorID(r)
+	if !ok {
+		writeError(w, 401, "authentication_required", "Sign in to continue.")
+		return
+	}
+	job, err := m.DropRole(r.Context(), r.PathValue("id"), actor)
+	if err != nil {
+		writeError(w, 409, "postgresql_role_not_removable", err.Error())
+		return
+	}
+	writeJSON(w, 202, map[string]any{"job": job})
+}
+
+func (m *Module) dropDatabaseHTTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := actorID(r)
+	if !ok {
+		writeError(w, 401, "authentication_required", "Sign in to continue.")
+		return
+	}
+	job, err := m.DropDatabase(r.Context(), r.PathValue("id"), actor)
+	if err != nil {
+		writeError(w, 409, "postgresql_database_not_removable", err.Error())
+		return
+	}
+	writeJSON(w, 202, map[string]any{"job": job})
+}
+
+func (m *Module) dropGrantHTTP(w http.ResponseWriter, r *http.Request) {
+	actor, ok := actorID(r)
+	if !ok {
+		writeError(w, 401, "authentication_required", "Sign in to continue.")
+		return
+	}
+	job, err := m.DropGrant(r.Context(), r.PathValue("id"), actor)
+	if err != nil {
+		writeError(w, 409, "postgresql_grant_not_removable", err.Error())
+		return
+	}
+	writeJSON(w, 202, map[string]any{"job": job})
 }
 
 func (m *Module) createDatabaseHTTP(w http.ResponseWriter, r *http.Request) {

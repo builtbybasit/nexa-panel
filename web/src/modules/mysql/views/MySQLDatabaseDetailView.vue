@@ -31,6 +31,7 @@ import {
   applyPlan,
   createBackup,
   createGrant,
+  dropGrant,
   getPlan,
   listAccounts,
   listDatabases,
@@ -132,8 +133,24 @@ const plans = usePlanReview<ResourceType, Plan>({
   refresh: refreshAll,
   canApply: () => identity.can('operations.apply'),
   isDestructive: (target, plan) =>
-    target.type === 'restore-points' && (plan.operation.toLowerCase().includes('restore') || plan.agentPlan.interruption),
+    plan.operation.toLowerCase().includes('drop') ||
+    plan.operation.toLowerCase().includes('revoke') ||
+    (target.type === 'restore-points' && (plan.operation.toLowerCase().includes('restore') || plan.agentPlan.interruption)),
 })
+
+const dropRunner = useJobRunner()
+const dropGrantTarget = ref<{ id: string; label: string }>()
+
+function confirmDropGrant() {
+  const grant = dropGrantTarget.value
+  if (!grant || !canWrite.value) return
+  dropGrantTarget.value = undefined
+  void dropRunner.run(async () => (await dropGrant(grant.id)).job.id, {
+    onSettled: refreshAll,
+    onSuccess: () => plans.open({ type: 'grants', id: grant.id, label: `Revoke ${grant.label}` }),
+    failureMessage: 'Revoking access failed',
+  })
+}
 
 /** The host is part of an account's identity: `app_usr@localhost` ≠ `app_usr@%`. */
 function accountLabel(id: string) {
@@ -563,6 +580,20 @@ const revealFacts = computed<Fact[]>(() => {
                         :disabled="rotateRunner.busy.value"
                         @click="rotateTarget = row.account"
                       />
+                      <AppButton
+                        v-if="canWrite && row.grantId && (row.grantStatus === 'active' || row.grantStatus === 'failed')"
+                        size="sm"
+                        variant="ghost"
+                        icon="trash"
+                        :aria-label="`Revoke ${row.account.name}@${row.account.host}`"
+                        :disabled="dropRunner.busy.value"
+                        @click="
+                          dropGrantTarget = {
+                            id: row.grantId,
+                            label: `${row.account.name}@${row.account.host} → ${database.name}`,
+                          }
+                        "
+                      />
                     </span>
                   </td>
                 </tr>
@@ -742,6 +773,17 @@ const revealFacts = computed<Fact[]>(() => {
       >
         Connected applications will fail until the new password is deployed. You review a plan before anything changes,
         and the new password is shown exactly once.
+      </AppConfirmDialog>
+
+      <AppConfirmDialog
+        :open="canWrite && !!dropGrantTarget"
+        :title="dropGrantTarget ? `Revoke ${dropGrantTarget.label}?` : 'Revoke access?'"
+        confirm-label="Revoke access"
+        tone="danger"
+        @confirm="confirmDropGrant"
+        @close="dropGrantTarget = undefined"
+      >
+        The account keeps its login but loses all access to this database. You review a final plan before it takes effect.
       </AppConfirmDialog>
 
       <AppConfirmDialog

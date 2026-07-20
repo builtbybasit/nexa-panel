@@ -46,12 +46,18 @@ func (o *HostOperator) execute(ctx context.Context, engine *Engine, change Chang
 	switch change.Action {
 	case ActionCreateDatabase:
 		return o.createDatabase(ctx, engine, change)
+	case ActionDropDatabase:
+		return o.dropDatabase(ctx, engine, change)
 	case ActionCreateAccount:
 		return o.createAccount(ctx, engine, change, secret, false)
 	case ActionRotateAccount:
 		return o.createAccount(ctx, engine, change, secret, true)
+	case ActionDropAccount:
+		return o.dropAccount(ctx, engine, change)
 	case ActionApplyGrant:
 		return o.applyGrant(ctx, engine, change)
+	case ActionRevokeGrant:
+		return o.revokeGrant(ctx, engine, change)
 	case ActionCreateBackup:
 		return o.createBackup(ctx, engine, change)
 	case ActionRestoreBackup:
