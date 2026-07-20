@@ -6,7 +6,6 @@ import { RouterLink, useRoute } from 'vue-router'
 import { listCertificates, type Certificate } from '@/modules/certificates/api'
 import { listDomains, type Domain } from '@/modules/domains/api'
 import { useIdentityStore } from '@/modules/identity/store'
-import SitePhpSettingsCard from '@/modules/php/components/SitePhpSettingsCard.vue'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { daysUntil, formatDateTime } from '@/shared/formatters'
 import {
@@ -39,7 +38,6 @@ const canWriteFiles = computed(() => identity.can('files.write'))
 const canReadDomains = computed(() => identity.can('domains.read'))
 const canReadCertificates = computed(() => identity.can('certificates.read'))
 const canReadFiles = computed(() => identity.can('files.read'))
-const canReadApplications = computed(() => identity.can('applications.read'))
 
 const siteId = computed(() => String(route.params.siteId ?? ''))
 
@@ -125,6 +123,7 @@ const tiles = computed<ManageTile[]>(() => {
     items.push({ label: 'SSL certificates', icon: 'lock', to: `/certificates?site=${id}` })
   }
   if (identity.can('schedules.read')) items.push({ label: 'Scheduler', icon: 'clock', to: `/schedules?site=${id}` })
+  if (identity.can('applications.read')) items.push({ label: 'PHP settings', icon: 'wrench', to: `/php/site?site=${id}` })
   if (identity.can('logs.read')) items.push({ label: 'Logs', icon: 'file-text', to: `/logs?site=${id}` })
   if (identity.can('backups.read')) items.push({ label: 'Backup copies', icon: 'archive', to: '/backups' })
   return items
@@ -571,11 +570,6 @@ watch(siteId, () => {
         </div>
       </AppCard>
 
-      <SitePhpSettingsCard
-        v-if="canReadApplications && site && site.status === 'active'"
-        :site-id="site.id"
-        :php-version="site.phpVersion"
-      />
 
       <div class="grid items-start gap-4 lg:grid-cols-2">
         <AppCard v-if="canReadDomains" eyebrow="Routing" title="Domains">

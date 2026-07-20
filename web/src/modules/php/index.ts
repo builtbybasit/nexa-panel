@@ -12,5 +12,11 @@ export const phpModule: FeatureModule = {
       component: () => import('./views/PhpView.vue'),
       meta: { moduleId: 'php' },
     },
+    {
+      path: '/php/site',
+      name: 'php-site',
+      component: () => import('./views/SitePhpSettingsView.vue'),
+      meta: { moduleId: 'php' },
+    },
   ],
 }
