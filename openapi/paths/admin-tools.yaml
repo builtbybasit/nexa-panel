@@ -32,7 +32,7 @@ admin-tools_kind_plan:
         - pgadmin
     responses:
       '200':
-        description: Agent-signed Podman deployment plan
+        description: Agent-signed native or isolated admin-tool deployment plan
       '4XX':
         $ref: ../components/responses.yaml#/ClientError
   post:
@@ -93,7 +93,7 @@ admin-tools_kind_apply:
         - pgadmin
     responses:
       '202':
-        description: Reviewed Podman tool operation was queued
+        description: Reviewed admin-tool operation was queued
         content:
           application/json:
             schema:

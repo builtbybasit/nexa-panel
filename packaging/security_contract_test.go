@@ -124,12 +124,12 @@ func TestPrivilegedAgentRetainsPackageWritesInsideReadOnlyHostSandbox(t *testing
 	requireAbsentDirective(t, directives, "ExecStartPost")
 }
 
-func TestControlPlaneUsesPrivateStateAndSystemdCredential(t *testing.T) {
+func TestControlPlaneUsesPrivateStateAndSharedAgentCredential(t *testing.T) {
 	directives := readServiceDirectives(t, "systemd/nexa-api.service")
 	requireDirective(t, directives, "User", "nexa")
 	requireDirective(t, directives, "Group", "nexa")
 	requireDirective(t, directives, "UMask", "0077")
-	requireDirective(t, directives, "LoadCredential", "agent.token:/etc/nexa-panel/agent.token")
+	requireAbsentDirective(t, directives, "LoadCredential")
 	requireDirective(t, directives, "StateDirectoryMode", "0700")
 	requireDirective(t, directives, "LogsDirectoryMode", "0700")
 	requireDirective(t, directives, "ProtectSystem", "strict")
@@ -141,8 +141,8 @@ func TestControlPlaneUsesPrivateStateAndSystemdCredential(t *testing.T) {
 	requireAbsentDirective(t, directives, "RuntimeDirectory")
 
 	execStart := directives["ExecStart"]
-	if len(execStart) != 1 || !strings.Contains(execStart[0], "--unix-socket /run/nexa-panel/api.sock") || !strings.Contains(execStart[0], "--agent-token %d/agent.token") {
-		t.Fatalf("control plane must use the local API socket and private credential copy, got %q", execStart)
+	if len(execStart) != 1 || !strings.Contains(execStart[0], "--unix-socket /run/nexa-panel/api.sock") || !strings.Contains(execStart[0], "--agent-token /etc/nexa-panel/agent.token") {
+		t.Fatalf("control plane must use the local API socket and shared group-scoped credential, got %q", execStart)
 	}
 	for _, environment := range directives["Environment"] {
 		if strings.HasPrefix(environment, "NEXA_AGENT_TOKEN=") {
@@ -191,10 +191,10 @@ func TestTmpfilesSeparatesRuntimeStateSecretsAndContainerData(t *testing.T) {
 	wanted := map[string]tmpfilesEntry{
 		"/run/nexa-panel":                                 {kind: "d", mode: "2750", user: "nexa", group: "nexa"},
 		"/etc/nexa-panel":                                 {kind: "d", mode: "0711", user: "root", group: "root"},
-		"/etc/nexa-panel/agent.token":                     {kind: "z", mode: "0600", user: "root", group: "root"},
+		"/etc/nexa-panel/agent.token":                     {kind: "z", mode: "0640", user: "root", group: "nexa"},
 		"/var/lib/nexa-panel":                             {kind: "d", mode: "0700", user: "nexa", group: "nexa"},
 		"/var/lib/nexa-panel/control.db*":                 {kind: "z", mode: "0600", user: "nexa", group: "nexa"},
-		"/etc/nexa-panel/admin-tools":                     {kind: "d", mode: "0700", user: "root", group: "root"},
+		"/etc/nexa-panel/admin-tools":                     {kind: "d", mode: "0711", user: "root", group: "root"},
 		"/etc/nexa-panel/admin-tools/phpmyadmin":          {kind: "d", mode: "0750", user: "root", group: "33"},
 		"/etc/nexa-panel/admin-tools/phpmyadmin/sessions": {kind: "d", mode: "0750", user: "33", group: "33"},
 		"/etc/nexa-panel/admin-tools/pgadmin":             {kind: "d", mode: "0750", user: "root", group: "5050"},
@@ -212,7 +212,7 @@ func TestTmpfilesSeparatesRuntimeStateSecretsAndContainerData(t *testing.T) {
 	}
 }
 
-func TestNginxProxyBoundsBodiesAndUsesOnlyTheLocalAPISocket(t *testing.T) {
+func TestNginxProxyPreservesExternalAuthorityAndUsesOnlyTheLocalAPISocket(t *testing.T) {
 	content, err := os.ReadFile("nginx/nexa-panel.conf.template")
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +222,7 @@ func TestNginxProxyBoundsBodiesAndUsesOnlyTheLocalAPISocket(t *testing.T) {
 		"client_max_body_size 10m;",
 		"client_body_timeout 5m;",
 		"proxy_pass http://unix:/run/nexa-panel/api.sock;",
+		"proxy_set_header Host $http_host;",
 		"proxy_set_header X-Forwarded-Proto $scheme;",
 	} {
 		if !strings.Contains(configuration, required) {
@@ -230,5 +231,8 @@ func TestNginxProxyBoundsBodiesAndUsesOnlyTheLocalAPISocket(t *testing.T) {
 	}
 	if strings.Contains(configuration, "client_max_body_size 2g") {
 		t.Fatal("Nginx template still permits unbounded multi-gigabyte request bodies")
+	}
+	if strings.Contains(configuration, "proxy_set_header Host $host;") {
+		t.Fatal("Nginx template drops non-default ports from the external request authority")
 	}
 }

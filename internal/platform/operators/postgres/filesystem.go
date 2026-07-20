@@ -44,6 +44,55 @@ func preparePostgresDirectory(root, path string) error {
 	return nil
 }
 
+// writePgHba atomically replaces pg_hba.conf, preserving the postgres:postgres
+// ownership and 0640 mode PostgreSQL requires. The rename makes the swap atomic
+// so a concurrent reload never observes a partial file.
+func writePgHba(path, content string) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".pg_hba.conf.tmp-*")
+	if err != nil {
+		return fmt.Errorf("stage pg_hba update: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	keep := false
+	defer func() {
+		_ = temporary.Close()
+		if !keep {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if _, err := temporary.WriteString(content); err != nil {
+		return fmt.Errorf("write pg_hba update: %w", err)
+	}
+	if err := temporary.Chmod(0o640); err != nil {
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if os.Geteuid() == 0 {
+		account, err := user.Lookup("postgres")
+		if err != nil {
+			return errors.New("postgres operating-system account is unavailable")
+		}
+		uid, uidErr := strconv.Atoi(account.Uid)
+		gid, gidErr := strconv.Atoi(account.Gid)
+		if uidErr != nil || gidErr != nil {
+			return errors.New("postgres operating-system account identifiers are invalid")
+		}
+		if err := os.Chown(temporaryPath, uid, gid); err != nil {
+			return fmt.Errorf("assign pg_hba ownership: %w", err)
+		}
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("install pg_hba update: %w", err)
+	}
+	keep = true
+	return nil
+}
+
 func syncFile(path string) error {
 	file, err := os.Open(path)
 	if err != nil {

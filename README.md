@@ -13,8 +13,8 @@ release.
   Unix socket. Configuration workflows use signed
   plan/apply/observe/rollback flows.
 - Feature modules own sites, domains, certificates, PostgreSQL, MySQL/MariaDB,
-  files, logs, schedules, backups, applications, and containerized database
-  administration tools.
+  files, logs, schedules, backups, applications, and database administration
+  tools.
 - SQLite stores control-plane state. Long-running work is persisted and resumes
   through the durable job worker after a process restart.
 - Vue 3 and Bun build the web application. Production assets are embedded in a
@@ -24,9 +24,10 @@ The packaged API listens on `/run/nexa-panel/api.sock`; Nginx is the only public
 ingress. The privileged agent listens separately on
 `/run/nexa-panel/agent.sock`.
 
-Podman is used only for isolated administration tools such as phpMyAdmin and
-pgAdmin. Nginx, PHP-FPM, PostgreSQL, and MySQL/MariaDB remain native services on
-the managed node.
+phpMyAdmin runs natively behind the node's existing Nginx and PHP-FPM services.
+Podman is used only for the heavier pgAdmin application, which has an explicit
+memory ceiling and a session-aligned automatic stop timer. PostgreSQL and
+MySQL/MariaDB remain native services on the managed node.
 
 ## Development
 
@@ -133,9 +134,9 @@ sudo curl --unix-socket /run/nexa-panel/api.sock http://localhost/api/v1/health/
 
 The API runs as the unprivileged `nexa` account. The root agent is confined by
 systemd hardening and an explicit writable-path boundary. Requests to the agent
-require the root-owned credential at `/etc/nexa-panel/agent.token`. The agent's
+require the group-scoped credential at `/etc/nexa-panel/agent.token`. The agent's
 systemd preflight creates or validates that credential before startup, and the
-API receives a private systemd credential copy. Role and site-scope checks are
+unprivileged API reads it through the dedicated `nexa` group. Role and site-scope checks are
 enforced server-side; sensitive operations additionally require recent MFA.
 
 Persistent state is stored in `/var/lib/nexa-panel/control.db`, and encrypted

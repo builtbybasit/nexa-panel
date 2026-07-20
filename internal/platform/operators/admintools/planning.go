@@ -28,8 +28,13 @@ func (o *HostOperator) Plan(ctx context.Context, change Change) (Plan, error) {
 	warnings := []string{}
 	switch change.Action {
 	case ActionDeploy:
-		steps = []string{"Write the root-owned Quadlet definition.", "Reload systemd and start the localhost-only tool service.", "Verify the container service is active."}
-		warnings = append(warnings, fmt.Sprintf("The container may use up to %d MiB; the Podman CLI itself is transient.", change.Tool.MemoryMB))
+		if change.Tool.Kind == PHPMyAdmin {
+			steps = []string{"Install the Ubuntu phpMyAdmin and PHP-FPM packages.", "Write the loopback-only Nginx and root-owned lifecycle configuration.", "Start the native web client and verify it is active."}
+			warnings = append(warnings, "phpMyAdmin shares the host Nginx and PHP-FPM runtime; stopping it removes only its private loopback route.")
+		} else {
+			steps = []string{"Write the root-owned Quadlet definition and idle-stop units.", "Reload systemd and start the localhost-only tool service.", "Verify the container service is active."}
+			warnings = append(warnings, fmt.Sprintf("The container may use up to %d MiB and stops 15 minutes after its latest launch; the Podman CLI itself is transient.", change.Tool.MemoryMB))
+		}
 	case ActionStart:
 		steps = []string{"Start the existing tool service.", "Verify the service is active."}
 	case ActionStop:
@@ -56,20 +61,29 @@ func normalize(change Change) (Change, error) {
 	if change.Action != ActionDeploy && change.Action != ActionStart && change.Action != ActionStop && change.Action != ActionLaunch {
 		return Change{}, errors.New("admin tool action is unsupported")
 	}
-	if change.Tool.Image != "" {
-		base.Image = strings.TrimSpace(change.Tool.Image)
-	}
 	if change.Tool.Port != 0 {
 		base.Port = change.Tool.Port
 	}
-	if change.Tool.MemoryMB != 0 {
-		base.MemoryMB = change.Tool.MemoryMB
+	if base.Port < 1024 || base.Port > 65535 {
+		return Change{}, errors.New("admin tool port is outside the safe range")
 	}
-	if len(base.Image) > 512 || !containerImagePattern.MatchString(base.Image) {
-		return Change{}, errors.New("admin tool image reference is invalid")
-	}
-	if base.Port < 1024 || base.Port > 65535 || base.MemoryMB < 64 || base.MemoryMB > 1024 {
-		return Change{}, errors.New("admin tool port or memory limit is outside the safe range")
+	if base.Kind == PHPMyAdmin {
+		if change.Tool.Image != "" || change.Tool.ContainerName != "" || change.Tool.MemoryMB != 0 || change.Tool.PIDsLimit != 0 {
+			return Change{}, errors.New("native phpMyAdmin does not accept container settings")
+		}
+	} else {
+		if change.Tool.Image != "" {
+			base.Image = strings.TrimSpace(change.Tool.Image)
+		}
+		if change.Tool.MemoryMB != 0 {
+			base.MemoryMB = change.Tool.MemoryMB
+		}
+		if len(base.Image) > 512 || !containerImagePattern.MatchString(base.Image) {
+			return Change{}, errors.New("admin tool image reference is invalid")
+		}
+		if base.MemoryMB < 64 || base.MemoryMB > 1024 {
+			return Change{}, errors.New("admin tool memory limit is outside the safe range")
+		}
 	}
 	change.Tool = *base
 	if change.Action == ActionLaunch {

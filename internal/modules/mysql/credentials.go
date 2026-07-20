@@ -33,12 +33,17 @@ func (m *Module) ResolveAdminToolCredential(ctx context.Context, databaseID, acc
 	if err != nil {
 		return AdminToolCredential{}, err
 	}
-	return AdminToolCredential{Host: "host.containers.internal", Port: engine.Port, Database: database.Name, Username: account.Name, Secret: secret}, nil
+	// Managed accounts default to user@localhost. phpMyAdmin receives the host's
+	// MySQL socket read-only, so it can honor that scope without opening database
+	// accounts or the database listener to a container bridge network.
+	return AdminToolCredential{Host: "localhost", Port: engine.Port, Database: database.Name, Username: account.Name, Secret: secret}, nil
 }
 
 func (m *Module) newCredential(accountID string) ([]byte, string, string, error) {
 	raw := make([]byte, 32)
-	rand.Read(raw)
+	if _, err := rand.Read(raw); err != nil {
+		return nil, "", "", err
+	}
 	secret := []byte(base64.RawURLEncoding.EncodeToString(raw))
 	clear(raw)
 	ciphertext, err := m.cipher.Encrypt(credentialLabel(accountID), secret)

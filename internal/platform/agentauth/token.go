@@ -22,7 +22,9 @@ func OpenOrCreate(path string) (string, error) {
 		return "", fmt.Errorf("create agent token directory: %w", err)
 	}
 	random := make([]byte, tokenBytes)
-	rand.Read(random)
+	if _, err := rand.Read(random); err != nil {
+		return "", fmt.Errorf("generate agent token: %w", err)
+	}
 	token := hex.EncodeToString(random)
 	file, err := os.CreateTemp(filepath.Dir(path), ".agent-token-*.partial")
 	if err != nil {
@@ -30,7 +32,7 @@ func OpenOrCreate(path string) (string, error) {
 	}
 	temporary := file.Name()
 	defer os.Remove(temporary)
-	if err := file.Chmod(0o600); err != nil {
+	if err := file.Chmod(0o640); err != nil {
 		_ = file.Close()
 		return "", fmt.Errorf("secure temporary agent token: %w", err)
 	}

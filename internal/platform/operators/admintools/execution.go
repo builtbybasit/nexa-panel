@@ -39,26 +39,43 @@ func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observat
 		return Observation{}, errors.New("unexpected secret for admin tool operation")
 	}
 	if change.Action == ActionDeploy {
-		if err := os.MkdirAll(o.quadletRoot, 0o755); err != nil {
-			return Observation{}, fmt.Errorf("create Quadlet directory: %w", err)
-		}
-		if err := os.MkdirAll(filepath.Join(o.configRoot, string(change.Tool.Kind)), 0o750); err != nil {
-			return Observation{}, fmt.Errorf("create admin tool configuration directory: %w", err)
-		}
-		if err := o.prepareToolConfig(change.Tool.Kind); err != nil {
-			return Observation{}, err
-		}
-		path := o.quadletPath(change.Tool.Kind)
-		if err := secureWrite(path, []byte(renderQuadlet(change.Tool, o.configRoot)), 0o640); err != nil {
-			return Observation{}, fmt.Errorf("write admin tool Quadlet: %w", err)
+		if change.Tool.Kind == PHPMyAdmin {
+			if err := o.deployNativePHPMyAdmin(ctx, change.Tool); err != nil {
+				return Observation{}, err
+			}
+		} else {
+			if err := os.MkdirAll(o.quadletRoot, 0o755); err != nil {
+				return Observation{}, fmt.Errorf("create Quadlet directory: %w", err)
+			}
+			if err := os.MkdirAll(filepath.Join(o.configRoot, string(change.Tool.Kind)), 0o750); err != nil {
+				return Observation{}, fmt.Errorf("create admin tool configuration directory: %w", err)
+			}
+			if err := o.prepareToolConfig(change.Tool.Kind); err != nil {
+				return Observation{}, err
+			}
+			path := o.quadletPath(change.Tool.Kind)
+			if err := secureWrite(path, []byte(renderQuadlet(change.Tool, o.configRoot)), 0o640); err != nil {
+				return Observation{}, fmt.Errorf("write admin tool Quadlet: %w", err)
+			}
+			if err := o.writePGAdminIdleUnits(); err != nil {
+				return Observation{}, err
+			}
 		}
 		if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"daemon-reload"}}); err != nil {
 			return Observation{}, commandError("reload admin tool units", output, err)
 		}
 	}
 	verb := "start"
+	if change.Action == ActionDeploy {
+		verb = "restart"
+	}
 	if change.Action == ActionStop {
 		verb = "stop"
+		if change.Tool.Kind == PGAdmin {
+			if err := o.stopPGAdminTimer(ctx); err != nil {
+				return Observation{}, err
+			}
+		}
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{verb, change.Tool.SystemdUnit}}); err != nil {
 		// A deploy writes the Quadlet .container file and reloads systemd; the
@@ -67,10 +84,15 @@ func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observat
 		// file — usually an unsupported key for this podman version (the generator
 		// drops the whole unit on one bad key). Point at the diagnostic rather
 		// than systemctl's opaque "Unit not found".
-		if change.Action == ActionDeploy && mentionsMissingUnit(output) {
+		if change.Action == ActionDeploy && change.Tool.Kind == PGAdmin && mentionsMissingUnit(output) {
 			return Observation{}, fmt.Errorf("%s was not generated from its Quadlet definition — the Podman Quadlet generator rejected it (run `/usr/libexec/podman/quadlet -dryrun` to see which key); ensure Podman with Quadlet support is installed: %w", change.Tool.SystemdUnit, err)
 		}
 		return Observation{}, commandError(verb+" admin tool", output, err)
+	}
+	if change.Action == ActionStop && change.Tool.Kind == PGAdmin {
+		if err := o.scrubPGAdminLaunchState(); err != nil {
+			return Observation{}, err
+		}
 	}
 	output, verifyErr := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"is-active", change.Tool.SystemdUnit}})
 	status := strings.TrimSpace(string(output))
@@ -84,6 +106,11 @@ func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observat
 			return Observation{}, commandError("verify admin tool", output, firstError(verifyErr, errors.New("service is not active")))
 		}
 		change.Tool.Status = "active"
+		if change.Tool.Kind == PGAdmin {
+			if err := o.schedulePGAdminStop(ctx); err != nil {
+				return Observation{}, err
+			}
+		}
 	}
 	return Observation{Tool: change.Tool, Verified: true}, nil
 }

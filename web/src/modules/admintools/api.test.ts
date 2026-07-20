@@ -8,7 +8,7 @@ describe('Admin Tools API', () => {
   it('plans deployment and launches without putting a secret in the URL', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(Response.json({ items: [{ kind: 'pgadmin', memoryMb: 256 }] }))
+      .mockResolvedValueOnce(Response.json({ items: [{ kind: 'pgadmin', memoryMb: 512 }] }))
       .mockResolvedValueOnce(
         Response.json({ tool: { kind: 'pgadmin' }, job: { id: 1, state: 'queued' } }, { status: 202 }),
       )

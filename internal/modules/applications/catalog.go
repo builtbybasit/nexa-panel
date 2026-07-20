@@ -37,11 +37,10 @@ func (m *Module) catalogByID(ctx context.Context, id string) (packagesoperator.C
 	return packagesoperator.CatalogEntry{}, false, nil
 }
 
-// webClientApplication maps an admin-tools container into an Applications card.
-// These are not apt packages: the card's install/uninstall actions drive the
-// admin-tools plan/apply endpoints (a hardened Podman deploy), so Managed is
-// false to mark them as the non-apt install path the Applications page handles
-// specially. Once deployed, they are launched per-database from the DB tables.
+// webClientApplication maps an admin tool into an Applications card. The card's
+// actions drive the admin-tools plan/apply interface, which hides whether the
+// implementation is native (phpMyAdmin) or isolated (pgAdmin). Managed remains
+// false because neither follows the generic Applications package workflow.
 func webClientApplication(tool admintools.Tool) Application {
 	label, summary := "phpMyAdmin", "Web UI for MySQL and MariaDB databases"
 	if string(tool.Kind) == "pgadmin" {

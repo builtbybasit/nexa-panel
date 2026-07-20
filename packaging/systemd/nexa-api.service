@@ -11,8 +11,7 @@ User=nexa
 Group=nexa
 UMask=0077
 Environment=NEXA_AGENT_SOCKET=/run/nexa-panel/agent.sock
-LoadCredential=agent.token:/etc/nexa-panel/agent.token
-ExecStart=/usr/bin/nexa api --unix-socket /run/nexa-panel/api.sock --state /var/lib/nexa-panel/control.db --master-key /var/lib/nexa-panel/master.key --agent-token %d/agent.token
+ExecStart=/usr/bin/nexa api --unix-socket /run/nexa-panel/api.sock --state /var/lib/nexa-panel/control.db --master-key /var/lib/nexa-panel/master.key --agent-token /etc/nexa-panel/agent.token
 Restart=on-failure
 RestartSec=3s
 StateDirectory=nexa-panel

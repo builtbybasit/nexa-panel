@@ -95,15 +95,23 @@ type Runner interface {
 type execRunner struct{}
 
 type HostConfig struct {
-	QuadletRoot string
-	ConfigRoot  string
+	QuadletRoot          string
+	SystemdRoot          string
+	ConfigRoot           string
+	NginxAvailableRoot   string
+	NginxEnabledRoot     string
+	PHPMyAdminConfigRoot string
 }
 
 type HostOperator struct {
-	runner      Runner
-	now         func() time.Time
-	quadletRoot string
-	configRoot  string
+	runner               Runner
+	now                  func() time.Time
+	quadletRoot          string
+	systemdRoot          string
+	configRoot           string
+	nginxAvailableRoot   string
+	nginxEnabledRoot     string
+	phpMyAdminConfigRoot string
 }
 
 func NewHostOperator(runner Runner, config HostConfig) (*HostOperator, error) {
@@ -113,18 +121,34 @@ func NewHostOperator(runner Runner, config HostConfig) (*HostOperator, error) {
 	if config.QuadletRoot == "" {
 		config.QuadletRoot = "/etc/containers/systemd"
 	}
+	if config.SystemdRoot == "" {
+		config.SystemdRoot = "/etc/systemd/system"
+	}
 	if config.ConfigRoot == "" {
 		config.ConfigRoot = "/etc/nexa-panel/admin-tools"
 	}
-	if !filepath.IsAbs(config.QuadletRoot) || !filepath.IsAbs(config.ConfigRoot) {
+	if config.NginxAvailableRoot == "" {
+		config.NginxAvailableRoot = "/etc/nginx/sites-available"
+	}
+	if config.NginxEnabledRoot == "" {
+		config.NginxEnabledRoot = "/etc/nginx/sites-enabled"
+	}
+	if config.PHPMyAdminConfigRoot == "" {
+		config.PHPMyAdminConfigRoot = "/etc/phpmyadmin/conf.d"
+	}
+	if !filepath.IsAbs(config.QuadletRoot) || !filepath.IsAbs(config.SystemdRoot) || !filepath.IsAbs(config.ConfigRoot) || !filepath.IsAbs(config.NginxAvailableRoot) || !filepath.IsAbs(config.NginxEnabledRoot) || !filepath.IsAbs(config.PHPMyAdminConfigRoot) {
 		return nil, errors.New("admin tool managed roots must be absolute")
 	}
-	return &HostOperator{runner: runner, now: time.Now, quadletRoot: filepath.Clean(config.QuadletRoot), configRoot: filepath.Clean(config.ConfigRoot)}, nil
+	return &HostOperator{
+		runner: runner, now: time.Now,
+		quadletRoot: filepath.Clean(config.QuadletRoot), systemdRoot: filepath.Clean(config.SystemdRoot), configRoot: filepath.Clean(config.ConfigRoot),
+		nginxAvailableRoot: filepath.Clean(config.NginxAvailableRoot), nginxEnabledRoot: filepath.Clean(config.NginxEnabledRoot), phpMyAdminConfigRoot: filepath.Clean(config.PHPMyAdminConfigRoot),
+	}, nil
 }
 
 func Defaults() []Tool {
 	return []Tool{
-		{Kind: PHPMyAdmin, Image: "docker.io/library/phpmyadmin:5.2.3", ContainerName: "nexa-phpmyadmin", Port: 18080, MemoryMB: 128, PIDsLimit: 128, SystemdUnit: "nexa-phpmyadmin.service", OnDemand: true},
-		{Kind: PGAdmin, Image: "docker.io/dpage/pgadmin4:9.16", ContainerName: "nexa-pgadmin", Port: 18081, MemoryMB: 256, PIDsLimit: 192, SystemdUnit: "nexa-pgadmin.service", OnDemand: true},
+		{Kind: PHPMyAdmin, Port: 18080, SystemdUnit: "nexa-phpmyadmin.service", OnDemand: false},
+		{Kind: PGAdmin, Image: "docker.io/dpage/pgadmin4:9.16", ContainerName: "nexa-pgadmin", Port: 18081, MemoryMB: 512, PIDsLimit: 192, SystemdUnit: "nexa-pgadmin.service", OnDemand: true},
 	}
 }

@@ -100,17 +100,18 @@ apt-get install -y --no-install-recommends \
   podman fuse-overlayfs \
   ca-certificates curl gnupg software-properties-common
 
-# The database web clients (phpMyAdmin, pgAdmin) deploy as Podman Quadlet units:
-# a `.container` file the systemd generator turns into a `.service` on reload.
+# pgAdmin deploys as a Podman Quadlet unit: a `.container` file the systemd
+# generator turns into a `.service` on reload. phpMyAdmin is installed natively
+# on demand and shares the node's Nginx/PHP-FPM stack.
 # That generator ships with Podman >= 4.4, while the generated definitions also
-# use PodmanArgs support available from 4.5. Without either, deploying a web
-# client fails with a bare "Unit not found"; warn now so the cause is obvious.
+# use PodmanArgs support available from 4.5. Without either, deploying pgAdmin
+# fails with a bare "Unit not found"; warn now so the cause is obvious.
 # The rest of the panel does not depend on it, so this is a warning, not a hard
 # failure.
 PODMAN_VERSION="$(podman --version 2>/dev/null | awk '{print $3}' || true)"
 if [[ ! -x /usr/lib/systemd/system-generators/podman-system-generator ]] ||
    [[ -z "$PODMAN_VERSION" ]] || ! dpkg --compare-versions "$PODMAN_VERSION" ge 4.5; then
-  warn "Podman 4.5+ with Quadlet is required for the phpMyAdmin/pgAdmin database web clients (found ${PODMAN_VERSION:-unknown}). Ubuntu 24.04 ships a compatible version."
+  warn "Podman 4.5+ with Quadlet is required for the pgAdmin database web client (found ${PODMAN_VERSION:-unknown}). Ubuntu 24.04 ships a compatible version."
 fi
 
 # Podman storage driver. On a normal host the kernel's native overlay driver

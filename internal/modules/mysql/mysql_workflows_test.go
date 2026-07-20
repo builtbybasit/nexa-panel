@@ -150,6 +150,14 @@ func TestMySQLAccountDatabaseBackupRestoreAndFailedRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitJob(t, queue, databaseApplyJob.ID, jobs.StateSucceeded)
+	adminCredential, err := module.ResolveAdminToolCredential(ctx, managed.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(adminCredential.Secret)
+	if adminCredential.Host != "localhost" || adminCredential.Port != operator.engine.Port || adminCredential.Database != managed.Name || adminCredential.Username != account.Name {
+		t.Fatalf("admin tool endpoint = %s:%d/%s as %s", adminCredential.Host, adminCredential.Port, adminCredential.Database, adminCredential.Username)
+	}
 
 	point, backupPlanJob, err := module.CreateBackup(ctx, managed.ID, nil)
 	if err != nil {

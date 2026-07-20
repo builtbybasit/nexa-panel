@@ -12,8 +12,8 @@ The installer configures and keeps these host capabilities available:
 - Nginx with Ubuntu's `sites-available` and `sites-enabled` layout;
 - systemd, D-Bus, cron, standard account tools, `runuser`, and core utilities;
 - Certbot and its Nginx plugin for public panel TLS;
-- Podman with Quadlet and `fuse-overlayfs` for isolated phpMyAdmin and pgAdmin
-  services (Podman 4.5 or newer is required by the generated definitions);
+- Podman with Quadlet and `fuse-overlayfs` for isolated pgAdmin
+  (Podman 4.5 or newer is required by the generated definition);
 - `rclone` for local, S3-compatible, SFTP, and Google Drive backup accounts;
 - `postgresql-common` and `libjson-perl` for JSON cluster discovery;
 - CA certificates, cURL, GnuPG, and Ubuntu repository-management tools.
@@ -29,6 +29,8 @@ repositories rather than requiring every supported version up front:
 
 - each selected `php<version>-fpm` service and its matching `php-fpm<version>`
   configuration validator;
+- native phpMyAdmin with PHP 8.3 FPM and its MySQL, mbstring, ZIP, GD, and cURL
+  extensions when the database web client is deployed;
 - PostgreSQL server and client packages for the selected major version,
   including `pg_lsclusters`, `pg_createcluster`, `pg_ctlcluster`, `psql`,
   `createdb`, `dropdb`, `pg_dump`, and `pg_restore`;
@@ -43,8 +45,8 @@ match the managed server. Site backup creation additionally uses the host
 
 - Package installation needs outbound HTTPS access to Ubuntu, the configured
   PHP/PostgreSQL repository, and the selected MySQL or MariaDB repository.
-- Deploying administration tools needs outbound access to the configured OCI
-  image registry.
+- Deploying phpMyAdmin needs Ubuntu package-repository access; deploying pgAdmin
+  needs outbound access to its configured OCI image registry.
 - Remote backups need outbound access to their configured rclone backend.
 - Public TLS needs a DNS record pointing at the node and inbound TCP port 80
   for the initial ACME HTTP-01 challenge. Nginx serves HTTPS after Certbot has
@@ -59,8 +61,9 @@ and modes.
 
 Before the privileged agent starts, its systemd `ExecStartPre` runs
 `nexa agent-token` to create or validate the root-owned credential at
-`/etc/nexa-panel/agent.token`. The API receives a private systemd credential
-copy and never needs direct access to the source file. Nginx reaches the API
+`/etc/nexa-panel/agent.token`. The API reads that `0640 root:nexa` file directly,
+which keeps it unavailable to unrelated users and lets credential rotation take
+effect without restarting the API. Nginx reaches the API
 through `/run/nexa-panel/api.sock`; the API reaches the root agent through the
 separate authenticated `/run/nexa-panel/agent.sock`.
 

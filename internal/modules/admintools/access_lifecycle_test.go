@@ -103,6 +103,17 @@ func TestLaunchTokenExchangesOnceForScopedHttpOnlySession(t *testing.T) {
 	if err != nil || reexchanged || observed != sessionToken {
 		t.Fatalf("session authorization failed: %v", err)
 	}
+	replacementLaunch, _, err := module.CreateLaunch(ctx, admintooloperator.PHPMyAdmin, LaunchRequest{SourceEngine: "mysql", DatabaseID: "database-1", AccountID: "account-1"}, user, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementRequest := httptest.NewRequest("GET", path, nil)
+	replacementRequest.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionToken})
+	replacementRequest.AddCookie(&http.Cookie{Name: launchCookieName, Value: replacementLaunch})
+	_, replacementSession, exchanged, err := module.authorizeProxy(ctx, admintooloperator.PHPMyAdmin, user.ID, replacementRequest)
+	if err != nil || !exchanged || replacementSession == sessionToken {
+		t.Fatalf("fresh launch did not replace the established tool session: exchanged=%v err=%v", exchanged, err)
+	}
 	events, err := auditLog.List(ctx, 10)
 	if err != nil || len(events) == 0 || events[0].Action != "admin_tool.launch" {
 		t.Fatalf("audit=%+v err=%v", events, err)
@@ -138,20 +149,20 @@ func TestPGAdminProxyHeaderIsDerivedServerSideAndStripsClientForgery(t *testing.
 	request := httptest.NewRequest(http.MethodGet, "/tools/pgadmin/", nil)
 	request.Header.Set("X-Nexa-PgAdmin-forged", "attacker@nexa.example.com")
 	sessionToken := "sessionCapabilityToken1234"
-	header, err := setPGAdminSessionIdentity(request, sessionToken, "admin@nexa.example.com")
+	header, err := setPGAdminSessionIdentity(request, sessionToken)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if request.Header.Get("X-Nexa-PgAdmin-forged") != "" {
 		t.Fatal("client-supplied pgAdmin capability header was forwarded")
 	}
-	if got := request.Header.Get(header); got != "admin@nexa.example.com" {
-		t.Fatalf("trusted header value = %q", got)
+	if got := request.Header.Get(header); got != admintooloperator.PGAdminLoginUser {
+		t.Fatalf("trusted header value = %q, want the fixed owner identity %q", got, admintooloperator.PGAdminLoginUser)
 	}
 	if strings.Contains(header, sessionToken) {
 		t.Fatalf("trusted header name leaked the raw session token: %s", header)
 	}
-	if _, err := setPGAdminSessionIdentity(request, "short", "admin@nexa.example.com"); err == nil {
+	if _, err := setPGAdminSessionIdentity(request, "short"); err == nil {
 		t.Fatal("invalid session token was accepted for pgAdmin proxy authentication")
 	}
 }
@@ -161,6 +172,8 @@ func TestAdminToolProxyDoesNotForwardPanelCredentials(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer panel-secret")
 	request.Header.Set("X-Nexa-Internal", "panel-secret")
 	request.Header.Set("X-Forwarded-For", "198.51.100.7")
+	request.Header.Set("X-Script-Name", "/attacker-prefix")
+	request.Header.Set("X-Scheme", "javascript")
 	request.AddCookie(&http.Cookie{Name: "nexa_session", Value: "panel-session"})
 	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "tool-gateway-session"})
 	request.AddCookie(&http.Cookie{Name: "SignonSession", Value: "browser-forgery"})
@@ -168,11 +181,26 @@ func TestAdminToolProxyDoesNotForwardPanelCredentials(t *testing.T) {
 	upstream := "SignonSession"
 
 	sanitizeAdminToolProxyRequest(request, admintooloperator.PHPMyAdmin, &upstream)
-	if request.Header.Get("Authorization") != "" || request.Header.Get("X-Nexa-Internal") != "" || request.Header.Get("X-Forwarded-For") != "" {
+	if request.Header.Get("Authorization") != "" || request.Header.Get("X-Nexa-Internal") != "" || request.Header.Get("X-Forwarded-For") != "" || request.Header.Get("X-Script-Name") != "" || request.Header.Get("X-Scheme") != "" {
 		t.Fatalf("panel or proxy credentials remained in upstream headers: %+v", request.Header)
 	}
 	if cookies := request.Cookies(); len(cookies) != 1 || cookies[0].Name != "phpMyAdmin" || cookies[0].Value != "upstream-session" {
 		t.Fatalf("upstream cookies = %+v, want only the tool-owned session", cookies)
+	}
+}
+
+func TestPGAdminProxySetsServerOwnedSubpathMetadata(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "https://panel.example.com/tools/pgadmin/browser/", nil)
+	request.Header.Set("X-Script-Name", "/attacker-prefix")
+	request.Header.Set("X-Scheme", "javascript")
+	sanitizeAdminToolProxyRequest(request, admintooloperator.PGAdmin, nil)
+	setPGAdminProxyMetadata(request, "/tools/pgadmin", true)
+
+	if got := request.Header.Get("X-Script-Name"); got != "/tools/pgadmin" {
+		t.Fatalf("X-Script-Name = %q, want the server-owned tool prefix", got)
+	}
+	if got := request.Header.Get("X-Scheme"); got != "https" {
+		t.Fatalf("X-Scheme = %q, want https", got)
 	}
 }
 
@@ -243,7 +271,7 @@ func TestDeployAndStopUseReviewedJobs(t *testing.T) {
 	for _, item := range items {
 		if item.Kind == admintooloperator.PGAdmin {
 			found = true
-			if item.Status != string(StatusActive) || item.MemoryMB != 256 || !item.OnDemand {
+			if item.Status != string(StatusActive) || item.MemoryMB != 512 || !item.OnDemand {
 				t.Fatalf("pgadmin=%+v", item)
 			}
 		}
@@ -268,7 +296,7 @@ func TestSyncKeepsPlanReadyStatusApplicable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Discover reports the container as stopped (systemd is-active) — the state
+	// Discover reports the tool as stopped (systemd is-active) — the state
 	// a not-yet-deployed tool is really in while its plan awaits approval.
 	operator := &fakeOperator{tools: admintooloperator.Defaults()}
 	module, err := New(ctx, database, queue, operator)
@@ -289,6 +317,15 @@ func TestSyncKeepsPlanReadyStatusApplicable(t *testing.T) {
 	}
 	if _, err = module.ApplyPlan(ctx, tool.Kind, nil); err != nil {
 		t.Fatalf("plan_ready tool was not applicable after Sync: %v", err)
+	}
+}
+
+func TestDescriptorDoesNotRequirePodmanForNativePHPMyAdmin(t *testing.T) {
+	descriptor := (&Module{}).Descriptor()
+	for _, capability := range descriptor.RequiredCapabilities {
+		if capability == "podman" || capability == "quadlet" {
+			t.Fatalf("module-wide capability %q would disable native phpMyAdmin", capability)
+		}
 	}
 }
 

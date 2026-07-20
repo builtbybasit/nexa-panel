@@ -15,7 +15,11 @@ func (o *HostOperator) Discover(ctx context.Context) ([]Tool, error) {
 			status = "stopped"
 		}
 		items[index].Status = status
-		if encoded, readErr := os.ReadFile(o.quadletPath(items[index].Kind)); readErr == nil {
+		if items[index].Kind == PGAdmin {
+			encoded, readErr := os.ReadFile(o.quadletPath(items[index].Kind))
+			if readErr != nil {
+				continue
+			}
 			items[index] = mergeRendered(items[index], string(encoded))
 		}
 	}

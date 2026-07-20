@@ -182,6 +182,101 @@ func TestRoleCredentialIsDigestedInPlanAndOnlySentOnStdin(t *testing.T) {
 	}
 }
 
+func TestEnsureSocketScramAuthInsertsRuleAheadOfPeerAndIsIdempotent(t *testing.T) {
+	configRoot := t.TempDir()
+	clusterDir := filepath.Join(configRoot, "18", "main")
+	if err := os.MkdirAll(clusterDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hbaPath := filepath.Join(clusterDir, "pg_hba.conf")
+	stock := "# comment\n" +
+		"local   all             postgres                                peer\n" +
+		"local   all             all                                     peer\n" +
+		"host    all             all             127.0.0.1/32            scram-sha-256\n"
+	if err := os.WriteFile(hbaPath, []byte(stock), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	operator, err := NewHostOperator(runner, HostConfig{DataRoot: "/var/lib/postgresql", ConfigRoot: configRoot, LogRoot: "/var/log/postgresql", SocketRoot: "/run/postgresql", BackupRoot: filepath.Join(t.TempDir(), "b")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := operator.ensureSocketScramAuth(context.Background(), "18", "main"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := os.ReadFile(hbaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(string(updated), "\n"), "\n")
+	scramIndex, peerCatchIndex, postgresPeerIndex := -1, -1, -1
+	for i, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[0] != "local" {
+			continue
+		}
+		switch {
+		case fields[1] == "all" && fields[2] == "postgres" && fields[3] == "peer":
+			postgresPeerIndex = i
+		case fields[1] == "all" && fields[2] == "all" && fields[3] == "scram-sha-256":
+			scramIndex = i
+		case fields[1] == "all" && fields[2] == "all" && fields[3] == "peer":
+			peerCatchIndex = i
+		}
+	}
+	if scramIndex == -1 {
+		t.Fatalf("scram socket rule was not inserted:\n%s", updated)
+	}
+	if !(postgresPeerIndex < scramIndex && scramIndex < peerCatchIndex) {
+		t.Fatalf("scram rule must sit after the postgres-peer line and before the peer catch-all (postgres=%d scram=%d peer=%d):\n%s", postgresPeerIndex, scramIndex, peerCatchIndex, updated)
+	}
+	reloads := 0
+	for _, command := range runner.commands {
+		if command.Name == "pg_ctlcluster" && strings.Join(command.Args, " ") == "18 main reload" {
+			reloads++
+		}
+	}
+	if reloads != 1 {
+		t.Fatalf("expected exactly one reload after inserting the rule, got %d", reloads)
+	}
+
+	// Second call is a no-op: no duplicate rule, no extra reload.
+	if err := operator.ensureSocketScramAuth(context.Background(), "18", "main"); err != nil {
+		t.Fatal(err)
+	}
+	again, err := os.ReadFile(hbaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(again), "all                                     scram-sha-256") != 1 {
+		t.Fatalf("idempotent call duplicated the socket rule:\n%s", again)
+	}
+	reloads = 0
+	for _, command := range runner.commands {
+		if command.Name == "pg_ctlcluster" && strings.Join(command.Args, " ") == "18 main reload" {
+			reloads++
+		}
+	}
+	if reloads != 1 {
+		t.Fatalf("idempotent call must not reload again, total reloads=%d", reloads)
+	}
+}
+
+func TestEnsureSocketScramAuthToleratesMissingHba(t *testing.T) {
+	runner := &recordingRunner{}
+	operator, err := NewHostOperator(runner, HostConfig{DataRoot: "/var/lib/postgresql", ConfigRoot: t.TempDir(), LogRoot: "/var/log/postgresql", SocketRoot: "/run/postgresql", BackupRoot: filepath.Join(t.TempDir(), "b")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := operator.ensureSocketScramAuth(context.Background(), "18", "absent"); err != nil {
+		t.Fatalf("missing pg_hba should be a no-op, got %v", err)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("no cluster reload should occur when pg_hba is absent: %+v", runner.commands)
+	}
+}
+
 func TestGrantPlanRevokesOldPrivilegesBeforeApplyingNewAccess(t *testing.T) {
 	runner := &recordingRunner{discovery: `[{"version":"18","cluster":"nexa_main","port":5432,"status":"online","owner":"postgres"}]`}
 	operator := newTestOperator(t, runner)

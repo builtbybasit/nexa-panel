@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -64,10 +65,10 @@ func (m *Module) CreateLaunch(ctx context.Context, kind admintooloperator.Kind, 
 		return "", "", err
 	}
 	secretDigest := sha256.Sum256(credential.Secret)
+	// PanelUser is retained for audit only. pgAdmin no longer derives its login
+	// identity from it — every launch signs in as PGAdminLoginUser, the owner of
+	// the imported server — so no tool-specific reshaping is needed here.
 	panelUser := user.Username
-	if kind == admintooloperator.PGAdmin && !strings.Contains(panelUser, "@") {
-		panelUser += "@nexa.example.com"
-	}
 	change := admintooloperator.Change{Action: admintooloperator.ActionLaunch, Tool: tool.toTool().Tool, Launch: &admintooloperator.Launch{SessionID: sessionToken, PanelUser: panelUser, DatabaseHost: credential.Host, DatabasePort: credential.Port, Database: credential.Database, Username: credential.Username, SecretSHA256: hex.EncodeToString(secretDigest[:])}}
 	plan, err := m.operator.Plan(ctx, change)
 	if err != nil {
@@ -168,6 +169,10 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	if exchanged {
 		m.setProxySession(w, r, kind, sessionToken)
 	}
+	if kind == admintooloperator.PHPMyAdmin && r.PathValue("path") == "nexa-signon-failed" {
+		writeError(w, 502, "admin_tool_signon_failed", "phpMyAdmin could not connect with the selected database account.")
+		return
+	}
 	if kind == admintooloperator.PGAdmin {
 		if _, err := admintooloperator.PGAdminSessionHeader(sessionToken); err != nil {
 			writeError(w, 401, "admin_tool_session_invalid", "Admin tool session is invalid.")
@@ -185,7 +190,11 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	// loopback listener so this navigation does not race the boot and surface as
 	// a 502. It returns on the first successful dial, so an already-running tool
 	// pays only a single local connect.
-	if err := waitForUpstreamReady(r.Context(), tool.Port, 22*time.Second); err != nil {
+	if err := waitForUpstreamReady(r.Context(), tool.Port, 2*time.Second); err != nil {
+		if kind == admintooloperator.PGAdmin && r.Context().Err() == nil {
+			writeAdminToolStarting(w)
+			return
+		}
 		writeError(w, 502, "admin_tool_upstream_failed", "Admin tool did not respond.")
 		return
 	}
@@ -203,7 +212,8 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		sanitizeAdminToolProxyRequest(request, kind, model.UpstreamCookieName)
 		if kind == admintooloperator.PGAdmin {
-			_, _ = setPGAdminSessionIdentity(request, sessionToken, model.PanelUser)
+			setPGAdminProxyMetadata(request, prefix, secure)
+			_, _ = setPGAdminSessionIdentity(request, sessionToken)
 		}
 		if kind == admintooloperator.PHPMyAdmin && model.UpstreamCookieName != nil {
 			request.AddCookie(&http.Cookie{Name: *model.UpstreamCookieName, Value: sessionToken})
@@ -227,7 +237,7 @@ func sanitizeAdminToolProxyRequest(request *http.Request, kind admintooloperator
 	for _, name := range []string{
 		"Authorization", "Proxy-Authorization", "Forwarded", "X-Forwarded-For",
 		"X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-User", "X-Real-IP",
-		"Remote-User", "X-Original-URL", "X-Rewrite-URL",
+		"Remote-User", "X-Original-URL", "X-Rewrite-URL", "X-Scheme", "X-Script-Name",
 	} {
 		request.Header.Del(name)
 	}
@@ -252,6 +262,19 @@ func sanitizeAdminToolProxyRequest(request *http.Request, kind admintooloperator
 		}
 		request.AddCookie(cookie)
 	}
+}
+
+// setPGAdminProxyMetadata tells pgAdmin that the gateway publishes it below a
+// subpath. Without X-Script-Name, pgAdmin emits root-relative asset URLs which
+// escape the tool proxy and resolve to the panel SPA. Values are server-owned:
+// sanitizeAdminToolProxyRequest removes any browser-supplied versions first.
+func setPGAdminProxyMetadata(request *http.Request, prefix string, secure bool) {
+	request.Header.Set("X-Script-Name", prefix)
+	scheme := "http"
+	if secure {
+		scheme = "https"
+	}
+	request.Header.Set("X-Scheme", scheme)
 }
 
 // rewriteAdminToolProxyResponse confines redirects and cookies to the tool
@@ -309,9 +332,12 @@ func allowedToolCookie(kind admintooloperator.Kind, name string) bool {
 
 // setPGAdminSessionIdentity removes every browser-supplied capability-shaped
 // header, then adds the single server-derived header name trusted by this
-// pgAdmin launch. The raw session token remains server-side and never appears
-// in a URL, header value, or access-log request line.
-func setPGAdminSessionIdentity(request *http.Request, sessionToken, panelUser string) (string, error) {
+// pgAdmin launch. Its value is the fixed owner identity (PGAdminLoginUser) so the
+// browser signs in as the same user that owns the imported server and lands on it
+// already connected; using a per-panel-user name would make that server a foreign
+// shared server pgAdmin cannot auto-connect. The raw session token remains
+// server-side and never appears in a URL, header value, or access-log line.
+func setPGAdminSessionIdentity(request *http.Request, sessionToken string) (string, error) {
 	prefix := strings.ToLower(admintooloperator.PGAdminSessionHeaderPrefix)
 	for name := range request.Header {
 		if strings.HasPrefix(strings.ToLower(name), prefix) {
@@ -322,42 +348,44 @@ func setPGAdminSessionIdentity(request *http.Request, sessionToken, panelUser st
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set(header, panelUser)
+	request.Header.Set(header, admintooloperator.PGAdminLoginUser)
 	return header, nil
 }
 
 func (m *Module) authorizeProxy(ctx context.Context, kind admintooloperator.Kind, userID string, r *http.Request) (launchModel, string, bool, error) {
+	launchCookie, launchErr := r.Cookie(launchCookieName)
+	if launchErr == nil {
+		model := launchModel{}
+		if err := m.database.NewSelect().Model(&model).Where("launch_token_hash = ?", tokenHash(launchCookie.Value)).Scan(ctx); err == nil && model.UsedAt == nil && model.ActorUserID == userID && model.ToolKind == string(kind) && m.now().UTC().Before(model.ExpiresAt) {
+			plaintext, err := m.cipher.Decrypt("admin-tool-session:"+model.ID, model.SessionCiphertext)
+			if err != nil {
+				return launchModel{}, "", false, err
+			}
+			sessionToken := string(plaintext)
+			clear(plaintext)
+			now := m.now().UTC()
+			result, err := m.database.NewUpdate().Model((*launchModel)(nil)).Set("used_at = ?", now).Where("id = ?", model.ID).Where("used_at IS NULL").Exec(ctx)
+			if err != nil {
+				return launchModel{}, "", false, err
+			}
+			changed, _ := result.RowsAffected()
+			if changed != 1 {
+				return launchModel{}, "", false, errors.New("admin tool launch is already used")
+			}
+			model.UsedAt = &now
+			return model, sessionToken, true, nil
+		}
+	}
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		model, loadErr := m.sessionByHash(ctx, tokenHash(cookie.Value))
 		if loadErr == nil && model.ActorUserID == userID && model.ToolKind == string(kind) && m.now().UTC().Before(model.SessionExpiresAt) {
 			return model, cookie.Value, false, nil
 		}
 	}
-	launchCookie, err := r.Cookie(launchCookieName)
-	if err != nil {
+	if launchErr != nil {
 		return launchModel{}, "", false, errors.New("admin tool launch has expired")
 	}
-	model := launchModel{}
-	if err := m.database.NewSelect().Model(&model).Where("launch_token_hash = ?", tokenHash(launchCookie.Value)).Scan(ctx); err != nil || model.UsedAt != nil || model.ActorUserID != userID || model.ToolKind != string(kind) || !m.now().UTC().Before(model.ExpiresAt) {
-		return launchModel{}, "", false, errors.New("admin tool launch is invalid or already used")
-	}
-	plaintext, err := m.cipher.Decrypt("admin-tool-session:"+model.ID, model.SessionCiphertext)
-	if err != nil {
-		return launchModel{}, "", false, err
-	}
-	sessionToken := string(plaintext)
-	clear(plaintext)
-	now := m.now().UTC()
-	result, err := m.database.NewUpdate().Model((*launchModel)(nil)).Set("used_at = ?", now).Where("id = ?", model.ID).Where("used_at IS NULL").Exec(ctx)
-	if err != nil {
-		return launchModel{}, "", false, err
-	}
-	changed, _ := result.RowsAffected()
-	if changed != 1 {
-		return launchModel{}, "", false, errors.New("admin tool launch is already used")
-	}
-	model.UsedAt = &now
-	return model, sessionToken, true, nil
+	return launchModel{}, "", false, errors.New("admin tool launch is invalid or already used")
 }
 
 // setProxySession writes the exchange cookies after authorizeProxy has consumed a launch.
@@ -374,37 +402,83 @@ func (m *Module) sessionByHash(ctx context.Context, hash string) (launchModel, e
 	return model, err
 }
 
-// waitForUpstreamReady blocks until the tool's loopback port accepts a
-// connection or the timeout elapses, returning immediately on the first
-// successful dial. A refused connection on loopback returns instantly, so the
-// poll cycles quickly while the container is still booting.
+func writeAdminToolStarting(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Refresh", "3")
+	w.Header().Set("Retry-After", "3")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta http-equiv="refresh" content="3"><meta name="viewport" content="width=device-width"><title>Starting pgAdmin</title><style>body{background:#f7f8fa;color:#172033;font:16px system-ui,sans-serif;display:grid;min-height:100vh;margin:0;place-items:center}.card{background:white;border:1px solid #dfe3ea;border-radius:14px;box-shadow:0 12px 35px #17203314;max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.35rem;margin:.25rem 0 .75rem}p{color:#596579;line-height:1.55;margin:0}</style><body><main class="card"><h1>Starting pgAdmin…</h1><p>The isolated database client is warming up. This page will retry automatically.</p></main></body></html>`)
+}
+
+// waitForUpstreamReady waits for a complete HTTP response, not merely an open
+// TCP listener. Podman's port-forwarder can accept connections well before
+// pgAdmin's Gunicorn worker is able to serve a request.
+//
+// Redirects are never followed: any HTTP status — including a 3xx — proves the
+// upstream is serving, which is all readiness needs to establish. phpMyAdmin in
+// particular answers a cookieless GET / with a 302 to its SignonURL that loops
+// for any client without a signon session, so following redirects would turn a
+// healthy upstream into a probe failure (and a spurious 502 at launch).
 func waitForUpstreamReady(ctx context.Context, port int, timeout time.Duration) error {
-	address := fmt.Sprintf("127.0.0.1:%d", port)
-	dialer := net.Dialer{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(timeout)
+	dialer := net.Dialer{Timeout: time.Second}
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           dialer.DialContext,
+		DisableKeepAlives:     true,
+		ResponseHeaderTimeout: time.Second,
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/", port)
+	var lastErr error
 	for {
-		conn, err := dialer.DialContext(ctx, "tcp", address)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			if lastErr != nil {
+				return lastErr
+			}
+			return context.DeadlineExceeded
+		}
+		attemptTimeout := min(remaining, time.Second)
+		attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
+		request, _ := http.NewRequestWithContext(attemptCtx, http.MethodGet, endpoint, nil)
+		response, err := client.Do(request)
 		if err == nil {
-			_ = conn.Close()
+			_ = response.Body.Close()
+			cancel()
 			return nil
 		}
+		cancel()
+		lastErr = err
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if !time.Now().Before(deadline) {
-			return err
+		pause := min(250*time.Millisecond, time.Until(deadline))
+		if pause <= 0 {
+			continue
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(250 * time.Millisecond):
+		case <-time.After(pause):
 		}
 	}
 }
 
 func secureToken() (string, error) {
 	value := make([]byte, 32)
-	rand.Read(value)
+	if _, err := rand.Read(value); err != nil {
+		return "", fmt.Errorf("generate secure token: %w", err)
+	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
 }
 

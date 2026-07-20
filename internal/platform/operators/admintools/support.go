@@ -28,7 +28,7 @@ func (o *HostOperator) prepareToolConfig(kind Kind) error {
 		if err := os.MkdirAll(filepath.Join(root, "sessions"), 0o750); err != nil {
 			return err
 		}
-		config := "<?php\n$cfg['Servers'][1]['auth_type'] = 'signon';\n$cfg['Servers'][1]['SignonSession'] = 'SignonSession';\n$cfg['Servers'][1]['SignonURL'] = '/';\n$cfg['Servers'][1]['AllowNoPassword'] = false;\n"
+		config := "<?php\n$cfg['Servers'][1]['auth_type'] = 'signon';\n$cfg['Servers'][1]['SignonSession'] = 'SignonSession';\n$cfg['Servers'][1]['SignonURL'] = '/nexa-signon-failed';\n$cfg['Servers'][1]['connect_type'] = 'socket';\n$cfg['Servers'][1]['socket'] = '/run/mysqld/mysqld.sock';\n$cfg['Servers'][1]['AllowNoPassword'] = false;\n"
 		if err := secureWrite(filepath.Join(root, "config.user.inc.php"), []byte(config), 0o640); err != nil {
 			return err
 		}
@@ -73,20 +73,17 @@ func (o *HostOperator) prepareToolConfig(kind Kind) error {
 	return o.ownForRuntime(root, kind)
 }
 
-// runtimeUID is the uid/gid the tool's container process runs as. Its config
-// files are mounted read-only into the container, so they must be owned by this
-// account — root-owned 0600/0640 files are unreadable to it and the tool exits
-// on startup.
+// runtimeUID is the uid/gid used by the tool runtime: native PHP-FPM's www-data
+// account for phpMyAdmin and the image's pgadmin account for pgAdmin.
 func runtimeUID(kind Kind) int {
 	if kind == PGAdmin {
 		return 5050 // pgAdmin's "pgadmin" service account
 	}
-	return 33 // phpMyAdmin serves as Apache's www-data
+	return 33 // native PHP-FPM serves phpMyAdmin as www-data
 }
 
-// ownForRuntime hands the tool's config tree to the container's service account
-// so the read-only mounts are readable. A no-op off root (unit tests), where the
-// agent does not run and the files are only asserted, never mounted.
+// ownForRuntime makes the managed files readable by the least-privileged
+// runtime account. It is a no-op off root, including unit tests.
 func (o *HostOperator) ownForRuntime(root string, kind Kind) error {
 	if os.Geteuid() != 0 {
 		return nil
@@ -170,7 +167,12 @@ func (o *HostOperator) bootstrapLaunch(ctx context.Context, change Change, secre
 		}
 		return Observation{Tool: change.Tool, Verified: true, UpstreamCookieName: "SignonSession", UpstreamCookieValue: change.Launch.SessionID}, nil
 	}
-	pgpass := fmt.Sprintf("%s:%d:%s:%s:%s\n", pgpassEscape(change.Launch.DatabaseHost), change.Launch.DatabasePort, pgpassEscape(change.Launch.Database), pgpassEscape(change.Launch.Username), pgpassEscape(secret))
+	// pgAdmin reaches co-located Postgres over the mounted Unix socket
+	// (pgAdminPostgresSocketDir), never TCP — the credential's DatabaseHost
+	// (host.containers.internal) is unreachable because Postgres listens only on
+	// loopback. libpq keys a socket connection's pgpass lookup on the host token
+	// "localhost", so the passfile line uses that rather than the socket path.
+	pgpass := fmt.Sprintf("localhost:%d:%s:%s:%s\n", change.Launch.DatabasePort, pgpassEscape(change.Launch.Database), pgpassEscape(change.Launch.Username), pgpassEscape(secret))
 	pgpassPath := filepath.Join(root, "pgpass")
 	if err := secureWrite(pgpassPath, []byte(pgpass), 0o600); err != nil {
 		return Observation{}, fmt.Errorf("write pgAdmin passfile: %w", err)
@@ -180,7 +182,13 @@ func (o *HostOperator) bootstrapLaunch(ctx context.Context, change Change, secre
 			return Observation{}, fmt.Errorf("secure pgAdmin passfile ownership: %w", err)
 		}
 	}
-	servers := map[string]any{"Servers": map[string]any{"1": map[string]any{"Name": change.Launch.Database, "Group": "Nexa Panel", "Host": change.Launch.DatabaseHost, "Port": change.Launch.DatabasePort, "MaintenanceDB": change.Launch.Database, "Username": change.Launch.Username, "SSLMode": "prefer", "Shared": true}}}
+	// The server is owned by PGAdminLoginUser (the identity every launch signs in
+	// as), so it is a normal local server — never Shared. A shared server owned by
+	// one user cannot be auto-connected by another and renders as "sharedserverbad".
+	// Host is the mounted socket directory, so pgAdmin connects locally with no
+	// TCP and no password prompt (pgpass supplies the scram secret). SSLMode is
+	// irrelevant for a Unix socket; "prefer" quietly downgrades to no SSL.
+	servers := map[string]any{"Servers": map[string]any{"1": map[string]any{"Name": change.Launch.Database, "Group": "Nexa Panel", "Host": pgAdminPostgresSocketDir, "Port": change.Launch.DatabasePort, "MaintenanceDB": change.Launch.Database, "Username": change.Launch.Username, "SSLMode": "prefer"}}}
 	encoded, _ := json.MarshalIndent(servers, "", "  ")
 	serversPath := filepath.Join(root, "servers.json")
 	if err := secureWrite(serversPath, append(encoded, '\n'), 0o640); err != nil {
@@ -209,6 +217,9 @@ func (o *HostOperator) bootstrapLaunch(ctx context.Context, change Change, secre
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"is-active", change.Tool.SystemdUnit}}); err != nil || strings.TrimSpace(string(output)) != "active" {
 		return Observation{}, commandError("verify pgAdmin launch", output, firstError(err, errors.New("service is not active")))
+	}
+	if err := o.schedulePGAdminStop(ctx); err != nil {
+		return Observation{}, err
 	}
 	return Observation{Tool: change.Tool, Verified: true}, nil
 }
@@ -271,6 +282,23 @@ func secureWrite(path string, value []byte, mode os.FileMode) error {
 
 const PGAdminSessionHeaderPrefix = "X-Nexa-PgAdmin-"
 
+// pgAdminPostgresSocketDir is the host PostgreSQL runtime directory holding the
+// per-cluster Unix sockets. It is bind-mounted into the pgAdmin container so the
+// tool reaches co-located Postgres over the socket instead of TCP — Postgres
+// listens only on loopback, unreachable from the container's network namespace.
+// Connections authenticate with scram via pgpass (see bootstrapLaunch), so no
+// database port is ever exposed. libpq matches such socket connections against a
+// pgpass host field of "localhost", not this path.
+const pgAdminPostgresSocketDir = "/run/postgresql"
+
+// PGAdminLoginUser is the single pgAdmin identity every launch authenticates as.
+// It must equal PGADMIN_DEFAULT_EMAIL so the trusted-header login resolves to the
+// same internal user that owns the server imported from servers.json — pgAdmin's
+// webserver login matches by username alone (auth_source is ignored). Logging in
+// as any other name makes the imported server a foreign *shared* server, which
+// pgAdmin cannot auto-connect and which crashes the browser tree on connect.
+const PGAdminLoginUser = "bootstrap@nexa.example.com"
+
 // PGAdminSessionHeader derives a capability header name from the existing
 // server-side launch token. The token itself is never forwarded or logged, and
 // a loopback caller cannot invent a different header because pgAdmin trusts
@@ -324,37 +352,21 @@ func validToken(value string) bool {
 
 func renderQuadlet(tool Tool, configRoot string) string {
 	config := filepath.Join(configRoot, string(tool.Kind))
-	containerPort := 80
-	if tool.Kind == PGAdmin {
-		containerPort = 5050
-	}
 	// The memory ceiling goes through PodmanArgs, not a Memory= key: Quadlet only
 	// gained a native Memory= key in podman 5.0, and passing an unsupported key
 	// makes the generator refuse the whole unit (the .service is never produced,
 	// so `systemctl start` fails with "Unit not found"). --memory has been valid
 	// since podman 4.5, covering the 4.x hosts this runs on. PidsLimit= is fine.
-	lines := []string{"[Unit]", "Description=Nexa " + string(tool.Kind), "After=network-online.target", "", "[Container]", "Image=" + tool.Image, "ContainerName=" + tool.ContainerName, "PublishPort=127.0.0.1:" + strconv.Itoa(tool.Port) + ":" + strconv.Itoa(containerPort), "PodmanArgs=--memory=" + strconv.Itoa(tool.MemoryMB) + "m", "PidsLimit=" + strconv.Itoa(tool.PIDsLimit), "ReadOnly=true", "NoNewPrivileges=true", "DropCapability=ALL", "Volume=" + config + ":/nexa-config:ro,Z"}
-	if tool.Kind == PHPMyAdmin {
-		// The image's Apache binds port 80 as root during startup, which needs
-		// CAP_NET_BIND_SERVICE — a privileged (<1024) port. DropCapability=ALL
-		// above strips it, so Apache fails with "make_sock: could not bind to
-		// address 0.0.0.0:80 (Permission denied)" and the container crash-loops
-		// until systemd gives up. Grant back only this one capability; pgAdmin
-		// listens on 5050 and needs nothing extra. (Docker's default
-		// net.ipv4.ip_unprivileged_port_start=0 hides this in the container test
-		// harness; podman here does not relax the privileged-port range.)
-		lines = append(lines, "AddCapability=NET_BIND_SERVICE", "Environment=PMA_HOST=host.containers.internal", "Volume="+config+"/sessions:/sessions:Z,U", "Volume="+config+"/config.user.inc.php:/etc/phpmyadmin/config.user.inc.php:ro,Z", "Volume="+config+"/config.secret.inc.php:/etc/phpmyadmin/config.secret.inc.php:ro,Z", "Tmpfs=/tmp:rw,noexec,nosuid,size=32m", "Tmpfs=/var/run/apache2:rw,noexec,nosuid,size=4m", "Tmpfs=/var/lock/apache2:rw,noexec,nosuid,size=4m",
-			// notmpcopyup keeps the log tmpfs empty. The image ships
-			// /var/log/apache2/{access,error}.log as symlinks to /dev/stdout and
-			// /dev/stderr; podman's default tmpcopyup replicates them into the
-			// mount, and Apache — detached, journald-logged, capability-stripped —
-			// cannot reopen /dev/stderr, dying with "could not open error log file".
-			// An empty tmpfs lets Apache create real log files instead.
-			"Tmpfs=/var/log/apache2:rw,noexec,nosuid,size=16m,notmpcopyup")
-	}
-	if tool.Kind == PGAdmin {
-		lines = append(lines, "Environment=PGADMIN_LISTEN_PORT=5050", "Environment=PGADMIN_DISABLE_POSTFIX=1", "Environment=PGADMIN_CUSTOM_CONFIG_DISTRO_FILE=/nexa-config/config_distro.py", "Environment=PGADMIN_REPLACE_SERVERS_ON_STARTUP=True", "Environment=PGPASS_FILE=/nexa-config/pgpass", "Environment=PGADMIN_DEFAULT_EMAIL=bootstrap@nexa.example.com", "Environment=PGADMIN_DEFAULT_PASSWORD_FILE=/nexa-config/bootstrap-password", "Volume="+config+"/data:/var/lib/pgadmin:Z,U", "Volume="+config+"/config_local.py:/pgadmin4/config_local.py:ro,Z", "Volume="+config+"/servers.json:/pgadmin4/servers.json:ro,Z", "Volume="+config+"/pgpass:/nexa-config/pgpass:ro,Z", "Tmpfs=/tmp:rw,noexec,nosuid,size=32m")
-	}
+	lines := []string{"[Unit]", "Description=Nexa " + string(tool.Kind), "After=network-online.target", "", "[Container]", "Image=" + tool.Image, "ContainerName=" + tool.ContainerName, "PublishPort=127.0.0.1:" + strconv.Itoa(tool.Port) + ":5050", "PodmanArgs=--memory=" + strconv.Itoa(tool.MemoryMB) + "m", "PidsLimit=" + strconv.Itoa(tool.PIDsLimit), "ReadOnly=true", "NoNewPrivileges=true", "DropCapability=ALL", "Volume=" + config + ":/nexa-config:ro,Z"}
+	// The upstream image declares uid 5050 without a gid, which makes its
+	// primary group root (0). Select both explicitly so pgAdmin can traverse the
+	// root:5050 configuration directory without granting capabilities.
+	lines = append(lines, "User=5050:5050", "Environment=PGADMIN_LISTEN_PORT=5050", "Environment=PGADMIN_DISABLE_POSTFIX=1", "Environment=PGADMIN_CUSTOM_CONFIG_DISTRO_FILE=/nexa-config/config_distro.py", "Environment=PGADMIN_REPLACE_SERVERS_ON_STARTUP=True", "Environment=PGPASS_FILE=/nexa-config/pgpass", "Environment=PGADMIN_DEFAULT_EMAIL="+PGAdminLoginUser, "Environment=PGADMIN_DEFAULT_PASSWORD_FILE=/nexa-config/bootstrap-password", "Volume="+config+"/data:/var/lib/pgadmin:Z,U", "Volume="+config+"/config_local.py:/pgadmin4/config_local.py:ro,Z", "Volume="+config+"/servers.json:/pgadmin4/servers.json:ro,Z", "Volume="+config+"/pgpass:/nexa-config/pgpass:ro,Z",
+		// The PostgreSQL socket directory is shared with the host runtime, so it
+		// carries no ':Z' relabel (which would privatise the host's own postgres
+		// dir) and stays writable — connect() needs write permission on the socket.
+		"Volume="+pgAdminPostgresSocketDir+":"+pgAdminPostgresSocketDir,
+		"Tmpfs=/tmp:rw,noexec,nosuid,size=32m")
 	lines = append(lines, "", "[Service]", "Restart=on-failure", "TimeoutStartSec=180", "", "[Install]", "WantedBy=multi-user.target", "")
 	return strings.Join(lines, "\n")
 }

@@ -164,9 +164,9 @@ async function approve() {
 }
 
 // --- Database web clients (phpMyAdmin / pgAdmin) ---
-// These are hardened Podman containers, not apt packages, so they run through
-// the admin-tools plan/apply endpoints. Install = deploy the container, Remove =
-// stop it. Same review dialog, different backend.
+// The admin-tools interface hides the runtime choice: phpMyAdmin is native on
+// Nginx/PHP-FPM, while pgAdmin is an isolated on-demand container. Install =
+// deploy the tool, Remove = stop its private route/runtime.
 
 const toolPendingId = ref<string>()
 const toolSelected = ref<Application>()
@@ -336,7 +336,7 @@ async function approveTool() {
                 >
                   Uninstall
                 </AppButton>
-                <!-- Database web clients: deploy/stop the Podman container inline. -->
+                <!-- Database web clients: use the shared lifecycle flow regardless of native/container runtime. -->
                 <AppButton
                   v-if="canDeployTool(app)"
                   variant="primary"

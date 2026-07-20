@@ -65,7 +65,7 @@ func New(ctx context.Context, database *bun.DB, queue *jobs.Module, operator adm
 }
 
 func (m *Module) Descriptor() module.Descriptor {
-	return module.Descriptor{ID: "admin-tools", Name: "Database Admin Tools", Version: "0.1.0", Description: "Podman-isolated phpMyAdmin and pgAdmin with explicit resource ceilings.", Dependencies: []string{"audit", "identity", "jobs"}, RequiredCapabilities: []string{"podman", "quadlet"}, EstimatedIdleBytes: 512 * 1024}
+	return module.Descriptor{ID: "admin-tools", Name: "Database Admin Tools", Version: "0.1.0", Description: "Native phpMyAdmin and isolated on-demand pgAdmin database clients.", Dependencies: []string{"audit", "identity", "jobs"}, EstimatedIdleBytes: 512 * 1024}
 }
 func (m *Module) Register(registry module.Registry) error { return m.registerHTTP(registry) }
 
@@ -79,7 +79,7 @@ func (m *Module) Sync(ctx context.Context) ([]Tool, error) {
 		model := toolModel{Kind: string(item.Kind), Image: item.Image, ContainerName: item.ContainerName, Port: item.Port, MemoryMB: item.MemoryMB, PIDsLimit: item.PIDsLimit, Status: item.Status, SystemdUnit: item.SystemdUnit, OnDemand: item.OnDemand, CreatedAt: now, UpdatedAt: now}
 		// Preserve in-flight lifecycle statuses: a concurrent Sync (e.g. the
 		// admin-tools list refetch) must not clobber planning/plan_ready/applying
-		// with the container's observed systemd status, or the queued plan can no
+		// with the tool's observed systemd status, or the queued plan can no
 		// longer be applied. Unqualified `status` on the RHS is the pre-update
 		// value; EXCLUDED.status is the freshly observed one.
 		_, err = m.database.NewInsert().Model(&model).On("CONFLICT (kind) DO UPDATE").Set("image = EXCLUDED.image").Set("container_name = EXCLUDED.container_name").Set("port = EXCLUDED.port").Set("memory_mb = EXCLUDED.memory_mb").Set("pids_limit = EXCLUDED.pids_limit").Set("status = CASE WHEN status IN ('planning', 'plan_ready', 'applying') THEN status ELSE EXCLUDED.status END").Set("systemd_unit = EXCLUDED.systemd_unit").Set("on_demand = EXCLUDED.on_demand").Set("updated_at = EXCLUDED.updated_at").Exec(ctx)
@@ -173,7 +173,7 @@ func (m *Module) planJob(ctx context.Context, raw json.RawMessage, report func(i
 	if err != nil {
 		return nil, err
 	}
-	_ = report(25, "Inspecting the Podman tool service.")
+	_ = report(25, "Inspecting the admin-tool service.")
 	plan, err := m.operator.Plan(ctx, admintooloperator.Change{Action: admintooloperator.Action(request.Action), Tool: model.toTool().Tool})
 	if err != nil {
 		m.fail(context.WithoutCancel(ctx), model.Kind, err)
@@ -215,7 +215,7 @@ func (m *Module) applyJob(ctx context.Context, raw json.RawMessage, report func(
 			return nil, err
 		}
 	}
-	_ = report(25, "Applying the signed Podman tool plan.")
+	_ = report(25, "Applying the signed admin-tool plan.")
 	observation, err := m.operator.Apply(ctx, admintooloperator.Execution{Plan: stored.AgentPlan})
 	if err != nil {
 		m.fail(context.WithoutCancel(ctx), model.ToolKind, err)

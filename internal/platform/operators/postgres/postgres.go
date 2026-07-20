@@ -49,25 +49,25 @@ type Instance struct {
 }
 
 type Change struct {
-	Action       Action      `json:"action"`
-	InstanceID   string      `json:"instanceId"`
-	Version      string      `json:"version,omitempty"`
-	Cluster      string      `json:"cluster,omitempty"`
-	Port         int         `json:"port,omitempty"`
-	Database     string      `json:"database,omitempty"`
-	OwnerRole    string      `json:"ownerRole,omitempty"`
-	Role         string      `json:"role,omitempty"`
-	Access       AccessLevel `json:"access,omitempty"`
+	Action     Action      `json:"action"`
+	InstanceID string      `json:"instanceId"`
+	Version    string      `json:"version,omitempty"`
+	Cluster    string      `json:"cluster,omitempty"`
+	Port       int         `json:"port,omitempty"`
+	Database   string      `json:"database,omitempty"`
+	OwnerRole  string      `json:"ownerRole,omitempty"`
+	Role       string      `json:"role,omitempty"`
+	Access     AccessLevel `json:"access,omitempty"`
 	// RoleDatabases lists every database the role being dropped is entangled
 	// with, so its objects and privileges can be cleared before DROP ROLE — which
 	// Postgres refuses while a role still owns or is granted anything. A NewOwner
 	// marks a database the role owns and names the role that inherits it.
 	RoleDatabases []RoleDatabase `json:"roleDatabases,omitempty"`
-	BackupID     string      `json:"backupId,omitempty"`
-	BackupPath   string      `json:"backupPath,omitempty"`
-	BackupSHA256 string      `json:"backupSha256,omitempty"`
-	SecretSHA256 string      `json:"secretSha256,omitempty"`
-	RestoreToken string      `json:"restoreToken,omitempty"`
+	BackupID      string         `json:"backupId,omitempty"`
+	BackupPath    string         `json:"backupPath,omitempty"`
+	BackupSHA256  string         `json:"backupSha256,omitempty"`
+	SecretSHA256  string         `json:"secretSha256,omitempty"`
+	RestoreToken  string         `json:"restoreToken,omitempty"`
 }
 
 // RoleDatabase is one database a role being dropped touches. NewOwner is set

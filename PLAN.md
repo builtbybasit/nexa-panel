@@ -39,8 +39,8 @@ Working product name: **Nexa Panel**.
   module and recorded in the shared migration ledger
 - **Logging:** Go `log/slog` with structured JSON in production
 - **Metrics:** Prometheus-compatible `/metrics`
-- **Container runtime:** Podman for isolated administration tools and optional
-  database instances
+- **Container runtime:** Podman for isolated pgAdmin and optional database
+  instances; phpMyAdmin reuses the native Nginx/PHP-FPM stack
 - **Live updates:** Server-Sent Events initially; WebSockets only where
   bidirectional communication is required
 - **Testing:** standard `testing`, `testify/require`, golden files, and
@@ -109,7 +109,8 @@ compact profile:
 - run Nginx and supported PHP-FPM versions on the host;
 - run only one production database engine by default;
 - do not keep PostgreSQL, MySQL, and MariaDB instances running simultaneously;
-- start phpMyAdmin and pgAdmin on demand and stop them after an idle timeout;
+- serve phpMyAdmin through the existing native Nginx/PHP-FPM stack and run
+  pgAdmin on demand with a session-aligned idle timeout;
 - use PHP-FPM `pm = ondemand` with a node-wide child-process budget;
 - apply container memory, memory-reservation, CPU, PID, and `/dev/shm` limits;
 - tune database connection counts and caches from available memory;
@@ -138,7 +139,7 @@ verified through integration benchmarks before publishing hard workload claims.
 - PostgreSQL 16, 17, and 18 instances
 - One host-level MySQL **or** MariaDB installation
 - Database and database-user management
-- Podman-managed phpMyAdmin and pgAdmin, started on demand with short-lived SSO
+- Native phpMyAdmin plus Podman-managed pgAdmin with short-lived SSO
 - File manager constrained to a site's filesystem
 - Let's Encrypt HTTP-01 certificates and automatic renewal
 - Nginx, PHP, application, and database logs
@@ -1026,7 +1027,7 @@ database from a panel-created restore point.
 
 - Select one host engine during installation.
 - Database/user lifecycle and logical backup/restore.
-- phpMyAdmin and pgAdmin isolated deployment.
+- Native phpMyAdmin and isolated pgAdmin deployment.
 - Short-lived SSO gateway and audit trail.
 
 Current implementation progress:
@@ -1046,9 +1047,10 @@ Current implementation progress:
 - complete: the independent Bun-backed MySQL & MariaDB module owns engine,
   account, database, grant, restore-point, and signed-plan state with durable
   planning/apply jobs and one-time credential reveal;
-- complete: the independent Admin Tools operator renders root-owned Quadlets
-  bound to localhost with read-only roots, no-new-privileges, all capabilities
-  dropped, PID caps, and 128 MiB phpMyAdmin / 256 MiB pgAdmin memory ceilings;
+- complete: the independent Admin Tools operator installs phpMyAdmin natively
+  behind a loopback-only Nginx/PHP-FPM route and renders a root-owned pgAdmin
+  Quadlet with a read-only root, no-new-privileges, all capabilities dropped,
+  PID caps, a 512 MiB memory ceiling, and a 15-minute idle-stop timer;
 - complete: the Bun-backed Admin Tools module discovers, deploys, starts, and
   stops phpMyAdmin and pgAdmin through reviewed signed plans and durable jobs;
 - complete: Admin Tool Launch uses a 60-second single-use token, a 15-minute
@@ -1065,8 +1067,8 @@ Current implementation progress:
   pgAdmin 9.16 with read-only roots, dropped capabilities, memory/PID ceilings,
   proves signon/webserver authentication, and verifies pgAdmin imported the
   selected server and copied its pgpass entry;
-- pending: clean Ubuntu rootful Podman/Quadlet end-to-end acceptance, native
-  engine package selection during installation, and automatic idle shutdown.
+- pending: clean Ubuntu rootful hybrid admin-tool end-to-end acceptance and
+  native engine package selection during installation.
 
 **Exit:** authorized users open the correct database administration tool without
 credentials appearing in browser-visible URLs or logs.

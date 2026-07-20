@@ -94,7 +94,7 @@ onBeforeUnmount(() => clearTimeout(copiedResetTimer))
       <AppCard
         eyebrow="Container capability"
         title="Podman runtime"
-        description="Podman runs isolated administration tools such as phpMyAdmin and pgAdmin. Core Nginx, PHP-FPM, and PostgreSQL processes remain native to protect the compact memory profile."
+        description="Podman isolates the heavier pgAdmin web client. phpMyAdmin shares the native Nginx and PHP-FPM stack so it adds no duplicate idle web-server processes."
       >
         <template #actions>
           <StatusPill
@@ -102,8 +102,8 @@ onBeforeUnmount(() => clearTimeout(copiedResetTimer))
             :label="data.podman.available ? 'Available' : 'Action needed'"
             :description="
               data.podman.available
-                ? 'Podman is installed and ready to run container tools'
-                : 'Podman is not installed — container tools are unavailable until it is'
+                ? 'Podman is installed and ready to run pgAdmin'
+                : 'Podman is not installed — pgAdmin is unavailable until it is'
             "
           />
         </template>
