@@ -2,9 +2,8 @@ package postgres
 
 import (
 	"context"
-	"strconv"
-
 	"errors"
+	"strconv"
 	"strings"
 )
 

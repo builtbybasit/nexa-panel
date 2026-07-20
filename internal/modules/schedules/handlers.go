@@ -1,12 +1,10 @@
 package schedules
 
 import (
+	"fmt"
 	"net/http"
 
-	"fmt"
-
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )

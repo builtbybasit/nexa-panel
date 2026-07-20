@@ -2,17 +2,17 @@ package mysql
 
 import (
 	"context"
-
-	"os/exec"
-
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 func (execRunner) Run(ctx context.Context, command Command) ([]byte, error) {
@@ -109,9 +109,20 @@ func safePrivileges(output string) ([]string, error) {
 	return values, nil
 }
 
-func (o *HostOperator) databaseExists(ctx context.Context, engine *Engine, database string) bool {
+func (o *HostOperator) databaseExists(ctx context.Context, engine *Engine, database string) (bool, error) {
 	output, err := o.runner.Run(ctx, o.clientCommand(engine, "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME="+quoteLiteral(database)+";"))
-	return err == nil && strings.TrimSpace(string(output)) == database
+	if err != nil {
+		return false, commandError("inspect MySQL-family database before restore", output, err)
+	}
+	observed := strings.TrimSpace(string(output))
+	switch observed {
+	case "":
+		return false, nil
+	case database:
+		return true, nil
+	default:
+		return false, commandError("inspect MySQL-family database before restore", output, errors.New("unexpected database query response"))
+	}
 }
 
 func (o *HostOperator) verifyDatabase(ctx context.Context, engine *Engine, database string) error {
@@ -192,21 +203,41 @@ func fingerprint(value any) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomID() string { return secureid.Hex(16) }
 
 func fileDigest(path string) (string, int64, error) {
-	value, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return "", 0, err
 	}
-	digest := sha256.Sum256(value)
-	return hex.EncodeToString(digest[:]), int64(len(value)), nil
+	defer file.Close()
+	hasher := sha256.New()
+	size, err := io.Copy(hasher, file)
+	if err != nil {
+		return "", 0, err
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), size, nil
+}
+
+func syncFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return file.Sync()
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open MySQL-family backup directory for sync: %w", err)
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("sync MySQL-family backup directory: %w", err)
+	}
+	return nil
 }
 
 func firstError(values ...error) error {

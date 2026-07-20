@@ -3,15 +3,12 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-
 	"io"
 	"net/http"
-
 	"strconv"
 	"time"
 
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
 

@@ -1,6 +1,7 @@
 mysql-family_engines:
   get:
     operationId: listMySQLFamilyEngines
+    summary: List MySQL Family Engines
     tags:
     - Databases
     x-permission: databases.read
@@ -19,9 +20,12 @@ mysql-family_engines:
                   maxItems: 1
                   items:
                     $ref: ../components/schemas/mysql-family.yaml#/MySQLFamilyEngine
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 mysql-family_accounts:
   get:
     operationId: listMySQLFamilyAccounts
+    summary: List MySQL Family Accounts
     tags:
     - Databases
     x-permission: databases.read
@@ -30,8 +34,11 @@ mysql-family_accounts:
     responses:
       '200':
         description: Managed database accounts
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createMySQLFamilyAccount
+    summary: Create MySQL Family Account
     tags:
     - Databases
     x-permission: databases.write
@@ -46,9 +53,12 @@ mysql-family_accounts:
     responses:
       '202':
         description: Encrypted account creation planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 mysql-family_accounts_id_rotate:
   post:
     operationId: rotateMySQLFamilyAccount
+    summary: Rotate MySQL Family Account
     tags:
     - Databases
     x-permission: databases.write
@@ -63,9 +73,12 @@ mysql-family_accounts_id_rotate:
     responses:
       '202':
         description: Failure-safe credential rotation planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 mysql-family_accounts_id_credential:
   post:
     operationId: revealMySQLFamilyCredentialOnce
+    summary: Reveal MySQL Family Credential Once
     tags:
     - Databases
     x-permission: operations.apply
@@ -80,9 +93,12 @@ mysql-family_accounts_id_credential:
     responses:
       '200':
         description: One-time non-cacheable credential response
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 mysql-family_databases:
   get:
     operationId: listMySQLFamilyDatabases
+    summary: List MySQL Family Databases
     tags:
     - Databases
     x-permission: databases.read
@@ -100,8 +116,11 @@ mysql-family_databases:
                   type: array
                   items:
                     $ref: ../components/schemas/mysql-family.yaml#/MySQLFamilyDatabase
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createMySQLFamilyDatabase
+    summary: Create MySQL Family Database
     tags:
     - Databases
     x-permission: databases.write
@@ -116,9 +135,12 @@ mysql-family_databases:
     responses:
       '202':
         description: Database creation planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 mysql-family_grants:
   get:
     operationId: listMySQLFamilyGrants
+    summary: List MySQL Family Grants
     tags:
     - Databases
     x-permission: databases.read
@@ -127,8 +149,11 @@ mysql-family_grants:
     responses:
       '200':
         description: Database-scoped grants
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createMySQLFamilyGrant
+    summary: Create MySQL Family Grant
     tags:
     - Databases
     x-permission: databases.write
@@ -143,9 +168,12 @@ mysql-family_grants:
     responses:
       '202':
         description: Scoped grant planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 mysql-family_databases_id_backups:
   post:
     operationId: createMySQLFamilyRestorePoint
+    summary: Create MySQL Family Restore Point
     tags:
     - Databases
     x-permission: databases.write
@@ -160,9 +188,12 @@ mysql-family_databases_id_backups:
     responses:
       '202':
         description: Consistent logical backup planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 mysql-family_restore-points:
   get:
     operationId: listMySQLFamilyRestorePoints
+    summary: List MySQL Family Restore Points
     tags:
     - Databases
     x-permission: databases.read
@@ -171,9 +202,12 @@ mysql-family_restore-points:
     responses:
       '200':
         description: Verified MySQL-family restore points
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 mysql-family_restore-points_id_restore:
   post:
     operationId: prepareMySQLFamilyRestore
+    summary: Prepare MySQL Family Restore
     tags:
     - Databases
     x-permission: databases.write
@@ -188,9 +222,12 @@ mysql-family_restore-points_id_restore:
     responses:
       '202':
         description: Checksum-bound restore with automatic rollback planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 mysql-family_resourceType_id_plan:
   get:
     operationId: getMySQLFamilyPlan
+    summary: Get MySQL Family Plan
     tags:
     - Databases
     x-permission: databases.read
@@ -215,9 +252,12 @@ mysql-family_resourceType_id_plan:
     responses:
       '200':
         description: Agent-signed MySQL-family plan
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 mysql-family_resourceType_id_apply:
   post:
     operationId: applyMySQLFamilyPlan
+    summary: Apply MySQL Family Plan
     tags:
     - Databases
     x-permission: operations.apply
@@ -246,3 +286,6 @@ mysql-family_resourceType_id_apply:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

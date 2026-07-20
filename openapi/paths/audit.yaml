@@ -1,6 +1,7 @@
 audit_events:
   get:
     operationId: listAuditEvents
+    summary: List Audit Events
     tags:
     - Audit
     x-permission: audit.read
@@ -28,3 +29,6 @@ audit_events:
                   type: array
                   items:
                     $ref: ../components/schemas/audit.yaml#/AuditEvent
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

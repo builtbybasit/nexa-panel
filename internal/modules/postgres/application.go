@@ -2,10 +2,10 @@ package postgres
 
 import (
 	"context"
-	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
-
 	"encoding/json"
 	"errors"
+
+	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 )
 
 func (m *Module) applyJob(ctx context.Context, raw json.RawMessage, report func(int, string) error) (any, error) {

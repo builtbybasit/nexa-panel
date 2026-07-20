@@ -1,10 +1,9 @@
 import { apiRequest } from '@/shared/api/request'
 
-import type { Job, JobEvent } from '../jobs/api'
-import { subscribeToJob } from '../jobs/api'
+import type { Job } from '../jobs/api'
 
 export type DomainKind = 'primary' | 'subdomain' | 'alias' | 'redirect'
-export type DomainStatus = 'planning' | 'plan_ready' | 'activating' | 'active' | 'failed'
+type DomainStatus = 'planning' | 'plan_ready' | 'activating' | 'active' | 'failed'
 
 export interface Domain {
   id: string
@@ -65,8 +64,4 @@ export function getDomainPlan(id: string): Promise<{ plan: DomainPlan; expiresAt
 
 export function activateDomain(id: string): Promise<Job> {
   return request(`/api/v1/domains/${encodeURIComponent(id)}/activate`, { method: 'POST' })
-}
-
-export function watchDomainJob(id: number, onEvent: (event: JobEvent) => void, onError?: () => void) {
-  return subscribeToJob(id, onEvent, onError)
 }

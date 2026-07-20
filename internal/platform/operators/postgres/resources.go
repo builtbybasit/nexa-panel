@@ -1,13 +1,11 @@
 package postgres
 
 import (
-	"fmt"
-	"strings"
-
-	"path/filepath"
-
 	"context"
+	"fmt"
+	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 func (o *HostOperator) provision(ctx context.Context, change Change) (Observation, error) {

@@ -1,9 +1,8 @@
 package postgres
 
 import (
-	"database/sql"
-
 	"context"
+	"database/sql"
 	"errors"
 )
 

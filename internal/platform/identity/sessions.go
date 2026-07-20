@@ -1,21 +1,18 @@
 package identity
 
 import (
-	"errors"
-	"fmt"
-
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
-	"net/http"
-
-	"context"
-	"strings"
-
-	"encoding/hex"
-
-	"net/url"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 )
 
 func (m *Module) bootstrapRequired(ctx context.Context) (bool, error) {
@@ -25,9 +22,7 @@ func (m *Module) bootstrapRequired(ctx context.Context) (bool, error) {
 
 func (m *Module) startSession(w http.ResponseWriter, r *http.Request, user User) error {
 	token := make([]byte, 32)
-	if _, err := rand.Read(token); err != nil {
-		return fmt.Errorf("generate session token: %w", err)
-	}
+	rand.Read(token)
 	rawToken := hex.EncodeToString(token)
 	hashedToken := sha256.Sum256([]byte(rawToken))
 	now := m.now().UTC()
@@ -98,7 +93,7 @@ func (m *Module) requireSession(r *http.Request) (principal, error) {
 }
 
 func requestIsHTTPS(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	return httpapi.IsHTTPS(r)
 }
 
 func clearSessionCookie(w http.ResponseWriter, r *http.Request) {

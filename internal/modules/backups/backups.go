@@ -1,7 +1,6 @@
-// Package backups is the control-plane module for FastPanel-style backups.
-// Phase 1 owns backup accounts: the storage destinations (rclone remotes) that
-// later phases' plans write copies to. Credentials are encrypted at rest with
-// the shared secrets.Box; the node agent does the actual rclone work.
+// Package backups owns storage accounts, schedules, backup execution, copy
+// health, retention, and restore orchestration. Credentials remain encrypted in
+// the control plane; privileged filesystem and database work runs in the agent.
 package backups
 
 import (
@@ -9,10 +8,13 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/uptrace/bun"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
@@ -33,17 +35,21 @@ type DatabaseResolver interface {
 	BackupDatabase(ctx context.Context, id string) (backupoperator.DatabaseTarget, error)
 }
 
+type SiteAccessPolicy interface {
+	AccessibleSiteIDs(ctx context.Context, user identity.User) (all bool, ids []string, err error)
+}
+
 // Dependencies are the collaborators the module needs. Grouping them keeps the
 // constructor readable as the module accreted a job queue and three resolvers.
 type Dependencies struct {
-	Database    *bun.DB
-	Jobs        *jobs.Module
-	Cipher      secrets.Cipher
-	Operator    backupoperator.Operator
-	Sites       SiteResolver
-	Postgres    DatabaseResolver
-	Mysql       DatabaseResolver
-	StagingRoot string
+	Database     *bun.DB
+	Jobs         *jobs.Module
+	Cipher       secrets.Cipher
+	Operator     backupoperator.Operator
+	Sites        SiteResolver
+	Postgres     DatabaseResolver
+	Mysql        DatabaseResolver
+	AccessPolicy SiteAccessPolicy
 	// StateDBPath is the control-plane database path; it is baked into each
 	// plan's generated systemd service so `nexa backup trigger` finds the queue.
 	StateDBPath string
@@ -64,6 +70,24 @@ const accountsSchema = `
 		created_at TIMESTAMP NOT NULL,
 		updated_at TIMESTAMP NOT NULL
 	);
+`
+
+// SQLite cannot add a foreign key to the already-shipped backup_copies table.
+// These append-only guards provide the same invariant for upgraded databases:
+// a copy can never outlive, or be created without, its owning plan.
+const copyPlanIntegritySchema = `
+	CREATE TRIGGER backup_copies_require_plan
+	BEFORE INSERT ON backup_copies
+	FOR EACH ROW WHEN NOT EXISTS (SELECT 1 FROM backup_plans WHERE id = NEW.plan_id)
+	BEGIN
+		SELECT RAISE(ABORT, 'backup copy requires an existing plan');
+	END;
+	CREATE TRIGGER backup_plans_require_no_copies
+	BEFORE DELETE ON backup_plans
+	FOR EACH ROW WHEN EXISTS (SELECT 1 FROM backup_copies WHERE plan_id = OLD.id)
+	BEGIN
+		SELECT RAISE(ABORT, 'backup plan still has stored copies');
+	END;
 `
 
 // AccountType values map straight onto rclone backend names.
@@ -101,17 +125,25 @@ type AccountRequest struct {
 }
 
 type Module struct {
-	database    *bun.DB
-	jobs        *jobs.Module
-	operator    backupoperator.Operator
-	cipher      secrets.Cipher
-	sites       SiteResolver
-	postgres    DatabaseResolver
-	mysql       DatabaseResolver
-	stagingRoot string
-	stateDBPath string
-	logger      *slog.Logger
-	now         func() time.Time
+	database     *bun.DB
+	jobs         *jobs.Module
+	operator     backupoperator.Operator
+	cipher       secrets.Cipher
+	sites        SiteResolver
+	postgres     DatabaseResolver
+	mysql        DatabaseResolver
+	accessPolicy SiteAccessPolicy
+	stateDBPath  string
+	logger       *slog.Logger
+	now          func() time.Time
+
+	scheduleRetryInterval time.Duration
+	scheduleFullInterval  time.Duration
+	reconcileCancel       context.CancelFunc
+	reconcileDone         chan struct{}
+	reconcileStartOnce    sync.Once
+	reconcileCloseOnce    sync.Once
+	scheduleSyncMu        sync.Mutex
 }
 
 type accountModel struct {
@@ -127,10 +159,20 @@ type accountModel struct {
 }
 
 func New(ctx context.Context, deps Dependencies) (*Module, error) {
-	if deps.Database == nil || deps.Cipher == nil || deps.Operator == nil || deps.Jobs == nil {
-		return nil, errors.New("backups database, cipher, node operator, and job queue are required")
+	if deps.Database == nil || deps.Cipher == nil || deps.Operator == nil || deps.Jobs == nil || deps.AccessPolicy == nil {
+		return nil, errors.New("backups database, cipher, node operator, job queue, and site access policy are required")
 	}
-	if err := persistence.Migrate(ctx, deps.Database, "backups", []string{accountsSchema, plansSchema, copiesSchema}); err != nil {
+	if !filepath.IsAbs(deps.StateDBPath) || filepath.Clean(deps.StateDBPath) != deps.StateDBPath {
+		return nil, errors.New("backups state database path must be absolute and clean")
+	}
+	if err := persistence.Migrate(ctx, deps.Database, "backups", []string{
+		accountsSchema,
+		plansSchema,
+		copiesSchema,
+		scheduleLifecycleSchema,
+		copyHealthSchema,
+		copyPlanIntegritySchema,
+	}); err != nil {
 		return nil, err
 	}
 	logger := deps.Logger
@@ -139,11 +181,17 @@ func New(ctx context.Context, deps Dependencies) (*Module, error) {
 	}
 	module := &Module{
 		database: deps.Database, jobs: deps.Jobs, operator: deps.Operator, cipher: deps.Cipher,
-		sites: deps.Sites, postgres: deps.Postgres, mysql: deps.Mysql,
-		stagingRoot: deps.StagingRoot, stateDBPath: deps.StateDBPath, logger: logger, now: time.Now,
+		sites: deps.Sites, postgres: deps.Postgres, mysql: deps.Mysql, accessPolicy: deps.AccessPolicy,
+		stateDBPath: deps.StateDBPath, logger: logger, now: time.Now,
+		scheduleRetryInterval: time.Minute, scheduleFullInterval: 30 * time.Minute,
+		reconcileDone: make(chan struct{}),
 	}
-	deps.Jobs.RegisterHandler("backup.run", module.runJob)
-	deps.Jobs.RegisterHandler("backup.restore", module.restoreJob)
+	if err := deps.Jobs.RegisterHandlerWithOptions("backup.run", module.runJob, jobs.HandlerOptions{RecoveryPolicy: jobs.RecoveryFail}); err != nil {
+		return nil, err
+	}
+	if err := deps.Jobs.RegisterHandlerWithOptions("backup.restore", module.restoreJob, jobs.HandlerOptions{RecoveryPolicy: jobs.RecoveryFail}); err != nil {
+		return nil, err
+	}
 	return module, nil
 }
 
@@ -175,7 +223,7 @@ func (m *Module) Register(registry module.Registry) error {
 		{"POST /api/v1/backups/plans/{id}/run", "backups.write", http.HandlerFunc(m.runPlanHTTP)},
 		{"DELETE /api/v1/backups/plans/{id}", "backups.write", http.HandlerFunc(m.deletePlanHTTP)},
 		{"GET /api/v1/backups/plans/{id}/copies", "backups.read", http.HandlerFunc(m.listCopiesHTTP)},
-		{"POST /api/v1/backups/copies/{copyId}/restore", "backups.write", http.HandlerFunc(m.restoreCopyHTTP)},
+		{"POST /api/v1/backups/copies/{copyId}/restore", "operations.apply", http.HandlerFunc(m.restoreCopyHTTP)},
 		{"DELETE /api/v1/backups/copies/{copyId}", "backups.write", http.HandlerFunc(m.deleteCopyHTTP)},
 	}
 	for _, route := range routes {

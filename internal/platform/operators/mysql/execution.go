@@ -2,14 +2,19 @@ package mysql
 
 import (
 	"context"
-	"errors"
-
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 )
 
 func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observation, error) {
+	// The native engine is one shared mutable resource. Serializing reviewed
+	// applications prevents two valid plans from interleaving database resets,
+	// rollback files, grants, or logical backup publication.
+	o.applyMu.Lock()
+	defer o.applyMu.Unlock()
+
 	plan := execution.Plan
 	if plan.ID == "" || plan.Kind != PlanKind || o.now().UTC().After(plan.ExpiresAt) {
 		return Observation{}, errors.New("MySQL-family plan is invalid or expired")

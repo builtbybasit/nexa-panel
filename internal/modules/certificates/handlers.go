@@ -2,11 +2,10 @@ package certificates
 
 import (
 	"database/sql"
-	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
-
 	"errors"
-
 	"net/http"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 )
 
 func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {

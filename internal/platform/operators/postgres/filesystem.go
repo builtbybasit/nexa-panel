@@ -1,22 +1,16 @@
 package postgres
 
 import (
-	"strconv"
-
+	"crypto/sha256"
 	"encoding/hex"
-
 	"errors"
 	"fmt"
-	"os"
-
 	"io"
-
+	"os"
 	"os/user"
-	"strings"
-
-	"crypto/sha256"
-
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 func preparePostgresDirectory(root, path string) error {
@@ -46,6 +40,27 @@ func preparePostgresDirectory(root, path string) error {
 		if current == root {
 			break
 		}
+	}
+	return nil
+}
+
+func syncFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return file.Sync()
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open PostgreSQL backup directory for sync: %w", err)
+	}
+	defer directory.Close()
+	if err := directory.Sync(); err != nil {
+		return fmt.Errorf("sync PostgreSQL backup directory: %w", err)
 	}
 	return nil
 }

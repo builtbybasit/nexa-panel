@@ -2,13 +2,10 @@ package postgres
 
 import (
 	"context"
-
 	"errors"
-
 	"path/filepath"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 )
 

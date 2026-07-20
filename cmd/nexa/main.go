@@ -1,12 +1,12 @@
 package main
 
 import (
-	"os"
-
 	"errors"
 	"fmt"
-	"github.com/nexa-panel/nexa-panel/internal/platform/version"
 	"log/slog"
+	"os"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/version"
 )
 
 func main() {
@@ -29,6 +29,8 @@ func run(args []string, logger *slog.Logger) error {
 		return runAPI(args[1:], logger)
 	case "agent":
 		return runAgent(args[1:], logger)
+	case "agent-token":
+		return runAgentToken(args[1:])
 	case "backup":
 		return runBackup(args[1:], logger)
 	case "doctor":
@@ -56,8 +58,9 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `Nexa Panel - Modern Server Management Platform
 
 Usage:
-  nexa api [--address 127.0.0.1:8080] [--state /var/lib/nexa-panel/control.db] [--master-key /var/lib/nexa-panel/master.key]
+  nexa api [--address 127.0.0.1:8080 | --unix-socket /run/nexa-panel/api.sock] [--state /var/lib/nexa-panel/control.db] [--master-key /var/lib/nexa-panel/master.key]
   nexa agent [--socket /run/nexa-panel/agent.sock] [--token /run/nexa-panel/agent.token]
+  nexa agent-token [--path /etc/nexa-panel/agent.token]
   nexa doctor
   nexa version`)
 }

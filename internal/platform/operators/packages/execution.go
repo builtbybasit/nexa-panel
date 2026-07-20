@@ -319,7 +319,8 @@ func (o *HostOperator) verify(ctx context.Context, change Change, entry catalogE
 			if _, ok := byName[entry.identity()]; !ok {
 				return Observation{}, fmt.Errorf(
 					"%s reported installed, but the server is version %q, which is not the %s series",
-					entry.Label, installedVersion, entry.Version)
+					entry.Label, installedVersion, entry.Version,
+				)
 			}
 		}
 		if installedVersion != "" {

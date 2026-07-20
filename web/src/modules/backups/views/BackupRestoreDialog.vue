@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { computed, reactive, watchEffect } from 'vue'
+import { computed, reactive, ref, watchEffect } from 'vue'
 
 import { formatBytes } from '@/shared/formatters'
 import { AppAlert, AppButton, AppDialog, AppInput, AppSelect, FormField } from '@/shared/ui'
@@ -26,6 +26,7 @@ const postgresOptions = computed(() =>
 const mysqlOptions = computed(() =>
   (myQuery.data.value ?? []).map((db) => ({ value: `mysql:${db.id}`, name: db.name, label: `${db.name} · MySQL` })),
 )
+const unverifiedAcknowledged = ref(false)
 
 // A restorable item derived from one copy entry, plus the reactive destination
 // and clear choice the operator will act on.
@@ -86,6 +87,9 @@ function stateFor(item: RestoreItem) {
 }
 
 const error = computed(() => {
+  if (props.copy.integrityState !== 'passed' && !unverifiedAcknowledged.value) {
+    return 'Confirm the integrity risk before restoring this unverified copy.'
+  }
   const chosen = items.value.filter((item) => stateFor(item).include)
   if (!chosen.length) return 'Select at least one item to restore.'
   if (chosen.some((item) => !stateFor(item).dest)) return 'Choose a destination for every selected item.'
@@ -94,7 +98,11 @@ const error = computed(() => {
 
 function submit() {
   if (error.value || props.busy) return
-  const body: BackupRestoreRequest = { sites: [], databases: [] }
+  const body: BackupRestoreRequest = {
+    sites: [],
+    databases: [],
+    allowUnverified: props.copy.integrityState !== 'passed' && unverifiedAcknowledged.value,
+  }
   for (const item of items.value) {
     const state = stateFor(item)
     if (!state.include) continue
@@ -112,6 +120,17 @@ function submit() {
         Choose where each item in this copy is restored. Restoring overwrites files and databases at the destination —
         enable <strong>Clear first</strong> to remove existing data before the copy is applied.
       </p>
+
+      <AppAlert v-if="!copy.healthy" tone="warning">
+        This copy has not passed both integrity and restore verification. Continue only if the recovery need outweighs that risk.
+      </AppAlert>
+      <label
+        v-if="copy.integrityState !== 'passed'"
+        class="flex items-start gap-2.5 rounded-lg border border-amber-400/25 bg-amber-400/[0.05] p-3 text-[13px] text-amber-100"
+      >
+        <input v-model="unverifiedAcknowledged" type="checkbox" class="mt-0.5 size-4 accent-amber-400" />
+        I understand that this copy has no passing integrity check and still want to restore it.
+      </label>
 
       <div v-for="item in items" :key="item.entry" class="rounded-xl border border-outline bg-white/[0.02] p-3">
         <label class="flex items-center gap-2.5 text-sm text-ink">

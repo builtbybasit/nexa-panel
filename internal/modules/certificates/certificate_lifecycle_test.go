@@ -27,6 +27,7 @@ type fakeDomains struct{}
 func (fakeDomains) List(context.Context, string) ([]domains.Domain, error) {
 	return []domains.Domain{{ID: "primary", SiteID: "site-1", Hostname: "demo.example.com", Kind: domains.KindPrimary, Status: domains.StatusActive}, {ID: "alias", SiteID: "site-1", Hostname: "www.demo.example.com", Kind: domains.KindAlias, Status: domains.StatusActive}}, nil
 }
+
 func (fakeDomains) Routing(context.Context, string, string) ([]siteoperator.Route, error) {
 	return []siteoperator.Route{{Hostname: "www.demo.example.com", Kind: "alias"}}, nil
 }
@@ -49,6 +50,7 @@ type failingCertificateOperator struct{ fakeCertificateOperator }
 func (failingCertificateOperator) Execute(context.Context, certificateoperator.Plan) (certificateoperator.Observation, error) {
 	return certificateoperator.Observation{}, errors.New("simulated ACME staging failure")
 }
+
 func (fakeCertificateOperator) Execute(_ context.Context, plan certificateoperator.Plan) (certificateoperator.Observation, error) {
 	now := time.Now().UTC()
 	return certificateoperator.Observation{CertificateID: plan.Request.CertificateID, PrimaryDomain: plan.Request.PrimaryDomain, Domains: plan.Request.Domains, CertificatePath: plan.CertificatePath, PrivateKeyPath: plan.PrivateKeyPath, IssuedAt: now, ExpiresAt: now.Add(90 * 24 * time.Hour)}, nil
@@ -69,16 +71,20 @@ func (r *recordingSiteOperator) Plan(_ context.Context, site siteoperator.Site) 
 	now := time.Now()
 	return siteoperator.Plan{ID: "site-plan", Kind: siteoperator.PlanKind, Site: site, PlannedAt: now, ExpiresAt: now.Add(time.Hour), Signature: "signed"}, nil
 }
+
 func (r *recordingSiteOperator) Apply(_ context.Context, plan siteoperator.Plan) (siteoperator.Observation, error) {
 	r.applied = append(r.applied, plan.Site)
 	return siteoperator.Observation{SiteID: plan.Site.ID, Active: true}, nil
 }
+
 func (*recordingSiteOperator) Rollback(context.Context, siteoperator.Plan) (siteoperator.Observation, error) {
 	return siteoperator.Observation{}, nil
 }
+
 func (fakeSiteOperator) Apply(_ context.Context, plan siteoperator.Plan) (siteoperator.Observation, error) {
 	return siteoperator.Observation{SiteID: plan.Site.ID, Active: true}, nil
 }
+
 func (fakeSiteOperator) Rollback(context.Context, siteoperator.Plan) (siteoperator.Observation, error) {
 	return siteoperator.Observation{}, nil
 }
@@ -159,6 +165,7 @@ func TestCertificateIssuePlanApplyAndExpiryState(t *testing.T) {
 		t.Fatalf("failed revoke routing sequence = %+v", routing.applied)
 	}
 }
+
 func waitCertificateJob(t *testing.T, queue *jobs.Module, id int64) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)

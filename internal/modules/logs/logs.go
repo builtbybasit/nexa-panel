@@ -3,16 +3,12 @@ package logs
 import (
 	"context"
 	"errors"
-
 	"net/http"
-
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 )
 

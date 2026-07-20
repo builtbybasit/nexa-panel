@@ -30,6 +30,7 @@ type fakePostgresOperator struct {
 func (f *fakePostgresOperator) Discover(context.Context) ([]postgresoperator.Instance, error) {
 	return []postgresoperator.Instance{f.instance}, nil
 }
+
 func (f *fakePostgresOperator) Sizes(_ context.Context, instanceID string) (map[string]int64, error) {
 	f.sizeCalls++
 	if f.sizeError != nil {
@@ -40,10 +41,12 @@ func (f *fakePostgresOperator) Sizes(_ context.Context, instanceID string) (map[
 	}
 	return f.sizes, nil
 }
+
 func (f *fakePostgresOperator) Plan(_ context.Context, change postgresoperator.Change) (postgresoperator.Plan, error) {
 	now := time.Now().UTC()
 	return postgresoperator.Plan{ID: randomToken(8), Kind: postgresoperator.PlanKind, Change: change, Steps: []string{"typed change"}, ObservedFingerprint: "observed", PlannedAt: now, ExpiresAt: now.Add(time.Hour), Signature: "agent-signed"}, nil
 }
+
 func (f *fakePostgresOperator) Apply(_ context.Context, execution postgresoperator.Execution) (postgresoperator.Observation, error) {
 	if execution.Secret != "" {
 		f.secrets = append(f.secrets, execution.Secret)

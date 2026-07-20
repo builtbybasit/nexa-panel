@@ -78,7 +78,8 @@ func rejectConflictingEngine(change Change, entry catalogEntry, present []catalo
 		if other.App != entry.App {
 			return fmt.Errorf(
 				"%s is already installed on this node, and %s cannot be installed alongside it — remove %s first, backing up its databases beforehand",
-				other.Label, entry.Label, other.Label)
+				other.Label, entry.Label, other.Label,
+			)
 		}
 	}
 	return nil
@@ -92,7 +93,8 @@ func planNarrative(change Change, entry catalogEntry, present []catalogEntry) ([
 	steps := []string{}
 	warnings := []string{}
 	if change.Action == ActionRemove {
-		steps = append(steps,
+		steps = append(
+			steps,
 			fmt.Sprintf("Purge %d %s package(s): %s.", len(entry.Packages), entry.Label, strings.Join(entry.Packages, ", ")),
 			"Autoremove now-unused dependencies.",
 			"Verify the packages are no longer installed.",
@@ -111,7 +113,8 @@ func planNarrative(change Change, entry catalogEntry, present []catalogEntry) ([
 		steps, warnings = append(steps, databaseRepoSteps(entry)...), append(warnings, databaseRepoWarnings(entry, present)...)
 	}
 	steps = append(steps, "Update the apt package index.")
-	steps = append(steps,
+	steps = append(
+		steps,
 		fmt.Sprintf("Install %d %s package(s): %s.", len(entry.Packages), entry.Label, strings.Join(entry.Packages, ", ")),
 		"Verify the packages report as installed.",
 	)
@@ -153,7 +156,8 @@ func databaseRepoWarnings(entry catalogEntry, present []catalogEntry) []string {
 		if other.App == entry.App && other.Version != entry.Version {
 			warnings = append(warnings, fmt.Sprintf(
 				"%s is already installed. This replaces it in place with %s and the server upgrades its data directory on first start — a change that cannot be undone by reinstalling %s. Back up every database first.",
-				other.Label, entry.Label, other.Label))
+				other.Label, entry.Label, other.Label,
+			))
 		}
 	}
 	return warnings

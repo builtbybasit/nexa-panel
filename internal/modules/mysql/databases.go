@@ -2,12 +2,11 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-
-	"errors"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 )
 

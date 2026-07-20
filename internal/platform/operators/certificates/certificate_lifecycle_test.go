@@ -12,6 +12,7 @@ func (r *recordingRunner) Run(_ context.Context, name string, args ...string) ([
 	r.args = append([]string{name}, args...)
 	return nil, nil
 }
+
 func TestPlanAllowsHTTP01SANsAndRevokeUsesCertName(t *testing.T) {
 	runner := new(recordingRunner)
 	operator, err := NewHostOperator(runner, t.TempDir(), t.TempDir())
@@ -57,6 +58,7 @@ func TestRenewUsesWebrootAndCertificateName(t *testing.T) {
 		}
 	}
 }
+
 func TestPlanRejectsWildcardAndMissingEmail(t *testing.T) {
 	operator, _ := NewHostOperator(new(recordingRunner), t.TempDir(), t.TempDir())
 	if _, err := operator.Plan(context.Background(), Request{CertificateID: "cert", Operation: "issue", PrimaryDomain: "example.com", Domains: []string{"example.com", "*.example.com"}, Email: "admin@example.com"}); err == nil {

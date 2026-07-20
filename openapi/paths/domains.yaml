@@ -1,6 +1,7 @@
 domains:
   get:
     operationId: listDomains
+    summary: List Domains
     tags:
     - Domains
     x-permission: domains.read
@@ -23,8 +24,11 @@ domains:
                   type: array
                   items:
                     $ref: ../components/schemas/domains.yaml#/Domain
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createDomain
+    summary: Create Domain
     tags:
     - Domains
     x-permission: domains.write
@@ -39,9 +43,12 @@ domains:
     responses:
       '202':
         description: DNS and routing planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 domains_id_plan:
   get:
     operationId: getDomainPlan
+    summary: Get Domain Plan
     tags:
     - Domains
     x-permission: domains.read
@@ -56,9 +63,12 @@ domains_id_plan:
     responses:
       '200':
         description: DNS preflight and signed routing plan
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 domains_id_activate:
   post:
     operationId: activateDomain
+    summary: Activate Domain
     tags:
     - Domains
     x-permission: operations.apply
@@ -77,3 +87,6 @@ domains_id_activate:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

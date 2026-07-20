@@ -1,19 +1,12 @@
 package domains
 
 import (
-	"crypto/rand"
-
-	"errors"
-
-	"encoding/hex"
-	"net/http"
-
 	"context"
-	"io"
-
 	"encoding/json"
-
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 func (m *Module) ensurePrimaryDomains(ctx context.Context) error {
@@ -36,13 +29,7 @@ func normalize(value string) string {
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
 }
 
-func domainID() string {
-	value := make([]byte, 12)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return "domain_" + hex.EncodeToString(value)
-}
+func domainID() string { return "domain_" + secureid.Hex(12) }
 
 func (m domainModel) toDomain() Domain {
 	addresses := []string{}
@@ -57,25 +44,8 @@ func (m domainModel) toDomain() Domain {
 	return Domain{ID: m.ID, SiteID: m.SiteID, Hostname: m.Hostname, Kind: Kind(m.Kind), RedirectTarget: target, Status: Status(m.Status), ResolvedAddresses: addresses, LastJobID: m.LastJobID, Failure: failure, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("one object required")
-	}
-	return nil
-}
-
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"code": code, "message": message})
-}
+var (
+	decodeJSON = httpapi.DecodeJSON
+	writeJSON  = httpapi.WriteJSON
+	writeError = httpapi.WriteError
+)

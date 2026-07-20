@@ -1,4 +1,5 @@
 import type { Job } from '../jobs/api'
+import { apiRequest } from '@/shared/api/request'
 
 export type EntryKind = 'file' | 'dir' | 'symlink' | 'other'
 
@@ -51,30 +52,15 @@ function base(siteId: string): string {
   return `/api/v1/sites/${encodeURIComponent(siteId)}/files`
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json',
-      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init.headers,
-    },
+function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return apiRequest<T>(path, init, {
+    errorPrefix: 'Files request',
+    createError: (message, status, code) => new FilesRequestError(message, status, code),
   })
-  if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as { code?: string; message?: string } | null
-    throw new FilesRequestError(error?.message ?? `Files request failed with status ${response.status}`, response.status, error?.code)
-  }
-  if (response.status === 204) return undefined as T
-  return (await response.json()) as T
 }
 
 export function listFiles(siteId: string, path: string): Promise<FileListing> {
   return request(`${base(siteId)}?path=${encodeURIComponent(path)}`)
-}
-
-export function statFile(siteId: string, path: string): Promise<FileEntry> {
-  return request(`${base(siteId)}/stat?path=${encodeURIComponent(path)}`)
 }
 
 export function readFileContent(siteId: string, path: string): Promise<FileContent> {
@@ -107,12 +93,12 @@ export function deleteEntry(siteId: string, input: { path: string; recursive: bo
   return request(`${base(siteId)}/delete`, { method: 'POST', body: JSON.stringify(input) })
 }
 
-export function beginUpload(siteId: string, input: { path: string; size: number; overwrite: boolean }): Promise<{ uploadId: string }> {
+function beginUpload(siteId: string, input: { path: string; size: number; overwrite: boolean }): Promise<{ uploadId: string }> {
   return request(`${base(siteId)}/uploads`, { method: 'POST', body: JSON.stringify(input) })
 }
 
 /** Append one raw chunk at `offset`; the server verifies the offset matches the staged size. */
-export async function uploadChunk(siteId: string, uploadId: string, offset: number, chunk: Blob): Promise<void> {
+async function uploadChunk(siteId: string, uploadId: string, offset: number, chunk: Blob): Promise<void> {
   const response = await fetch(`${base(siteId)}/uploads/${encodeURIComponent(uploadId)}?offset=${offset}`, {
     method: 'PUT',
     credentials: 'same-origin',
@@ -125,16 +111,16 @@ export async function uploadChunk(siteId: string, uploadId: string, offset: numb
   }
 }
 
-export function commitUpload(siteId: string, uploadId: string): Promise<FileEntry> {
+function commitUpload(siteId: string, uploadId: string): Promise<FileEntry> {
   return request(`${base(siteId)}/uploads/${encodeURIComponent(uploadId)}/commit`, { method: 'POST' })
 }
 
-export function abortUpload(siteId: string, uploadId: string): Promise<void> {
+function abortUpload(siteId: string, uploadId: string): Promise<void> {
   return request(`${base(siteId)}/uploads/${encodeURIComponent(uploadId)}`, { method: 'DELETE' })
 }
 
 /** 4 MiB chunks keep each PUT well under the server's per-chunk cap. */
-export const UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
+const UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 
 /**
  * Chunked upload session: begin, PUT sequential slices, commit. The staging

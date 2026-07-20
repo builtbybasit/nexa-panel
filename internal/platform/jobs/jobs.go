@@ -1,28 +1,23 @@
 package jobs
 
 import (
-	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
-
-	"github.com/uptrace/bun"
-	"io"
-
 	"context"
-	"time"
-
-	"fmt"
-
-	"net/http"
-
-	"strings"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
-	"log/slog"
-
-	"sync"
-
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/uptrace/bun"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
+	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 const schema = `
@@ -53,6 +48,23 @@ const schema = `
 	CREATE INDEX job_events_job_sequence_idx ON job_events (job_id, sequence);
 `
 
+// lifecycleSchema adds the ownership data needed to make recovery deliberate.
+// Running work is protected by a renewable lease; an expired lease is either
+// retried or failed according to the handler's persisted policy. Idempotency
+// keys make submissions safe to repeat across timer and HTTP retries.
+const lifecycleSchema = `
+	ALTER TABLE jobs ADD COLUMN recovery_policy TEXT NOT NULL DEFAULT 'fail';
+	ALTER TABLE jobs ADD COLUMN idempotency_key TEXT;
+	ALTER TABLE jobs ADD COLUMN scope_site_ids TEXT NOT NULL DEFAULT '[]';
+	ALTER TABLE jobs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE jobs ADD COLUMN lease_owner TEXT;
+	ALTER TABLE jobs ADD COLUMN lease_token TEXT;
+	ALTER TABLE jobs ADD COLUMN lease_expires_at TIMESTAMP;
+	CREATE UNIQUE INDEX jobs_kind_idempotency_idx
+		ON jobs (kind, idempotency_key) WHERE idempotency_key IS NOT NULL;
+	CREATE INDEX jobs_running_lease_idx ON jobs (state, lease_expires_at);
+`
+
 type State string
 
 const (
@@ -61,6 +73,18 @@ const (
 	StateSucceeded State = "succeeded"
 	StateFailed    State = "failed"
 )
+
+type RecoveryPolicy string
+
+const (
+	// RecoveryFail is the safe default for host-mutating work: once ownership is
+	// lost, the result is uncertain and must be reconciled rather than replayed.
+	RecoveryFail RecoveryPolicy = "fail"
+	// RecoveryRetry is reserved for handlers whose side effects are idempotent.
+	RecoveryRetry RecoveryPolicy = "retry"
+)
+
+func (p RecoveryPolicy) valid() bool { return p == RecoveryFail || p == RecoveryRetry }
 
 func (s State) Terminal() bool {
 	return s == StateSucceeded || s == StateFailed
@@ -73,6 +97,8 @@ type Job struct {
 	State       State           `json:"state"`
 	Progress    int             `json:"progress"`
 	ActorUserID *string         `json:"actorUserId,omitempty"`
+	SiteIDs     []string        `json:"siteIds,omitempty"`
+	Attempt     int             `json:"attempt"`
 	Request     json.RawMessage `json:"request"`
 	Result      json.RawMessage `json:"result,omitempty"`
 	Failure     string          `json:"failure,omitempty"`
@@ -93,8 +119,18 @@ type Event struct {
 
 type Handler func(ctx context.Context, request json.RawMessage, report func(progress int, message string) error) (any, error)
 
+type HandlerOptions struct {
+	RecoveryPolicy RecoveryPolicy
+}
+
+type handlerRegistration struct {
+	handler        Handler
+	recoveryPolicy RecoveryPolicy
+}
+
 type Config struct {
-	PollInterval time.Duration
+	PollInterval  time.Duration
+	LeaseDuration time.Duration
 }
 
 type Module struct {
@@ -105,7 +141,9 @@ type Module struct {
 	config   Config
 
 	handlersMu sync.RWMutex
-	handlers   map[string]Handler
+	handlers   map[string]handlerRegistration
+	workerID   string
+	siteAccess SiteAccessPolicy
 	notify     chan struct{}
 	cancel     context.CancelFunc
 	done       chan struct{}
@@ -114,20 +152,27 @@ type Module struct {
 }
 
 type jobModel struct {
-	bun.BaseModel `bun:"table:jobs,alias:job"`
-	ID            int64 `bun:",pk,autoincrement"`
-	Kind          string
-	Title         string
-	State         string
-	Progress      int
-	ActorUserID   *string
-	RequestJSON   string
-	ResultJSON    *string
-	Failure       *string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	StartedAt     *time.Time
-	CompletedAt   *time.Time
+	bun.BaseModel  `bun:"table:jobs,alias:job"`
+	ID             int64 `bun:",pk,autoincrement"`
+	Kind           string
+	Title          string
+	State          string
+	Progress       int
+	ActorUserID    *string `bun:"actor_user_id"`
+	RequestJSON    string
+	ResultJSON     *string
+	Failure        *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	StartedAt      *time.Time
+	CompletedAt    *time.Time
+	RecoveryPolicy string
+	IdempotencyKey *string
+	ScopeSiteIDs   string `bun:"scope_site_ids"`
+	Attempt        int
+	LeaseOwner     *string
+	LeaseToken     *string
+	LeaseExpiresAt *time.Time
 }
 
 type eventModel struct {
@@ -141,7 +186,10 @@ type eventModel struct {
 }
 
 func New(ctx context.Context, database *bun.DB, recorder audit.Recorder, logger *slog.Logger) (*Module, error) {
-	return NewWithConfig(ctx, database, recorder, logger, Config{PollInterval: time.Second})
+	return NewWithConfig(ctx, database, recorder, logger, Config{
+		PollInterval:  time.Second,
+		LeaseDuration: 30 * time.Second,
+	})
 }
 
 func NewWithConfig(ctx context.Context, database *bun.DB, recorder audit.Recorder, logger *slog.Logger, config Config) (*Module, error) {
@@ -151,20 +199,27 @@ func NewWithConfig(ctx context.Context, database *bun.DB, recorder audit.Recorde
 	if config.PollInterval <= 0 {
 		return nil, errors.New("job poll interval must be positive")
 	}
+	if config.LeaseDuration == 0 {
+		config.LeaseDuration = 30 * time.Second
+	}
+	if config.LeaseDuration <= 0 {
+		return nil, errors.New("job lease duration must be positive")
+	}
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	if err := persistence.Migrate(ctx, database, "jobs", []string{schema}); err != nil {
+	if err := migrate(ctx, database); err != nil {
 		return nil, err
 	}
 	module := &Module{
 		database: database, audit: recorder, logger: logger, now: time.Now, config: config,
-		handlers: make(map[string]Handler), notify: make(chan struct{}, 1), done: make(chan struct{}),
+		handlers: make(map[string]handlerRegistration), workerID: randomToken(),
+		notify: make(chan struct{}, 1), done: make(chan struct{}),
 	}
-	if err := module.recoverInterrupted(ctx); err != nil {
+	if err := module.recoverExpired(ctx); err != nil {
 		return nil, err
 	}
-	if err := module.RegisterHandler("platform.diagnostics", diagnosticsHandler); err != nil {
+	if err := module.RegisterHandlerWithOptions("platform.diagnostics", diagnosticsHandler, HandlerOptions{RecoveryPolicy: RecoveryRetry}); err != nil {
 		return nil, err
 	}
 	return module, nil
@@ -198,17 +253,30 @@ func (m *Module) Register(registry module.Registry) error {
 }
 
 func (m *Module) RegisterHandler(kind string, handler Handler) error {
+	return m.RegisterHandlerWithOptions(kind, handler, HandlerOptions{RecoveryPolicy: RecoveryFail})
+}
+
+func (m *Module) RegisterHandlerWithOptions(kind string, handler Handler, options HandlerOptions) error {
 	if strings.TrimSpace(kind) == "" || handler == nil {
 		return errors.New("job kind and handler are required")
+	}
+	if !options.RecoveryPolicy.valid() {
+		return errors.New("job recovery policy must be fail or retry")
 	}
 	m.handlersMu.Lock()
 	defer m.handlersMu.Unlock()
 	if _, exists := m.handlers[kind]; exists {
 		return fmt.Errorf("job handler %q is already registered", kind)
 	}
-	m.handlers[kind] = handler
+	m.handlers[kind] = handlerRegistration{handler: handler, recoveryPolicy: options.RecoveryPolicy}
 	return nil
 }
+
+func migrate(ctx context.Context, database *bun.DB) error {
+	return persistence.Migrate(ctx, database, "jobs", []string{schema, lifecycleSchema})
+}
+
+func randomToken() string { return secureid.Hex(16) }
 
 func (m *Module) Start(parent context.Context) {
 	m.startOnce.Do(func() {

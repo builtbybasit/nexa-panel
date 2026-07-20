@@ -2,6 +2,8 @@ module github.com/nexa-panel/nexa-panel
 
 go 1.25.0
 
+toolchain go1.25.12
+
 require (
 	github.com/uptrace/bun v1.2.18
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18

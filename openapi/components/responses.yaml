@@ -1,0 +1,6 @@
+ClientError:
+  description: The request was invalid, unauthenticated, unauthorized, rate-limited, or addressed a missing resource.
+  content:
+    application/json:
+      schema:
+        $ref: ./schemas/common.yaml#/Error

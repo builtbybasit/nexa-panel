@@ -3,6 +3,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 
 import AuthGate from '@/modules/identity/components/AuthGate.vue'
+import MFAStepUpDialog from '@/modules/identity/components/MFAStepUpDialog.vue'
 import { useIdentityStore } from '@/modules/identity/store'
 import { lockBodyScroll, unlockBodyScroll } from '@/shared/composables/useBodyScrollLock'
 import { ToastHost, TooltipProvider } from '@/shared/ui'
@@ -109,6 +110,7 @@ function onGlobalKeydown(event: KeyboardEvent) {
     </div>
 
     <CommandPalette :open="paletteOpen" @close="paletteOpen = false" />
+    <MFAStepUpDialog />
   </div>
 
   <ToastHost />

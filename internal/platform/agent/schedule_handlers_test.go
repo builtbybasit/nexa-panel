@@ -3,13 +3,10 @@ package agent
 import (
 	"context"
 	"errors"
-
 	"io"
 	"log/slog"
-
 	"os"
 	"path/filepath"
-
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +37,10 @@ type scriptedRunner struct {
 	logPath  string
 	exitCode int
 }
+
+type noOpScheduleOwnership struct{}
+
+func (noOpScheduleOwnership) Chown(string, string, string) error { return nil }
 
 func (r *scriptedRunner) Run(_ context.Context, command scheduleoperator.Command) (int, []byte, error) {
 	if command.Name != "runuser" {
@@ -78,7 +79,8 @@ func startScheduleAgent(t *testing.T) (*scheduleoperator.UnixClient, scheduleope
 	runner := &scriptedRunner{logPath: filepath.Join(task.Scope.RootPath, "logs", "tasks", task.ID+".log")}
 	hostOperator, err := scheduleoperator.NewHostOperator(
 		scheduleoperator.HostConfig{SiteRoot: siteRoot, TaskScriptRoot: t.TempDir(), CronRoot: t.TempDir()},
-		scheduleoperator.NopOwnership(), runner)
+		noOpScheduleOwnership{}, runner,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,6 @@ import {
   listTasks,
   rollbackTask,
   runTask,
-  ScheduleRequestError,
   updateTask,
 } from './api'
 
@@ -157,8 +156,10 @@ describe('schedules API', () => {
       'fetch',
       vi.fn().mockResolvedValue(Response.json({ code: 'invalid_cron', message: 'The cron expression must have 5 fields.' }, { status: 422 })),
     )
-    await expect(createTask('site_1', { ...input, cronExpression: '* *' })).rejects.toEqual(
-      new ScheduleRequestError('The cron expression must have 5 fields.', 422, 'invalid_cron'),
-    )
+    await expect(createTask('site_1', { ...input, cronExpression: '* *' })).rejects.toMatchObject({
+      message: 'The cron expression must have 5 fields.',
+      status: 422,
+      code: 'invalid_cron',
+    })
   })
 })

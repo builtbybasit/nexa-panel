@@ -1,30 +1,21 @@
 package certificates
 
 import (
+	"context"
+	"errors"
+	"net"
+	"net/http"
+	"time"
+
 	"github.com/uptrace/bun"
 
-	"net/http"
-
-	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-
-	"errors"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-
 	"github.com/nexa-panel/nexa-panel/internal/modules/domains"
-
-	"context"
-	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
-
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-
+	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
+	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
-
-	"net"
-
-	"time"
 )
 
 const schema = `

@@ -8,6 +8,8 @@ servers:
 paths:
   /health/live:
     $ref: ./paths/platform.yaml#/health_live
+  /health/ready:
+    $ref: ./paths/platform.yaml#/health_ready
   /modules:
     $ref: ./paths/platform.yaml#/modules
   /system/overview:
@@ -209,6 +211,9 @@ paths:
   /applications/{id}/apply:
     $ref: ./paths/applications.yaml#/applications_id_apply
 components:
+  responses:
+    ClientError:
+      $ref: ./components/responses.yaml#/ClientError
   securitySchemes:
     sessionCookie:
       type: apiKey
@@ -226,6 +231,8 @@ components:
   schemas:
     Liveness:
       $ref: ./components/schemas/common.yaml#/Liveness
+    Readiness:
+      $ref: ./components/schemas/common.yaml#/Readiness
     ModuleDescriptor:
       $ref: ./components/schemas/common.yaml#/ModuleDescriptor
     User:

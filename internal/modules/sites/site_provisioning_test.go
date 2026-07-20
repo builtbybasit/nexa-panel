@@ -38,9 +38,11 @@ func (operator fakeSiteOperator) Plan(_ context.Context, site siteoperator.Site)
 	}
 	return plan, nil
 }
+
 func (fakeSiteOperator) Apply(_ context.Context, plan siteoperator.Plan) (siteoperator.Observation, error) {
 	return siteoperator.Observation{SiteID: plan.Site.ID, Active: true, VerifiedAt: time.Now().UTC()}, nil
 }
+
 func (fakeSiteOperator) Rollback(_ context.Context, plan siteoperator.Plan) (siteoperator.Observation, error) {
 	return siteoperator.Observation{SiteID: plan.Site.ID, Active: false, VerifiedAt: time.Now().UTC()}, nil
 }

@@ -69,12 +69,11 @@ interface PaletteItem {
 }
 
 const navigationItems = computed<PaletteItem[]>(() => {
-  const role = identity.user?.role
   const items: PaletteItem[] = []
   for (const feature of featureModules) {
     const navigation = feature.navigation
     if (!navigation) continue
-    if (navigation.roles && (!role || !navigation.roles.includes(role))) continue
+    if (!identity.can(navigation.permission)) continue
     items.push({
       id: `nav-${feature.id}`,
       group: 'Navigation',

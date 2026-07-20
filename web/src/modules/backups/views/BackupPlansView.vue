@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 
 import { useRouter } from 'vue-router'
 
+import { useIdentityStore } from '@/modules/identity/store'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { useToasts } from '@/shared/composables/useToasts'
 import {
@@ -29,11 +30,14 @@ import {
   toggleBackupPlan,
   type BackupPlan,
 } from '../api'
+import { backupScheduleStatus } from '../status'
 import BackupPlanFormDialog from './BackupPlanFormDialog.vue'
 import BackupsTabs from './BackupsTabs.vue'
 
 const { push } = useToasts()
 const router = useRouter()
+const identity = useIdentityStore()
+const canWrite = computed(() => identity.can('backups.write'))
 
 const plansQuery = useQuery({ queryKey: ['backup-plans'], queryFn: listBackupPlans, retry: false })
 const accountsQuery = useQuery({ queryKey: ['backup-accounts'], queryFn: listBackupAccounts, retry: false })
@@ -54,10 +58,12 @@ const dialogOpen = ref(false)
 const editing = ref<BackupPlan>()
 
 function openCreate() {
+  if (!canWrite.value) return
   editing.value = undefined
   dialogOpen.value = true
 }
 function openEdit(plan: BackupPlan) {
+  if (!canWrite.value) return
   editing.value = plan
   dialogOpen.value = true
 }
@@ -70,6 +76,7 @@ async function onSaved() {
 const runner = useJobRunner()
 const runningId = ref<string>()
 async function backupNow(plan: BackupPlan) {
+  if (!canWrite.value) return
   runningId.value = plan.id
   await runner.run(async () => (await runBackupPlan(plan.id)).id, {
     successToast: `Backup of ${plan.name} completed`,
@@ -83,6 +90,7 @@ async function backupNow(plan: BackupPlan) {
 
 const togglingId = ref<string>()
 async function onToggle(plan: BackupPlan, enabled: boolean) {
+  if (!canWrite.value) return
   togglingId.value = plan.id
   try {
     await toggleBackupPlan(plan.id, enabled)
@@ -97,6 +105,7 @@ async function onToggle(plan: BackupPlan, enabled: boolean) {
 const confirmDelete = ref<BackupPlan>()
 const deleting = ref(false)
 async function doDelete() {
+  if (!canWrite.value) return
   const plan = confirmDelete.value
   if (!plan) return
   deleting.value = true
@@ -118,9 +127,9 @@ async function doDelete() {
     <PageHeader
       eyebrow="Backups"
       title="Backup plans"
-      description="Each plan backs up the sites and databases you choose to a storage account, keeping a fixed number of recent copies. Enabled plans run automatically on their schedule; use Back up now to run one immediately."
+      description="Each plan backs up the sites and databases you choose to a storage account. The observed schedule state below confirms whether its host timer is actually installed; use Back up now for an immediate run."
     >
-      <AppButton variant="primary" icon="plus" @click="openCreate">New plan</AppButton>
+      <AppButton v-if="canWrite" variant="primary" icon="plus" @click="openCreate">New plan</AppButton>
     </PageHeader>
 
     <BackupsTabs />
@@ -149,7 +158,7 @@ async function doDelete() {
       description="Create a plan to back up sites and databases on a schedule."
     >
       <template #action>
-        <AppButton variant="primary" icon="plus" @click="openCreate">New plan</AppButton>
+        <AppButton v-if="canWrite" variant="primary" icon="plus" @click="openCreate">New plan</AppButton>
       </template>
     </EmptyState>
 
@@ -160,7 +169,7 @@ async function doDelete() {
         class="flex flex-wrap items-center gap-4 rounded-xl border border-outline bg-white/[0.02] px-4 py-3"
       >
         <div class="flex items-center gap-2" :title="plan.enabled ? 'Enabled' : 'Disabled'">
-          <Switch :model-value="plan.enabled" :disabled="togglingId === plan.id" @update:model-value="onToggle(plan, $event)" />
+          <Switch :model-value="plan.enabled" :disabled="!canWrite || togglingId === plan.id" @update:model-value="onToggle(plan, $event)" />
         </div>
         <div class="min-w-0 flex-1">
           <p class="truncate text-sm font-semibold text-ink">{{ plan.name }}</p>
@@ -168,13 +177,19 @@ async function doDelete() {
             <span class="inline-flex items-center gap-1"><AppIcon name="hard-drive" :size="12" />{{ accountName(plan.accountId) }}</span>
             <span class="inline-flex items-center gap-1"><AppIcon name="layers" :size="12" />{{ plan.siteIds.length }} site(s)</span>
             <span class="inline-flex items-center gap-1"><AppIcon name="database" :size="12" />{{ plan.databaseIds.length }} db(s)</span>
-            <span class="inline-flex items-center gap-1"><AppIcon name="archive" :size="12" />keep {{ plan.copiesLimit }}</span>
+            <span class="inline-flex items-center gap-1" title="Stored for future retention enforcement"><AppIcon name="archive" :size="12" />retention target {{ plan.copiesLimit }}</span>
             <span class="inline-flex items-center gap-1"><AppIcon name="clock" :size="12" />{{ scheduleLabel(plan.schedule) }}</span>
           </p>
         </div>
-        <StatusPill :tone="plan.enabled ? 'success' : 'neutral'" :label="plan.enabled ? 'Enabled' : 'Disabled'" :pulse="false" />
+        <StatusPill
+          :tone="backupScheduleStatus(plan).tone"
+          :label="backupScheduleStatus(plan).label"
+          :description="backupScheduleStatus(plan).description"
+          :pulse="plan.scheduleState === 'pending'"
+        />
         <div class="flex shrink-0 items-center gap-2">
           <AppButton
+            v-if="canWrite"
             size="sm"
             icon="play"
             :loading="runningId === plan.id"
@@ -184,14 +199,14 @@ async function doDelete() {
             Back up now
           </AppButton>
           <AppButton size="sm" icon="package" @click="router.push(`/backups/plans/${plan.id}/copies`)">Copies</AppButton>
-          <AppButton size="sm" icon="pencil" @click="openEdit(plan)">Edit</AppButton>
-          <AppButton size="sm" variant="danger" icon="trash" @click="confirmDelete = plan">Delete</AppButton>
+          <AppButton v-if="canWrite" size="sm" icon="pencil" @click="openEdit(plan)">Edit</AppButton>
+          <AppButton v-if="canWrite" size="sm" variant="danger" icon="trash" @click="confirmDelete = plan">Delete</AppButton>
         </div>
       </li>
     </ul>
 
     <BackupPlanFormDialog
-      v-if="dialogOpen"
+      v-if="dialogOpen && canWrite"
       :plan="editing"
       :accounts="accounts"
       @saved="onSaved"
@@ -199,7 +214,7 @@ async function doDelete() {
     />
 
     <AppConfirmDialog
-      :open="!!confirmDelete"
+      :open="canWrite && !!confirmDelete"
       title="Delete backup plan"
       :confirm-label="`Delete ${confirmDelete?.name ?? ''}`"
       tone="danger"
@@ -207,8 +222,8 @@ async function doDelete() {
       @confirm="doDelete"
       @close="confirmDelete = undefined"
     >
-      Removing <strong>{{ confirmDelete?.name }}</strong> stops its schedule. Backup copies already written to storage are
-      not deleted.
+      Removing <strong>{{ confirmDelete?.name }}</strong> stops its schedule. A plan can only be deleted after all of its
+      recorded copies have been removed.
     </AppConfirmDialog>
   </section>
 </template>

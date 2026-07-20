@@ -2,22 +2,17 @@ package sites
 
 import (
 	"context"
-	"strconv"
-
-	"net/http"
-
-	"net"
-	"path/filepath"
-
-	"os/user"
-
+	"errors"
 	"fmt"
 	"io"
-	"strings"
-
+	"net"
+	"net/http"
 	"os"
-
 	"os/exec"
+	"os/user"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,6 +22,8 @@ func NewHostSystem() *HostSystem {
 		command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			return exec.CommandContext(ctx, name, args...).CombinedOutput()
 		},
+		lookupUser:  user.Lookup,
+		lookupGroup: user.LookupGroup,
 		client: &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return dialer.DialContext(ctx, "tcp", "127.0.0.1:80")
 		}}, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }, Timeout: 5 * time.Second},
@@ -35,72 +32,192 @@ func NewHostSystem() *HostSystem {
 	}
 }
 
+type HostSystem struct {
+	command     func(context.Context, string, ...string) ([]byte, error)
+	lookupUser  func(string) (*user.User, error)
+	lookupGroup func(string) (*user.Group, error)
+	client      *http.Client
+	// verifyTimeout bounds how long VerifyHost waits for a reload to take effect.
+	verifyTimeout  time.Duration
+	verifyInterval time.Duration
+}
+
 func (s *HostSystem) PrepareSite(ctx context.Context, site Site) error {
-	account, err := user.Lookup(site.UnixUser)
+	lookupUser := s.lookupUser
+	if lookupUser == nil {
+		lookupUser = user.Lookup
+	}
+	lookupGroup := s.lookupGroup
+	if lookupGroup == nil {
+		lookupGroup = user.LookupGroup
+	}
+	account, err := lookupUser(site.UnixUser)
 	if err != nil {
+		var unknown user.UnknownUserError
+		if !errors.As(err, &unknown) {
+			return fmt.Errorf("look up site account: %w", err)
+		}
 		if _, commandErr := s.command(ctx, "useradd", "--system", "--user-group", "--home-dir", site.RootPath, "--shell", "/usr/sbin/nologin", site.UnixUser); commandErr != nil {
 			return commandErr
 		}
-		account, err = user.Lookup(site.UnixUser)
+		account, err = lookupUser(site.UnixUser)
 	}
 	if err != nil {
 		return err
 	}
 	uid, err := strconv.Atoi(account.Uid)
-	if err != nil {
-		return err
+	if err != nil || uid < 0 {
+		return errors.New("site account returned an invalid UID")
 	}
-	group, err := user.LookupGroup("www-data")
+	group, err := lookupGroup("www-data")
 	if err != nil {
 		return err
 	}
 	gid, err := strconv.Atoi(group.Gid)
-	if err != nil {
-		return err
+	if err != nil || gid < 0 {
+		return errors.New("web server group returned an invalid GID")
 	}
-	for path, mode := range map[string]os.FileMode{
-		site.RootPath: 0o750, filepath.Join(site.RootPath, "public"): 0o750,
-		filepath.Join(site.RootPath, "logs"): 0o770, filepath.Join(site.RootPath, "tmp"): 0o700,
-		filepath.Join(site.RootPath, "private"): 0o700, filepath.Join(site.RootPath, "backups"): 0o700,
+	parent, err := os.OpenRoot(filepath.Dir(site.RootPath))
+	if err != nil {
+		return fmt.Errorf("open site parent: %w", err)
+	}
+	defer parent.Close()
+	if err := prepareOwnedDirectory(parent, filepath.Base(site.RootPath), 0o750, uid, gid); err != nil {
+		return fmt.Errorf("prepare site root: %w", err)
+	}
+	root, err := parent.OpenRoot(filepath.Base(site.RootPath))
+	if err != nil {
+		return fmt.Errorf("open site root: %w", err)
+	}
+	defer root.Close()
+	for _, directory := range []struct {
+		name string
+		mode os.FileMode
+	}{
+		{name: "public", mode: 0o750},
+		{name: "logs", mode: 0o770},
+		{name: "tmp", mode: 0o700},
+		{name: "private", mode: 0o700},
+		{name: "backups", mode: 0o700},
 	} {
-		if err := os.MkdirAll(path, mode); err != nil {
-			return err
-		}
-		if err := os.Chmod(path, mode); err != nil {
-			return err
-		}
-		if err := os.Chown(path, uid, gid); err != nil {
-			return err
+		if err := prepareOwnedDirectory(root, directory.name, directory.mode, uid, gid); err != nil {
+			return fmt.Errorf("prepare site directory %s: %w", directory.name, err)
 		}
 	}
 	return nil
 }
 
+// prepareOwnedDirectory operates through an os.Root and an opened directory
+// descriptor. The identity comparison rejects symlink substitution before any
+// chmod or chown can affect an attacker-chosen target.
+func prepareOwnedDirectory(root *os.Root, name string, mode os.FileMode, uid, gid int) error {
+	if err := root.Mkdir(name, mode); err != nil && !os.IsExist(err) {
+		return err
+	}
+	linkInfo, err := root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if linkInfo.Mode()&os.ModeSymlink != 0 || !linkInfo.IsDir() {
+		return fmt.Errorf("%s is not a managed directory", name)
+	}
+	directory, err := root.Open(name)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	openedInfo, err := directory.Stat()
+	if err != nil {
+		return err
+	}
+	if !openedInfo.IsDir() || !os.SameFile(linkInfo, openedInfo) {
+		return fmt.Errorf("%s changed while it was being prepared", name)
+	}
+	if err := directory.Chmod(mode); err != nil {
+		return err
+	}
+	return directory.Chown(uid, gid)
+}
+
 func (s *HostSystem) SecureArtifacts(_ context.Context, site Site, artifacts []Artifact) error {
-	account, err := user.Lookup(site.UnixUser)
+	lookupUser := s.lookupUser
+	if lookupUser == nil {
+		lookupUser = user.Lookup
+	}
+	lookupGroup := s.lookupGroup
+	if lookupGroup == nil {
+		lookupGroup = user.LookupGroup
+	}
+	account, err := lookupUser(site.UnixUser)
 	if err != nil {
 		return err
 	}
 	uid, err := strconv.Atoi(account.Uid)
-	if err != nil {
-		return err
+	if err != nil || uid < 0 {
+		return errors.New("site account returned an invalid UID")
 	}
-	group, err := user.LookupGroup("www-data")
+	group, err := lookupGroup("www-data")
 	if err != nil {
 		return err
 	}
 	gid, err := strconv.Atoi(group.Gid)
-	if err != nil {
-		return err
+	if err != nil || gid < 0 {
+		return errors.New("web server group returned an invalid GID")
 	}
+	root, err := os.OpenRoot(site.RootPath)
+	if err != nil {
+		return fmt.Errorf("open site root for artifact ownership: %w", err)
+	}
+	defer root.Close()
 	for _, artifact := range artifacts {
-		if artifact.Kind == "site-root" {
-			if err := os.Chown(artifact.Path, uid, gid); err != nil {
-				return err
-			}
+		if artifact.Kind != "site-root" {
+			continue
+		}
+		relative, err := filepath.Rel(site.RootPath, artifact.Path)
+		if err != nil || relative == "." || !filepath.IsLocal(relative) {
+			return fmt.Errorf("site artifact %s is outside its managed root", artifact.Path)
+		}
+		if err := secureOwnedArtifact(root, relative, artifact, uid, gid); err != nil {
+			return fmt.Errorf("secure site artifact %s: %w", artifact.Path, err)
 		}
 	}
 	return nil
+}
+
+// secureOwnedArtifact verifies and changes ownership through the already-opened
+// file descriptor. A site account controls its public directory, so path-based
+// chown would otherwise permit a symlink-swap race against the privileged agent.
+func secureOwnedArtifact(root *os.Root, name string, artifact Artifact, uid, gid int) error {
+	linkInfo, err := root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if linkInfo.Mode()&os.ModeSymlink != 0 || !linkInfo.Mode().IsRegular() {
+		return errors.New("managed artifact is not a regular file")
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(linkInfo, openedInfo) {
+		return errors.New("managed artifact changed while it was being secured")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, 512*1024+1))
+	if err != nil {
+		return err
+	}
+	if len(content) > 512*1024 || digestBytes(content) != digestString(artifact.Content) {
+		return errors.New("managed artifact content changed before ownership was applied")
+	}
+	if err := file.Chmod(os.FileMode(artifact.Mode)); err != nil {
+		return err
+	}
+	return file.Chown(uid, gid)
 }
 
 func (s *HostSystem) ValidatePHP(ctx context.Context, version string) error {

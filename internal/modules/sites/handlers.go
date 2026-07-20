@@ -2,11 +2,10 @@ package sites
 
 import (
 	"database/sql"
-
 	"errors"
+	"net/http"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
-	"net/http"
 )
 
 func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +110,7 @@ func (m *Module) planHTTP(w http.ResponseWriter, r *http.Request) {
 // site existence does not leak to scoped roles.
 func (m *Module) siteAccessible(r *http.Request, siteID string) (bool, error) {
 	if m.access == nil {
-		return true, nil
+		return false, errors.New("site access policy is unavailable")
 	}
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {

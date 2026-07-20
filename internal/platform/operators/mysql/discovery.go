@@ -2,11 +2,9 @@ package mysql
 
 import (
 	"context"
-	"strconv"
-
-	"path/filepath"
-
 	"errors"
+	"path/filepath"
+	"strconv"
 	"strings"
 )
 

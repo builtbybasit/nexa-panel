@@ -1,16 +1,15 @@
 package sites
 
 import (
-	"encoding/hex"
-
-	"crypto/rand"
-	"path/filepath"
-
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 func (o *HostOperator) validatePlan(plan Plan) error {
@@ -107,6 +106,21 @@ func (o *HostOperator) enabled(slug string) (bool, error) {
 	if info.Mode()&os.ModeSymlink == 0 {
 		return false, errors.New("Nginx enabled site path is not a symlink")
 	}
+	target, err := os.Readlink(path)
+	if err != nil {
+		return false, err
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(o.enabledRoot, target)
+	}
+	availableRoot := o.renderer.NginxAvailableRoot
+	if availableRoot == "" {
+		availableRoot = "/etc/nginx/sites-available"
+	}
+	expected := filepath.Join(availableRoot, "nexa-"+slug+".conf")
+	if filepath.Clean(target) != filepath.Clean(expected) {
+		return false, errors.New("Nginx enabled site symlink points outside its managed definition")
+	}
 	return true, nil
 }
 
@@ -164,13 +178,17 @@ func writeSnapshot(snapshot Snapshot) error {
 		}
 		return nil
 	}
-	if err := atomicWrite(snapshot.Path, []byte(snapshot.Content), os.FileMode(snapshot.Mode)); err != nil {
-		return err
-	}
-	return os.Chown(snapshot.Path, snapshot.UID, snapshot.GID)
+	return atomicWriteOwned(snapshot.Path, []byte(snapshot.Content), os.FileMode(snapshot.Mode), snapshot.UID, snapshot.GID)
 }
 
 func atomicWrite(path string, content []byte, mode os.FileMode) error {
+	return atomicWriteOwned(path, content, mode, -1, -1)
+}
+
+// atomicWriteOwned applies ownership to the temporary file descriptor before
+// publishing it. This avoids a privileged path-based chown after rename in
+// directories writable by managed site accounts.
+func atomicWriteOwned(path string, content []byte, mode os.FileMode, uid, gid int) error {
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return err
@@ -181,11 +199,17 @@ func atomicWrite(path string, content []byte, mode os.FileMode) error {
 	}
 	name := temporary.Name()
 	defer os.Remove(name)
-	if err := temporary.Chmod(mode); err != nil {
+	if _, err := temporary.Write(content); err != nil {
 		_ = temporary.Close()
 		return err
 	}
-	if _, err := temporary.Write(content); err != nil {
+	if uid >= 0 && gid >= 0 {
+		if err := temporary.Chown(uid, gid); err != nil {
+			_ = temporary.Close()
+			return err
+		}
+	}
+	if err := temporary.Chmod(mode); err != nil {
 		_ = temporary.Close()
 		return err
 	}
@@ -206,10 +230,4 @@ func digestBytes(content []byte) string {
 
 func digestString(content string) string { return digestBytes([]byte(content)) }
 
-func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomID() string { return secureid.Hex(16) }

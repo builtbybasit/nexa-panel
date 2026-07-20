@@ -39,10 +39,23 @@ func TestAgentRejectsMissingCredential(t *testing.T) {
 	}
 }
 
+func TestServeRejectsUnsafeConfigurationBeforeOpeningSocket(t *testing.T) {
+	operator, _ := nodeoperator.NewFileOperator(filepath.Join(t.TempDir(), "probe.conf"))
+	if err := New("/private/tmp/unused-agent.sock", "test", "", operator, nil).Serve(context.Background()); err == nil || !strings.Contains(err.Error(), "credential") {
+		t.Fatalf("empty credential error = %v", err)
+	}
+	if err := New("/private/tmp/unused-agent.sock", "test", "token", nil, nil).Serve(context.Background()); err == nil || !strings.Contains(err.Error(), "operator") {
+		t.Fatalf("nil operator error = %v", err)
+	}
+}
+
 func TestAgentSignsSitePlansAndRejectsTampering(t *testing.T) {
 	operator, _ := nodeoperator.NewFileOperator(filepath.Join(t.TempDir(), "probe.conf"))
 	server := New("", "test", "signing-token", operator, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	plan := siteoperator.Plan{ID: "plan-1", Kind: siteoperator.PlanKind, Site: siteoperator.Site{ID: "site-1"}, PlannedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
+	if server.verifySitePlan(plan) {
+		t.Fatal("an unsigned site plan must not verify")
+	}
 	plan.Signature = server.signSitePlan(plan)
 	if !server.verifySitePlan(plan) {
 		t.Fatal("agent-issued site plan should verify")
@@ -73,6 +86,9 @@ func TestAgentSignsPlansAndRejectsTampering(t *testing.T) {
 	plan, err := operator.Plan(context.Background(), nodeoperator.Change{Present: true, Content: "managed=true\n"})
 	if err != nil {
 		t.Fatalf("Plan returned an error: %v", err)
+	}
+	if server.verifyPlan(plan) {
+		t.Fatal("an unsigned node plan must not verify")
 	}
 	plan.Signature = server.signPlan(plan)
 	if !server.verifyPlan(plan) {

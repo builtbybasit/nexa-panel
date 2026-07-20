@@ -1,19 +1,14 @@
 package admintools
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/hex"
-
+	"errors"
 	"fmt"
 	"os"
-
 	"path/filepath"
-
-	"context"
 	"strings"
-
-	"crypto/sha256"
-
-	"errors"
 )
 
 func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observation, error) {
@@ -54,13 +49,8 @@ func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observat
 			return Observation{}, err
 		}
 		path := o.quadletPath(change.Tool.Kind)
-		temporary := path + ".tmp"
-		if err := os.WriteFile(temporary, []byte(renderQuadlet(change.Tool, o.configRoot)), 0o640); err != nil {
+		if err := secureWrite(path, []byte(renderQuadlet(change.Tool, o.configRoot)), 0o640); err != nil {
 			return Observation{}, fmt.Errorf("write admin tool Quadlet: %w", err)
-		}
-		if err := os.Rename(temporary, path); err != nil {
-			_ = os.Remove(temporary)
-			return Observation{}, fmt.Errorf("activate admin tool Quadlet: %w", err)
 		}
 		if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"daemon-reload"}}); err != nil {
 			return Observation{}, commandError("reload admin tool units", output, err)

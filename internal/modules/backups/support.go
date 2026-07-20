@@ -2,15 +2,14 @@ package backups
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 var allowedTypes = map[string]struct{}{
@@ -110,36 +109,16 @@ func marshalConfig(config map[string]string) (string, error) {
 
 func randomID() string { return "bkacct_" + randomToken() }
 
-func randomToken() string {
-	value := make([]byte, 12)
-	if _, err := rand.Read(value); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
-	}
-	return hex.EncodeToString(value)
-}
+func randomToken() string { return secureid.Hex(12) }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 32*1024)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return errors.New("Request body must be valid JSON.")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("Request body must contain one JSON object.")
-	}
-	return nil
+	return httpapi.DecodeJSONLimit(w, r, destination, 32*1024)
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"code": code, "message": message})
-}
+var (
+	writeJSON  = httpapi.WriteJSON
+	writeError = httpapi.WriteError
+)
 
 // getAccountModel is shared by the get/update/delete/test handlers.
 func (m *Module) getAccountModel(ctx context.Context, id string) (*accountModel, error) {

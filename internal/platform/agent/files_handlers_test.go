@@ -20,6 +20,10 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
 
+type noOpSiteOwnership struct{}
+
+func (noOpSiteOwnership) Chown(string, string) error { return nil }
+
 func startFilesAgent(t *testing.T) (*filesoperator.UnixClient, sitefs.Scope, string, string) {
 	t.Helper()
 	directory := t.TempDir()
@@ -42,7 +46,7 @@ func startFilesAgent(t *testing.T) (*filesoperator.UnixClient, sitefs.Scope, str
 			t.Fatal(err)
 		}
 	}
-	hostOperator, err := filesoperator.NewHostOperator(siteRoot, sitefs.NopOwnership())
+	hostOperator, err := filesoperator.NewHostOperator(siteRoot, noOpSiteOwnership{})
 	if err != nil {
 		t.Fatal(err)
 	}

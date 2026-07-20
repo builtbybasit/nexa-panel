@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,5 +97,5 @@ func TestPostgres18DestroyedDatabaseRestoreIntegration(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(output)) != "restored-through-nexa" {
 		t.Fatalf("restored payload = %q, err=%v", output, err)
 	}
-	t.Log(fmt.Sprintf("restored PostgreSQL 18 database from verified archive %s", backupObservation.Backup.SHA256))
+	t.Logf("restored PostgreSQL 18 database from verified archive %s", backupObservation.Backup.SHA256)
 }

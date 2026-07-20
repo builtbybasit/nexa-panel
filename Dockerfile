@@ -7,7 +7,7 @@
 # seed data, and each carries the reason it cannot live in the installer.
 #
 # Not a production deployment image — the container runs systemd and needs
-# privileges, and the API is rebound to 0.0.0.0 so the published port works.
+# privileges, and Nginx is rebound to 0.0.0.0 so the published port works.
 #
 # Testing image only: it does not build anything. Build the binary first with
 # scripts/build-linux-release.sh, which runs `bun run build` for the embedded
@@ -47,11 +47,12 @@ RUN /tmp/nexa-install/scripts/install.sh --no-start && rm -rf /tmp/nexa-install
 RUN apt-get install -y --no-install-recommends php8.3-fpm php8.3-cli && \
     systemctl enable php8.3-fpm
 
-# The packaged unit binds 127.0.0.1, which a published container port cannot
-# reach; rebind to 0.0.0.0 inside the container only.
-RUN mkdir -p /etc/systemd/system/nexa-api.service.d && \
-    printf '[Service]\nExecStart=\nExecStart=/usr/bin/nexa api --address 0.0.0.0:8080 --state /var/lib/nexa-panel/control.db --master-key /var/lib/nexa-panel/master.key\n' \
-      > /etc/systemd/system/nexa-api.service.d/container.conf
+# The installer deliberately exposes only a loopback Nginx bootstrap listener
+# when no hostname is supplied. A published container port needs an all-interface
+# listener, but the API remains confined to its Unix socket exactly as it is on a
+# real host. This keeps the disposable node on the production ingress path.
+RUN sed -i 's/listen 127\.0\.0\.1:8080;/listen 0.0.0.0:8080;/' \
+      /etc/nginx/sites-available/nexa-panel.conf
 
 # The packaged agent runs under ProtectSystem=strict with a scoped ReadWritePaths
 # list. Two problems for this test image:

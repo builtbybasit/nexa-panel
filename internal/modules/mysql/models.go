@@ -275,12 +275,15 @@ func (m engineModel) toEngine() Engine {
 func (m accountModel) toAccount() Account {
 	return Account{ID: m.ID, EngineID: m.EngineID, Name: m.Name, Host: m.Host, Status: Status(m.Status), CredentialAvailable: m.CredentialCiphertext != nil && !m.CredentialRevealed, CredentialVersion: m.CredentialVersion, LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
+
 func (m databaseModel) toDatabase() Database {
 	return Database{ID: m.ID, EngineID: m.EngineID, Name: m.Name, OwnerAccountID: m.OwnerAccountID, Status: Status(m.Status), SizeBytes: m.SizeBytes, SizeObservedAt: m.SizeObservedAt, LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
+
 func (m grantModel) toGrant() Grant {
 	return Grant{ID: m.ID, DatabaseID: m.DatabaseID, AccountID: m.AccountID, Access: mysqloperator.AccessLevel(m.Access), Status: Status(m.Status), LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
+
 func (m restorePointModel) toRestorePoint() RestorePoint {
 	var checksum string
 	var size int64
@@ -292,6 +295,7 @@ func (m restorePointModel) toRestorePoint() RestorePoint {
 	}
 	return RestorePoint{ID: m.ID, DatabaseID: m.DatabaseID, Status: Status(m.Status), SHA256: checksum, SizeBytes: size, VerifiedAt: m.VerifiedAt, LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
+
 func (m planModel) toStoredPlan() (StoredPlan, error) {
 	var plan mysqloperator.Plan
 	if err := json.Unmarshal([]byte(m.PlanJSON), &plan); err != nil {
@@ -299,6 +303,7 @@ func (m planModel) toStoredPlan() (StoredPlan, error) {
 	}
 	return StoredPlan{ID: m.ID, ResourceType: m.ResourceType, ResourceID: m.ResourceID, Operation: mysqloperator.Action(m.Operation), AgentPlan: plan, CreatedAt: m.CreatedAt, ExpiresAt: m.ExpiresAt}, nil
 }
+
 func pointerString(value *string) string {
 	if value == nil {
 		return ""

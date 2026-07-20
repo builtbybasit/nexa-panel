@@ -13,6 +13,7 @@ import (
 // _plugin-vue_export-helper-*.js. Without those, the SPA handler falls back to
 // index.html for the missing chunk, and the browser rejects the text/html
 // response for a module script ("Expected a JavaScript-or-Wasm module script").
+//
 //go:embed all:dist
 var embedded embed.FS
 

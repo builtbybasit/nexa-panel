@@ -1,5 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 
+import type { Permission } from './identity/permissions'
+
 export interface FeatureModule {
   id: string
   name: string
@@ -13,10 +15,7 @@ export interface FeatureModule {
     /** Sidebar section heading; items with the same group render together. */
     group: string
     order: number
-    /**
-     * Session roles allowed to see the entry; omitted means every role.
-     * Purely cosmetic — server-side authorization remains the authority.
-     */
-    roles?: string[]
+    /** Required capability for this navigation destination. */
+    permission: Permission
   }
 }

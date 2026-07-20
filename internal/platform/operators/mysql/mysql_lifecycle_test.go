@@ -13,11 +13,15 @@ import (
 )
 
 type recordingRunner struct {
-	engine     string
-	generalLog string
-	commands   []Command
-	failImport bool
-	privileges string
+	engine            string
+	generalLog        string
+	commands          []Command
+	failImport        bool
+	failSchemaCheckAt int
+	schemaChecks      int
+	failResetAt       int
+	resetCalls        int
+	privileges        string
 }
 
 func (r *recordingRunner) Run(_ context.Context, command Command) ([]byte, error) {
@@ -30,6 +34,10 @@ func (r *recordingRunner) Run(_ context.Context, command Command) ([]byte, error
 		return []byte(r.generalLog + "\n"), nil
 	}
 	if strings.Contains(joined, "INFORMATION_SCHEMA.SCHEMATA") {
+		r.schemaChecks++
+		if r.failSchemaCheckAt == r.schemaChecks {
+			return []byte("database disappeared"), errors.New("verification failed")
+		}
 		return []byte("app_db\n"), nil
 	}
 	if strings.Contains(joined, "FROM mysql.user") {
@@ -40,6 +48,12 @@ func (r *recordingRunner) Run(_ context.Context, command Command) ([]byte, error
 	}
 	if command.StdoutPath != "" {
 		return nil, os.WriteFile(command.StdoutPath, []byte("-- logical backup\nCREATE TABLE example(id INT);\n"), 0o640)
+	}
+	if strings.Contains(command.Stdin, "DROP DATABASE IF EXISTS") && strings.Contains(command.Stdin, "CREATE DATABASE") {
+		r.resetCalls++
+		if r.failResetAt == r.resetCalls {
+			return []byte("reset failed"), errors.New("exit status 1")
+		}
 	}
 	if r.failImport && command.StdinPath != "" && !strings.Contains(command.StdinPath, ".rollback-") {
 		return []byte("import failed"), errors.New("exit status 1")
@@ -154,6 +168,171 @@ func TestBackupAndRestoreUseManagedPathsAndRollback(t *testing.T) {
 	}
 	if !sawDump || !sawImport {
 		t.Fatalf("commands = %+v", runner.commands)
+	}
+}
+
+func TestRestoreRollsBackWhenPostImportVerificationFails(t *testing.T) {
+	root := t.TempDir()
+	runner := &recordingRunner{engine: "8.4.5\tMySQL Community Server - GPL\t/run/mysqld/mysqld.sock\t3306", generalLog: "0"}
+	operator := newTestOperator(t, runner, root)
+	backupPath := filepath.Join(root, "mysql", "app_db", "backup_1.sql")
+	backupPlan, err := operator.Plan(context.Background(), Change{
+		Action: ActionCreateBackup, EngineID: "mysql", Database: "app_db", BackupID: "backup_1", BackupPath: backupPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := operator.Apply(context.Background(), Execution{Plan: backupPlan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restorePlan, err := operator.Plan(context.Background(), Change{
+		Action: ActionRestoreBackup, EngineID: "mysql", Database: "app_db", BackupID: "backup_1",
+		BackupPath: backupPath, BackupSHA256: backup.Backup.SHA256, RestoreToken: "a1b2c3d4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runner.schemaChecks = 0
+	runner.failSchemaCheckAt = 2 // original exists, but the newly imported database does not verify.
+	_, err = operator.Apply(context.Background(), Execution{Plan: restorePlan})
+	if err == nil || !strings.Contains(err.Error(), "verify MySQL-family database") {
+		t.Fatalf("Apply() error = %v, want the post-import verification failure", err)
+	}
+	rollbackPath := filepath.Join(filepath.Dir(backupPath), ".rollback-a1b2c3d4.sql")
+	rollbackImports := 0
+	for _, command := range runner.commands {
+		if command.StdinPath == rollbackPath {
+			rollbackImports++
+		}
+	}
+	if rollbackImports != 1 {
+		t.Fatalf("rollback imports = %d, want 1; commands: %+v", rollbackImports, runner.commands)
+	}
+	if runner.schemaChecks < 3 {
+		t.Fatalf("schema checks = %d, want rollback verification after the failed restore verification", runner.schemaChecks)
+	}
+}
+
+func TestRestoreStopsBeforeMutationWhenExistenceProbeFails(t *testing.T) {
+	root := t.TempDir()
+	runner := &recordingRunner{engine: "8.4.5\tMySQL Community Server - GPL\t/run/mysqld/mysqld.sock\t3306", generalLog: "0"}
+	operator := newTestOperator(t, runner, root)
+	backupPath := filepath.Join(root, "mysql", "app_db", "backup_1.sql")
+	backupPlan, err := operator.Plan(context.Background(), Change{Action: ActionCreateBackup, EngineID: "mysql", Database: "app_db", BackupID: "backup_1", BackupPath: backupPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := operator.Apply(context.Background(), Execution{Plan: backupPlan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restorePlan, err := operator.Plan(context.Background(), Change{Action: ActionRestoreBackup, EngineID: "mysql", Database: "app_db", BackupID: "backup_1", BackupPath: backupPath, BackupSHA256: backup.Backup.SHA256, RestoreToken: "a1b2c3d4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runner.schemaChecks = 0
+	runner.failSchemaCheckAt = 1
+	runner.commands = nil
+	_, err = operator.Apply(context.Background(), Execution{Plan: restorePlan})
+	if err == nil || !strings.Contains(err.Error(), "inspect MySQL-family database before restore") {
+		t.Fatalf("Apply() error = %v, want a fail-closed existence probe error", err)
+	}
+	for _, command := range runner.commands {
+		if command.Stdin != "" || command.StdinPath != "" || command.StdoutPath != "" {
+			t.Fatalf("restore mutated state after an inconclusive existence probe: %+v", command)
+		}
+	}
+}
+
+func TestRestoreAttemptsRollbackWhenDatabaseResetFails(t *testing.T) {
+	root := t.TempDir()
+	runner := &recordingRunner{engine: "8.4.5\tMySQL Community Server - GPL\t/run/mysqld/mysqld.sock\t3306", generalLog: "0"}
+	operator := newTestOperator(t, runner, root)
+	backupPath := filepath.Join(root, "mysql", "app_db", "backup_1.sql")
+	backupPlan, err := operator.Plan(context.Background(), Change{Action: ActionCreateBackup, EngineID: "mysql", Database: "app_db", BackupID: "backup_1", BackupPath: backupPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := operator.Apply(context.Background(), Execution{Plan: backupPlan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restorePlan, err := operator.Plan(context.Background(), Change{Action: ActionRestoreBackup, EngineID: "mysql", Database: "app_db", BackupID: "backup_1", BackupPath: backupPath, BackupSHA256: backup.Backup.SHA256, RestoreToken: "a1b2c3d4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runner.schemaChecks = 0
+	runner.failResetAt = 1
+	_, err = operator.Apply(context.Background(), Execution{Plan: restorePlan})
+	if err == nil || !strings.Contains(err.Error(), "prepare MySQL-family restore") {
+		t.Fatalf("Apply() error = %v, want the reset failure", err)
+	}
+	if runner.resetCalls < 2 {
+		t.Fatalf("reset calls = %d, want an automatic rollback reset after the failed initial reset", runner.resetCalls)
+	}
+}
+
+func TestCreateBackupDoesNotReplaceExistingRestorePoint(t *testing.T) {
+	root := t.TempDir()
+	runner := &recordingRunner{engine: "8.4.5\tMySQL Community Server - GPL\t/run/mysqld/mysqld.sock\t3306", generalLog: "0"}
+	operator := newTestOperator(t, runner, root)
+	backupPath := filepath.Join(root, "mysql", "app_db", "backup_1.sql")
+	if err := os.MkdirAll(filepath.Dir(backupPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backupPath, []byte("verified original"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := operator.Plan(context.Background(), Change{Action: ActionCreateBackup, EngineID: "mysql", Database: "app_db", BackupID: "backup_1", BackupPath: backupPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), Execution{Plan: plan}); err == nil || !strings.Contains(err.Error(), "without replacing") {
+		t.Fatalf("Apply() error = %v, want collision-safe backup publication", err)
+	}
+	content, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "verified original" {
+		t.Fatalf("existing restore point was replaced: %q", content)
+	}
+}
+
+func TestRestorePreservesRetainedRollbackPoint(t *testing.T) {
+	root := t.TempDir()
+	runner := &recordingRunner{engine: "8.4.5\tMySQL Community Server - GPL\t/run/mysqld/mysqld.sock\t3306", generalLog: "0"}
+	operator := newTestOperator(t, runner, root)
+	backupPath := filepath.Join(root, "mysql", "app_db", "backup_1.sql")
+	backupPlan, err := operator.Plan(context.Background(), Change{Action: ActionCreateBackup, EngineID: "mysql", Database: "app_db", BackupID: "backup_1", BackupPath: backupPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := operator.Apply(context.Background(), Execution{Plan: backupPlan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restorePlan, err := operator.Plan(context.Background(), Change{Action: ActionRestoreBackup, EngineID: "mysql", Database: "app_db", BackupID: "backup_1", BackupPath: backupPath, BackupSHA256: backup.Backup.SHA256, RestoreToken: "a1b2c3d4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollbackPath := filepath.Join(filepath.Dir(backupPath), ".rollback-a1b2c3d4.sql")
+	if err := os.WriteFile(rollbackPath, []byte("manual recovery data"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), Execution{Plan: restorePlan}); err == nil || !strings.Contains(err.Error(), "retained MySQL-family rollback point") {
+		t.Fatalf("Apply() error = %v, want retained rollback protection", err)
+	}
+	content, err := os.ReadFile(rollbackPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "manual recovery data" {
+		t.Fatalf("retained rollback point was replaced: %q", content)
 	}
 }
 

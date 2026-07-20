@@ -2,12 +2,11 @@ package mysql
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 )
@@ -48,6 +47,7 @@ func (m *Module) enginesHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
+
 func (m *Module) accountsHTTP(w http.ResponseWriter, r *http.Request) {
 	items, err := m.ListAccounts(r.Context(), r.URL.Query().Get("engineId"))
 	if err != nil {
@@ -56,6 +56,7 @@ func (m *Module) accountsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
+
 func (m *Module) createAccountHTTP(w http.ResponseWriter, r *http.Request) {
 	var request CreateAccountRequest
 	if decodeJSON(w, r, &request) != nil {
@@ -74,6 +75,7 @@ func (m *Module) createAccountHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, map[string]any{"account": account, "job": job})
 }
+
 func (m *Module) rotateAccountHTTP(w http.ResponseWriter, r *http.Request) {
 	actor, ok := actorID(r)
 	if !ok {
@@ -87,6 +89,7 @@ func (m *Module) rotateAccountHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, map[string]any{"account": account, "job": job})
 }
+
 func (m *Module) credentialHTTP(w http.ResponseWriter, r *http.Request) {
 	credential, err := m.RevealCredential(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -97,6 +100,7 @@ func (m *Module) credentialHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Pragma", "no-cache")
 	writeJSON(w, 200, map[string]string{"credential": credential})
 }
+
 func (m *Module) databasesHTTP(w http.ResponseWriter, r *http.Request) {
 	items, err := m.SyncDatabaseSizes(r.Context(), r.URL.Query().Get("engineId"))
 	if err != nil {
@@ -105,6 +109,7 @@ func (m *Module) databasesHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
+
 func (m *Module) createDatabaseHTTP(w http.ResponseWriter, r *http.Request) {
 	var request CreateDatabaseRequest
 	if decodeJSON(w, r, &request) != nil {
@@ -123,6 +128,7 @@ func (m *Module) createDatabaseHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, map[string]any{"database": database, "job": job})
 }
+
 func (m *Module) grantsHTTP(w http.ResponseWriter, r *http.Request) {
 	items, err := m.ListGrants(r.Context(), r.URL.Query().Get("databaseId"))
 	if err != nil {
@@ -131,6 +137,7 @@ func (m *Module) grantsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
+
 func (m *Module) createGrantHTTP(w http.ResponseWriter, r *http.Request) {
 	var request CreateGrantRequest
 	if decodeJSON(w, r, &request) != nil {
@@ -149,6 +156,7 @@ func (m *Module) createGrantHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, map[string]any{"grant": grant, "job": job})
 }
+
 func (m *Module) restorePointsHTTP(w http.ResponseWriter, r *http.Request) {
 	items, err := m.ListRestorePoints(r.Context(), r.URL.Query().Get("databaseId"))
 	if err != nil {
@@ -157,6 +165,7 @@ func (m *Module) restorePointsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
+
 func (m *Module) createBackupHTTP(w http.ResponseWriter, r *http.Request) {
 	actor, ok := actorID(r)
 	if !ok {
@@ -170,6 +179,7 @@ func (m *Module) createBackupHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, map[string]any{"restorePoint": point, "job": job})
 }
+
 func (m *Module) prepareRestoreHTTP(w http.ResponseWriter, r *http.Request) {
 	actor, ok := actorID(r)
 	if !ok {
@@ -183,6 +193,7 @@ func (m *Module) prepareRestoreHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, map[string]any{"restorePoint": point, "job": job})
 }
+
 func (m *Module) planHTTP(w http.ResponseWriter, r *http.Request) {
 	resourceType, err := normalizeResourceType(r.PathValue("resourceType"))
 	if err != nil {
@@ -200,6 +211,7 @@ func (m *Module) planHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"plan": plan, "expiresAt": plan.ExpiresAt})
 }
+
 func (m *Module) applyHTTP(w http.ResponseWriter, r *http.Request) {
 	resourceType, err := normalizeResourceType(r.PathValue("resourceType"))
 	if err != nil {
@@ -233,6 +245,7 @@ func normalizeResourceType(value string) (string, error) {
 		return "", errors.New("unsupported resource type")
 	}
 }
+
 func actorID(r *http.Request) (*string, bool) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
@@ -240,23 +253,9 @@ func actorID(r *http.Request) (*string, bool) {
 	}
 	return &user.ID, true
 }
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("one object required")
-	}
-	return nil
-}
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"code": code, "message": message})
-}
+
+var (
+	decodeJSON = httpapi.DecodeJSON
+	writeJSON  = httpapi.WriteJSON
+	writeError = httpapi.WriteError
+)

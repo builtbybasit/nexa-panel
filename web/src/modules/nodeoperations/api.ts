@@ -1,5 +1,6 @@
-import type { Job, JobEvent } from '../jobs/api'
-import { subscribeToJob } from '../jobs/api'
+import { apiRequest } from '@/shared/api/request'
+
+import type { Job } from '../jobs/api'
 
 export interface ProbeChange {
   present: boolean
@@ -25,21 +26,8 @@ export interface OperationPlan {
   signature: string
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json',
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  })
-  if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as { message?: string } | null
-    throw new Error(error?.message ?? `Node operation failed with status ${response.status}`)
-  }
-  return (await response.json()) as T
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return apiRequest<T>(path, init, 'Node operation')
 }
 
 export function observeProbe(): Promise<Snapshot> {
@@ -56,8 +44,4 @@ export function applyPlan(plan: OperationPlan): Promise<Job> {
 
 export function rollbackPlan(plan: OperationPlan): Promise<Job> {
   return request('/api/v1/node/probe/rollback', { method: 'POST', body: JSON.stringify(plan) })
-}
-
-export function watchOperation(jobId: number, onEvent: (event: JobEvent) => void, onError?: () => void): () => void {
-  return subscribeToJob(jobId, onEvent, onError)
 }

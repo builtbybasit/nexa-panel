@@ -9,16 +9,16 @@ Requires=nexa-agent.service
 Type=simple
 User=nexa
 Group=nexa
-UMask=0027
+UMask=0077
 Environment=NEXA_AGENT_SOCKET=/run/nexa-panel/agent.sock
-Environment=NEXA_AGENT_TOKEN=/etc/nexa-panel/agent.token
-ExecStart=/usr/bin/nexa api --address 127.0.0.1:8080 --state /var/lib/nexa-panel/control.db --master-key /var/lib/nexa-panel/master.key
+LoadCredential=agent.token:/etc/nexa-panel/agent.token
+ExecStart=/usr/bin/nexa api --unix-socket /run/nexa-panel/api.sock --state /var/lib/nexa-panel/control.db --master-key /var/lib/nexa-panel/master.key --agent-token %d/agent.token
 Restart=on-failure
 RestartSec=3s
 StateDirectory=nexa-panel
-StateDirectoryMode=0750
+StateDirectoryMode=0700
 LogsDirectory=nexa-panel
-LogsDirectoryMode=0750
+LogsDirectoryMode=0700
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
@@ -34,9 +34,14 @@ ProtectProc=invisible
 ProcSubset=pid
 RestrictSUIDSGID=true
 RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=true
+KeyringMode=private
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
 
 [Install]
 WantedBy=multi-user.target

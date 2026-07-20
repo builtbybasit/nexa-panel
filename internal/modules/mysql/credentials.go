@@ -2,14 +2,11 @@ package mysql
 
 import (
 	"context"
-
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-
-	"crypto/rand"
 	"errors"
-
 	"strings"
 )
 
@@ -41,9 +38,7 @@ func (m *Module) ResolveAdminToolCredential(ctx context.Context, databaseID, acc
 
 func (m *Module) newCredential(accountID string) ([]byte, string, string, error) {
 	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return nil, "", "", err
-	}
+	rand.Read(raw)
 	secret := []byte(base64.RawURLEncoding.EncodeToString(raw))
 	clear(raw)
 	ciphertext, err := m.cipher.Encrypt(credentialLabel(accountID), secret)

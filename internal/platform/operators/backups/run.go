@@ -2,13 +2,17 @@ package backups
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // defaultStagingRoot is where a copy is assembled locally before it is shipped
@@ -49,37 +53,45 @@ type RunRequest struct {
 type CopyEntry struct {
 	Name      string `json:"name"`
 	SizeBytes int64  `json:"sizeBytes"`
+	SHA256    string `json:"sha256"`
 }
 
 // Manifest is the result of a run: what was written and where.
 type Manifest struct {
-	CopyName   string      `json:"copyName"`
-	RemotePath string      `json:"remotePath"`
-	SizeBytes  int64       `json:"sizeBytes"`
-	Entries    []CopyEntry `json:"entries"`
-	Pruned     []string    `json:"pruned"`
+	CopyName         string      `json:"copyName"`
+	RemotePath       string      `json:"remotePath"`
+	SizeBytes        int64       `json:"sizeBytes"`
+	Entries          []CopyEntry `json:"entries"`
+	IntegrityChecked bool        `json:"integrityChecked"`
+	Pruned           []string    `json:"pruned"`
 }
 
 // Run assembles one backup copy locally, ships it to the account with rclone,
 // then prunes the plan's oldest copies beyond the retention limit.
 func (h *HostOperator) Run(ctx context.Context, request RunRequest) (Manifest, error) {
+	siteRoot := h.siteRoot
+	if siteRoot == "" {
+		siteRoot = defaultSiteRoot
+	}
+	if err := validateRunRequest(request, siteRoot); err != nil {
+		return Manifest{}, err
+	}
 	base, env, err := rcloneRemote(request.Account)
 	if err != nil {
 		return Manifest{}, err
 	}
-	if request.CopyName == "" || strings.ContainsAny(request.CopyName, "/\\") {
-		return Manifest{}, fmt.Errorf("invalid copy name %q", request.CopyName)
-	}
-
-	stagingRoot := request.StagingRoot
+	stagingRoot := h.stagingRoot
 	if stagingRoot == "" {
 		stagingRoot = defaultStagingRoot
 	}
 	staging := filepath.Join(stagingRoot, request.PlanID, request.CopyName)
-	if err := os.MkdirAll(staging, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(staging), 0o700); err != nil {
 		return Manifest{}, fmt.Errorf("prepare staging directory: %w", err)
 	}
-	defer os.RemoveAll(filepath.Join(stagingRoot, request.PlanID))
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		return Manifest{}, fmt.Errorf("prepare staging directory: %w", err)
+	}
+	defer os.RemoveAll(staging)
 
 	entries, err := h.assemble(ctx, staging, request)
 	if err != nil {
@@ -95,6 +107,16 @@ func (h *HostOperator) Run(ctx context.Context, request RunRequest) (Manifest, e
 	if _, err := h.runner.Run(ctx, h.binary, []string{"copy", staging, copyDir}, env); err != nil {
 		return Manifest{}, fmt.Errorf("upload backup copy: %w", err)
 	}
+	// Copy verifies transfer hashes when the backend exposes them, but a
+	// download check also covers remotes without compatible hash support. Do
+	// this before retention so an unverified upload can never evict an older
+	// copy. A failed copy is purged best-effort and is not recorded as usable.
+	if _, err := h.runner.Run(ctx, h.binary, []string{"check", staging, copyDir, "--download"}, env); err != nil {
+		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		_, _ = h.runner.Run(cleanupContext, h.binary, []string{"purge", copyDir}, env)
+		cancel()
+		return Manifest{}, fmt.Errorf("verify uploaded backup copy: %w", err)
+	}
 
 	pruned := h.prune(ctx, planDir, request.CopyName, request.Limit, env)
 
@@ -102,7 +124,10 @@ func (h *HostOperator) Run(ctx context.Context, request RunRequest) (Manifest, e
 	for _, entry := range entries {
 		total += entry.SizeBytes
 	}
-	return Manifest{CopyName: request.CopyName, RemotePath: strings.TrimPrefix(copyDir, remoteName+":"), SizeBytes: total, Entries: entries, Pruned: pruned}, nil
+	return Manifest{
+		CopyName: request.CopyName, RemotePath: strings.TrimPrefix(copyDir, remoteName+":"),
+		SizeBytes: total, Entries: entries, IntegrityChecked: true, Pruned: pruned,
+	}, nil
 }
 
 // assemble writes each target's artifact into staging and returns their sizes.
@@ -116,14 +141,22 @@ func (h *HostOperator) assemble(ctx context.Context, staging string, request Run
 		if _, err := h.runner.Run(ctx, "tar", []string{"-czf", out, "-C", site.RootPath, "."}, nil); err != nil {
 			return nil, fmt.Errorf("archive site %s: %w", site.Slug, err)
 		}
-		entries = append(entries, CopyEntry{Name: name, SizeBytes: fileSize(out)})
+		size, checksum, err := artifactMetadata(out)
+		if err != nil {
+			return nil, fmt.Errorf("inspect site archive %s: %w", site.Slug, err)
+		}
+		entries = append(entries, CopyEntry{Name: name, SizeBytes: size, SHA256: checksum})
 	}
 	for _, database := range request.Databases {
 		name, err := h.dumpDatabase(ctx, staging, database)
 		if err != nil {
 			return nil, err
 		}
-		entries = append(entries, CopyEntry{Name: name, SizeBytes: fileSize(filepath.Join(staging, name))})
+		size, checksum, err := artifactMetadata(filepath.Join(staging, name))
+		if err != nil {
+			return nil, fmt.Errorf("inspect database dump %s: %w", database.Name, err)
+		}
+		entries = append(entries, CopyEntry{Name: name, SizeBytes: size, SHA256: checksum})
 	}
 	return entries, nil
 }
@@ -137,8 +170,10 @@ func (h *HostOperator) dumpDatabase(ctx context.Context, staging string, databas
 		name := "db-postgres-" + database.Name + ".dump"
 		out := filepath.Join(staging, name)
 		program := filepath.Join("/usr/lib/postgresql", database.Version, "bin", "pg_dump")
-		args := []string{"-u", "postgres", "--", program, "--host", database.Socket, "--port", strconv.Itoa(database.Port),
-			"--username", "postgres", "--format", "custom", "--no-owner", "--no-privileges", "--file", out, database.Name}
+		args := []string{
+			"-u", "postgres", "--", program, "--host", database.Socket, "--port", strconv.Itoa(database.Port),
+			"--username", "postgres", "--format", "custom", "--no-owner", "--no-privileges", "--file", out, database.Name,
+		}
 		if _, err := h.runner.Run(ctx, "runuser", args, nil); err != nil {
 			return "", fmt.Errorf("dump PostgreSQL database %s: %w", database.Name, err)
 		}
@@ -150,8 +185,10 @@ func (h *HostOperator) dumpDatabase(ctx context.Context, staging string, databas
 		}
 		name := "db-" + database.Engine + "-" + database.Name + ".sql"
 		out := filepath.Join(staging, name)
-		args := []string{"--protocol=socket", "--socket=" + database.Socket, "--user=root", "--single-transaction",
-			"--routines", "--events", "--triggers", "--hex-blob", "--default-character-set=utf8mb4"}
+		args := []string{
+			"--protocol=socket", "--socket=" + database.Socket, "--user=root", "--single-transaction",
+			"--routines", "--events", "--triggers", "--hex-blob", "--default-character-set=utf8mb4",
+		}
 		if database.Engine == "mysql" {
 			args = append(args, "--set-gtid-purged=OFF")
 		}
@@ -202,10 +239,22 @@ func joinRemote(base, segment string) string {
 	return base + "/" + strings.TrimPrefix(path.Clean("/"+segment), "/")
 }
 
-func fileSize(path string) int64 {
-	info, err := os.Stat(path)
+func artifactMetadata(path string) (int64, string, error) {
+	info, err := os.Lstat(path)
 	if err != nil {
-		return 0
+		return 0, "", err
 	}
-	return info.Size()
+	if !info.Mode().IsRegular() {
+		return 0, "", fmt.Errorf("artifact is not a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, "", err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return 0, "", err
+	}
+	return info.Size(), hex.EncodeToString(digest.Sum(nil)), nil
 }

@@ -17,6 +17,8 @@ type recordingRunner struct {
 	discovery       string
 	commands        []Command
 	missingOriginal bool
+	databaseErrors  map[string]error
+	existing        map[string]bool
 }
 
 func (r *recordingRunner) Run(_ context.Context, command Command) ([]byte, error) {
@@ -24,13 +26,80 @@ func (r *recordingRunner) Run(_ context.Context, command Command) ([]byte, error
 	if command.Name == "pg_lsclusters" {
 		return []byte(r.discovery), nil
 	}
-	if r.missingOriginal && strings.Contains(strings.Join(command.Args, " "), "SELECT 1 FROM pg_database WHERE datname = 'app_db'") {
-		return nil, nil
+	joined := strings.Join(command.Args, " ")
+	if strings.Contains(joined, "SELECT 1 FROM pg_database WHERE datname = ") {
+		for database, err := range r.databaseErrors {
+			if strings.Contains(joined, "datname = '"+database+"'") {
+				return nil, err
+			}
+		}
+		for database, exists := range r.existing {
+			if strings.Contains(joined, "datname = '"+database+"'") {
+				if exists {
+					return []byte("1\n"), nil
+				}
+				return nil, nil
+			}
+		}
+		if r.missingOriginal && strings.Contains(joined, "datname = 'app_db'") {
+			return nil, nil
+		}
+		if strings.Contains(joined, "_nexa_restore_") || strings.Contains(joined, "_nexa_previous_") {
+			return nil, nil
+		}
+		return []byte("1\n"), nil
 	}
-	if strings.Contains(strings.Join(command.Args, " "), "/psql") {
+	if strings.Contains(joined, "/psql") {
 		return []byte("1\n"), nil
 	}
 	return nil, nil
+}
+
+func TestDatabaseExistenceProbeDoesNotTreatCommandFailureAsMissing(t *testing.T) {
+	runner := &recordingRunner{databaseErrors: map[string]error{"app_db": errors.New("connection refused")}}
+	operator := newTestOperator(t, runner)
+	_, err := operator.databaseExists(context.Background(), Change{Version: "18", Port: 5432}, "app_db")
+	if err == nil || !strings.Contains(err.Error(), "inspect PostgreSQL database app_db") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRestoreRefusesToDeleteRetainedRecoveryDatabase(t *testing.T) {
+	root := t.TempDir()
+	archive := filepath.Join(root, "postgresql_18_nexa_main", "app_db", "restore_1.dump")
+	if err := os.MkdirAll(filepath.Dir(archive), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("fixture custom-format archive")
+	if err := os.WriteFile(archive, content, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(content)
+	runner := &recordingRunner{
+		discovery: `[{
+			"version":"18","cluster":"nexa_main","port":5432,"status":"online","owner":"postgres"
+		}]`,
+		existing: map[string]bool{"app_db_nexa_previous_a1b2c3d4": true},
+	}
+	operator, err := NewHostOperator(runner, HostConfig{BackupRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator.now = func() time.Time { return time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC) }
+	change := Change{Action: ActionRestoreBackup, InstanceID: "postgresql_18_nexa_main", Database: "app_db", OwnerRole: "app_role", BackupID: "restore_1", BackupPath: archive, BackupSHA256: hex.EncodeToString(digest[:]), RestoreToken: "a1b2c3d4e5f6"}
+	plan, err := operator.Plan(context.Background(), change)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = operator.Apply(context.Background(), Execution{Plan: plan})
+	if err == nil || !strings.Contains(err.Error(), "retained PostgreSQL recovery database") {
+		t.Fatalf("error = %v", err)
+	}
+	for _, command := range runner.commands {
+		if command.Name == "runuser" && strings.Contains(strings.Join(command.Args, " "), "dropdb") && strings.Contains(strings.Join(command.Args, " "), "nexa_previous") {
+			t.Fatalf("retained recovery database was deleted: %+v", command)
+		}
+	}
 }
 
 func newTestOperator(t *testing.T, runner Runner) *HostOperator {

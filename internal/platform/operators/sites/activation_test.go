@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -15,9 +16,9 @@ type fakeNodeSystem struct {
 	fail  string
 }
 
-func (system *fakeNodeSystem) call(name string) error {
-	system.calls = append(system.calls, name)
-	if system.fail == name {
+func (s *fakeNodeSystem) call(name string) error {
+	s.calls = append(s.calls, name)
+	if s.fail == name {
 		return errors.New("injected failure")
 	}
 	return nil
@@ -26,11 +27,13 @@ func (s *fakeNodeSystem) PrepareSite(context.Context, Site) error { return s.cal
 func (s *fakeNodeSystem) SecureArtifacts(context.Context, Site, []Artifact) error {
 	return s.call("secure")
 }
+
 func (s *fakeNodeSystem) ValidatePHP(context.Context, string) error { return s.call("validate-php") }
-func (s *fakeNodeSystem) ValidateNginx(context.Context) error       { return s.call("validate-nginx") }
-func (s *fakeNodeSystem) ReloadPHP(context.Context, string) error   { return s.call("reload-php") }
-func (s *fakeNodeSystem) ReloadNginx(context.Context) error         { return s.call("reload-nginx") }
-func (s *fakeNodeSystem) VerifyHost(context.Context, Site) error    { return s.call("verify-host") }
+
+func (s *fakeNodeSystem) ValidateNginx(context.Context) error     { return s.call("validate-nginx") }
+func (s *fakeNodeSystem) ReloadPHP(context.Context, string) error { return s.call("reload-php") }
+func (s *fakeNodeSystem) ReloadNginx(context.Context) error       { return s.call("reload-nginx") }
+func (s *fakeNodeSystem) VerifyHost(context.Context, Site) error  { return s.call("verify-host") }
 
 func testHostOperator(t *testing.T, system NodeSystem) (*HostOperator, Site) {
 	t.Helper()
@@ -125,5 +128,19 @@ func TestHostOperatorRejectsDriftAndTamperedArtifacts(t *testing.T) {
 	plan.Artifacts[0].Path = filepath.Join(t.TempDir(), "escape")
 	if _, err := operator.Apply(context.Background(), plan); err == nil {
 		t.Fatal("expected tampered artifact rejection")
+	}
+}
+
+func TestHostOperatorRejectsEnabledSymlinkToUnmanagedDefinition(t *testing.T) {
+	operator, site := testHostOperator(t, new(fakeNodeSystem))
+	if err := os.MkdirAll(operator.enabledRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(operator.enabledRoot, "nexa-"+site.Slug+".conf")
+	if err := os.Symlink(filepath.Join(t.TempDir(), "attacker.conf"), path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Plan(context.Background(), site); err == nil || !strings.Contains(err.Error(), "outside its managed definition") {
+		t.Fatalf("Plan() error = %v, want an unmanaged enabled-symlink error", err)
 	}
 }

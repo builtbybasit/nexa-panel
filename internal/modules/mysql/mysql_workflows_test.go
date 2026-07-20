@@ -31,6 +31,7 @@ func (f *fakeMySQLOperator) Discover(context.Context) (*mysqloperator.Engine, er
 	engine := f.engine
 	return &engine, nil
 }
+
 func (f *fakeMySQLOperator) Sizes(context.Context) (map[string]int64, error) {
 	f.sizeCalls++
 	if f.sizeError != nil {
@@ -38,10 +39,12 @@ func (f *fakeMySQLOperator) Sizes(context.Context) (map[string]int64, error) {
 	}
 	return f.sizes, nil
 }
+
 func (f *fakeMySQLOperator) Plan(_ context.Context, change mysqloperator.Change) (mysqloperator.Plan, error) {
 	now := time.Now().UTC()
 	return mysqloperator.Plan{ID: randomToken(8), Kind: mysqloperator.PlanKind, Change: change, Steps: []string{"typed change"}, ObservedFingerprint: "observed", PlannedAt: now, ExpiresAt: now.Add(time.Hour), Signature: "agent-signed"}, nil
 }
+
 func (f *fakeMySQLOperator) Apply(_ context.Context, execution mysqloperator.Execution) (mysqloperator.Observation, error) {
 	if execution.Secret != "" {
 		f.secrets = append(f.secrets, execution.Secret)

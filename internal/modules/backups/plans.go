@@ -5,21 +5,36 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/uptrace/bun"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 )
 
-// syncSchedule installs or removes a plan's systemd timer to match its enabled
-// state. It is best-effort: the enabled intent is already persisted, so a timer
-// hiccup (agent unreachable, systemd busy) is logged, not fatal — the next edit
-// or toggle re-syncs. Scheduling never blocks plan CRUD.
-func (m *Module) syncSchedule(ctx context.Context, plan planModel) {
+const (
+	schedulePending   = "pending"
+	scheduleInstalled = "installed"
+	scheduleDisabled  = "disabled"
+	scheduleError     = "error"
+)
+
+// syncSchedule converges one persisted desired state and records the observed
+// result. Callers never report a plan as installed merely because enabled=true.
+func (m *Module) syncSchedule(ctx context.Context, plan *planModel) error {
+	m.scheduleSyncMu.Lock()
+	defer m.scheduleSyncMu.Unlock()
+	current := new(planModel)
+	if err := m.database.NewSelect().Model(current).Where("id = ?", plan.ID).Scan(ctx); err != nil {
+		return err
+	}
+	*plan = *current
 	var err error
 	if plan.Enabled {
 		err = m.operator.InstallSchedule(ctx, backupoperator.ScheduleSpec{
@@ -28,22 +43,56 @@ func (m *Module) syncSchedule(ctx context.Context, plan planModel) {
 	} else {
 		err = m.operator.RemoveSchedule(ctx, plan.ID)
 	}
-	if err != nil {
-		m.logger.Warn("backup schedule sync failed", "plan", plan.ID, "enabled", plan.Enabled, "error", err)
+	now := m.now().UTC()
+	state := scheduleInstalled
+	if !plan.Enabled {
+		state = scheduleDisabled
 	}
+	if err != nil {
+		state = scheduleError
+		message := err.Error()
+		if len(message) > 500 {
+			message = message[:500]
+		}
+		plan.ScheduleError = &message
+	} else {
+		plan.ScheduleError = nil
+		plan.ScheduleSyncedAt = &now
+	}
+	plan.ScheduleState = state
+	plan.UpdatedAt = now
+	_, persistErr := m.database.NewUpdate().Model(plan).
+		Column("schedule_state", "schedule_error", "schedule_synced_at", "updated_at").WherePK().Exec(ctx)
+	if persistErr != nil {
+		return errors.Join(err, fmt.Errorf("persist schedule state: %w", persistErr))
+	}
+	return err
 }
 
-func (m *Module) removeSchedule(ctx context.Context, planID string) {
-	if err := m.operator.RemoveSchedule(ctx, planID); err != nil {
-		m.logger.Warn("backup schedule removal failed", "plan", planID, "error", err)
+func (m *Module) reconcileSchedules(ctx context.Context, force bool) error {
+	models := make([]planModel, 0)
+	query := m.database.NewSelect().Model(&models).OrderExpr("id")
+	if !force {
+		query = query.Where("schedule_state IN (?, ?)", schedulePending, scheduleError)
 	}
+	if err := query.Scan(ctx); err != nil {
+		return err
+	}
+	var failures []error
+	for index := range models {
+		if err := m.syncSchedule(ctx, &models[index]); errors.Is(err, sql.ErrNoRows) {
+			continue
+		} else if err != nil {
+			failures = append(failures, fmt.Errorf("plan %s: %w", models[index].ID, err))
+		}
+	}
+	return errors.Join(failures...)
 }
 
 // plansSchema is migration #2 for the "backups" module (appended after
 // accountsSchema — never reordered). A plan names what to back up (sites and/or
 // databases), where (account_id), how many copies to keep (copies_limit), and
-// when (schedule, a 5-field cron expression). Execution and the systemd timer
-// that fires it arrive in Phase 3.
+// when (schedule, a 5-field cron expression).
 const plansSchema = `
 	CREATE TABLE backup_plans (
 		id TEXT PRIMARY KEY,
@@ -60,22 +109,44 @@ const plansSchema = `
 	CREATE INDEX idx_backup_plans_account ON backup_plans(account_id);
 `
 
+const scheduleLifecycleSchema = `
+	ALTER TABLE backup_plans ADD COLUMN schedule_state TEXT NOT NULL DEFAULT 'pending';
+	ALTER TABLE backup_plans ADD COLUMN schedule_error TEXT;
+	ALTER TABLE backup_plans ADD COLUMN schedule_synced_at TIMESTAMP;
+	CREATE INDEX backup_plans_schedule_state_idx ON backup_plans (schedule_state);
+`
+
 const maxCopiesLimit = 1000
 
+const maxPlanTargets = 128
+
+var (
+	resourceIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+	errPlanHasCopies  = errors.New("backup plan still has stored copies")
+)
+
+type scheduleRemovalError struct{ cause error }
+
+func (err scheduleRemovalError) Error() string { return err.cause.Error() }
+func (err scheduleRemovalError) Unwrap() error { return err.cause }
+
 // Plan is the JSON-facing view of a backup plan. Database references are
-// engine-qualified ("postgres:<id>" / "mysql:<id>") so Phase 3 knows which tool
-// to dump each one with.
+// engine-qualified ("postgres:<id>" / "mysql:<id>") so execution selects the
+// correct engine operator without coupling this module to its implementation.
 type Plan struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	AccountID   string    `json:"accountId"`
-	CopiesLimit int       `json:"copiesLimit"`
-	SiteIDs     []string  `json:"siteIds"`
-	DatabaseIDs []string  `json:"databaseIds"`
-	Schedule    string    `json:"schedule"`
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	AccountID        string     `json:"accountId"`
+	CopiesLimit      int        `json:"copiesLimit"`
+	SiteIDs          []string   `json:"siteIds"`
+	DatabaseIDs      []string   `json:"databaseIds"`
+	Schedule         string     `json:"schedule"`
+	Enabled          bool       `json:"enabled"`
+	ScheduleState    string     `json:"scheduleState"`
+	ScheduleError    string     `json:"scheduleError,omitempty"`
+	ScheduleSyncedAt *time.Time `json:"scheduleSyncedAt,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
 }
 
 type PlanRequest struct {
@@ -93,25 +164,33 @@ type toggleRequest struct {
 }
 
 type planModel struct {
-	bun.BaseModel   `bun:"table:backup_plans,alias:backup_plan"`
-	ID              string `bun:",pk"`
-	Name            string
-	AccountID       string
-	CopiesLimit     int
-	SiteIDsJSON     string `bun:"site_ids"`
-	DatabaseIDsJSON string `bun:"database_ids"`
-	Schedule        string
-	Enabled         bool
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	bun.BaseModel    `bun:"table:backup_plans,alias:backup_plan"`
+	ID               string `bun:",pk"`
+	Name             string
+	AccountID        string
+	CopiesLimit      int
+	SiteIDsJSON      string `bun:"site_ids"`
+	DatabaseIDsJSON  string `bun:"database_ids"`
+	Schedule         string
+	Enabled          bool
+	ScheduleState    string
+	ScheduleError    *string
+	ScheduleSyncedAt *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 func (model planModel) toPlan() Plan {
-	return Plan{
+	result := Plan{
 		ID: model.ID, Name: model.Name, AccountID: model.AccountID, CopiesLimit: model.CopiesLimit,
 		SiteIDs: decodeStringSlice(model.SiteIDsJSON), DatabaseIDs: decodeStringSlice(model.DatabaseIDsJSON),
-		Schedule: model.Schedule, Enabled: model.Enabled, CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
+		Schedule: model.Schedule, Enabled: model.Enabled, ScheduleState: model.ScheduleState,
+		ScheduleSyncedAt: model.ScheduleSyncedAt, CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
 	}
+	if model.ScheduleError != nil {
+		result.ScheduleError = *model.ScheduleError
+	}
+	return result
 }
 
 func decodeStringSlice(encoded string) []string {
@@ -122,13 +201,8 @@ func decodeStringSlice(encoded string) []string {
 	return values
 }
 
-// cronFieldPattern accepts the token vocabulary a 5-field cron entry uses: the
-// wildcard, numbers, and lists/ranges/steps built from them. It is deliberately
-// permissive about ranges rather than range-checking each field's bounds.
-var cronFieldPattern = regexp.MustCompile(`^[0-9*/,\-]+$`)
-
 func validatePlan(request PlanRequest) error {
-	if name := strings.TrimSpace(request.Name); name == "" || len(name) > 80 {
+	if name := strings.TrimSpace(request.Name); name == "" || len(name) > 80 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return errors.New("name must contain 1-80 characters")
 	}
 	if strings.TrimSpace(request.AccountID) == "" {
@@ -140,21 +214,64 @@ func validatePlan(request PlanRequest) error {
 	if len(request.SiteIDs) == 0 && len(request.DatabaseIDs) == 0 {
 		return errors.New("select at least one site or database to back up")
 	}
+	if len(request.SiteIDs)+len(request.DatabaseIDs) > maxPlanTargets {
+		return fmt.Errorf("a backup plan can select at most %d targets", maxPlanTargets)
+	}
 	if err := validateCron(request.Schedule); err != nil {
 		return err
 	}
 	return nil
 }
 
-func validateCron(expression string) error {
-	fields := strings.Fields(strings.TrimSpace(expression))
-	if len(fields) != 5 {
-		return errors.New("the schedule must be a 5-field cron expression (minute hour day month weekday)")
+func normalizePlanRequest(request PlanRequest) (PlanRequest, error) {
+	request.Name = strings.TrimSpace(request.Name)
+	request.AccountID = strings.TrimSpace(request.AccountID)
+	request.Schedule = strings.TrimSpace(request.Schedule)
+
+	sites, err := normalizeTargetIDs(request.SiteIDs, "site")
+	if err != nil {
+		return PlanRequest{}, err
 	}
-	for _, field := range fields {
-		if !cronFieldPattern.MatchString(field) {
-			return errors.New("the schedule contains an invalid cron field")
+	databases := make([]string, 0, len(request.DatabaseIDs))
+	seenDatabases := make(map[string]struct{}, len(request.DatabaseIDs))
+	for _, raw := range request.DatabaseIDs {
+		engine, id, ok := strings.Cut(strings.TrimSpace(raw), ":")
+		engine = strings.ToLower(engine)
+		if !ok || strings.Contains(id, ":") || (engine != "postgres" && engine != "mysql") || !resourceIDPattern.MatchString(id) {
+			return PlanRequest{}, fmt.Errorf("database target %q must be an engine-qualified PostgreSQL or MySQL identifier", raw)
 		}
+		qualified := engine + ":" + id
+		if _, duplicate := seenDatabases[qualified]; duplicate {
+			return PlanRequest{}, fmt.Errorf("database target %q is selected more than once", qualified)
+		}
+		seenDatabases[qualified] = struct{}{}
+		databases = append(databases, qualified)
+	}
+	request.SiteIDs = sites
+	request.DatabaseIDs = databases
+	return request, nil
+}
+
+func normalizeTargetIDs(values []string, label string) ([]string, error) {
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if !resourceIDPattern.MatchString(value) {
+			return nil, fmt.Errorf("%s target %q is not a valid resource identifier", label, raw)
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return nil, fmt.Errorf("%s target %q is selected more than once", label, value)
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized, nil
+}
+
+func validateCron(expression string) error {
+	if _, err := backupoperator.ValidateSchedule(expression); err != nil {
+		return fmt.Errorf("invalid backup schedule: %w", err)
 	}
 	return nil
 }
@@ -162,23 +279,34 @@ func validateCron(expression string) error {
 // --- lifecycle -------------------------------------------------------------
 
 func (m *Module) CreatePlan(ctx context.Context, request PlanRequest) (Plan, error) {
+	var err error
+	request, err = normalizePlanRequest(request)
+	if err != nil {
+		return Plan{}, validationError{err.Error()}
+	}
 	if err := validatePlan(request); err != nil {
 		return Plan{}, validationError{err.Error()}
 	}
 	if err := m.assertAccountExists(ctx, request.AccountID); err != nil {
 		return Plan{}, err
 	}
+	if err := m.validatePlanTargets(ctx, request); err != nil {
+		return Plan{}, validationError{err.Error()}
+	}
 	siteIDs, databaseIDs := encodeSlice(request.SiteIDs), encodeSlice(request.DatabaseIDs)
 	now := m.now().UTC()
 	model := &planModel{
 		ID: "bkplan_" + randomToken(), Name: strings.TrimSpace(request.Name), AccountID: request.AccountID,
 		CopiesLimit: request.CopiesLimit, SiteIDsJSON: siteIDs, DatabaseIDsJSON: databaseIDs,
-		Schedule: strings.TrimSpace(request.Schedule), Enabled: request.Enabled, CreatedAt: now, UpdatedAt: now,
+		Schedule: strings.TrimSpace(request.Schedule), Enabled: request.Enabled,
+		ScheduleState: schedulePending, CreatedAt: now, UpdatedAt: now,
 	}
 	if _, err := m.database.NewInsert().Model(model).Exec(ctx); err != nil {
 		return Plan{}, err
 	}
-	m.syncSchedule(ctx, *model)
+	if err := m.syncSchedule(ctx, model); err != nil {
+		m.logger.Warn("backup schedule sync failed", "plan", model.ID, "error", err)
+	}
 	return model.toPlan(), nil
 }
 
@@ -187,11 +315,18 @@ func (m *Module) UpdatePlan(ctx context.Context, id string, request PlanRequest)
 	if err := m.database.NewSelect().Model(model).Where("id = ?", strings.TrimSpace(id)).Scan(ctx); err != nil {
 		return Plan{}, err
 	}
+	request, err := normalizePlanRequest(request)
+	if err != nil {
+		return Plan{}, validationError{err.Error()}
+	}
 	if err := validatePlan(request); err != nil {
 		return Plan{}, validationError{err.Error()}
 	}
 	if err := m.assertAccountExists(ctx, request.AccountID); err != nil {
 		return Plan{}, err
+	}
+	if err := m.validatePlanTargets(ctx, request); err != nil {
+		return Plan{}, validationError{err.Error()}
 	}
 	model.Name = strings.TrimSpace(request.Name)
 	model.AccountID = request.AccountID
@@ -200,12 +335,27 @@ func (m *Module) UpdatePlan(ctx context.Context, id string, request PlanRequest)
 	model.DatabaseIDsJSON = encodeSlice(request.DatabaseIDs)
 	model.Schedule = strings.TrimSpace(request.Schedule)
 	model.Enabled = request.Enabled
+	model.ScheduleState = schedulePending
+	model.ScheduleError = nil
+	model.ScheduleSyncedAt = nil
 	model.UpdatedAt = m.now().UTC()
 	if _, err := m.database.NewUpdate().Model(model).WherePK().Exec(ctx); err != nil {
 		return Plan{}, err
 	}
-	m.syncSchedule(ctx, *model)
+	if err := m.syncSchedule(ctx, model); err != nil {
+		m.logger.Warn("backup schedule sync failed", "plan", model.ID, "error", err)
+	}
 	return model.toPlan(), nil
+}
+
+func (m *Module) validatePlanTargets(ctx context.Context, request PlanRequest) error {
+	if _, err := m.resolveSites(ctx, request.SiteIDs); err != nil {
+		return fmt.Errorf("validate backup sites: %w", err)
+	}
+	if _, err := m.resolveDatabases(ctx, request.DatabaseIDs); err != nil {
+		return fmt.Errorf("validate backup databases: %w", err)
+	}
+	return nil
 }
 
 func (m *Module) assertAccountExists(ctx context.Context, accountID string) error {
@@ -222,8 +372,13 @@ func (m *Module) assertAccountExists(ctx context.Context, accountID string) erro
 // --- handlers --------------------------------------------------------------
 
 func (m *Module) listPlansHTTP(w http.ResponseWriter, r *http.Request) {
-	var models []planModel
-	if err := m.database.NewSelect().Model(&models).Order("name ASC").Scan(r.Context()); err != nil {
+	user, ok := identity.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		return
+	}
+	models, err := m.listPlansForUser(r.Context(), user)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "backup_plans_unavailable", "The backup plans could not be loaded.")
 		return
 	}
@@ -249,8 +404,12 @@ func (m *Module) createPlanHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) getPlanHTTP(w http.ResponseWriter, r *http.Request) {
-	model := new(planModel)
-	err := m.database.NewSelect().Model(model).Where("id = ?", r.PathValue("id")).Scan(r.Context())
+	user, ok := identity.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		return
+	}
+	model, err := m.getPlanForUser(r.Context(), user, r.PathValue("id"))
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
 		return
@@ -287,7 +446,8 @@ func (m *Module) togglePlanHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := m.database.NewUpdate().Model((*planModel)(nil)).
-		Set("enabled = ?", request.Enabled).Set("updated_at = ?", m.now().UTC()).
+		Set("enabled = ?", request.Enabled).Set("schedule_state = ?", schedulePending).
+		Set("schedule_error = NULL").Set("schedule_synced_at = NULL").Set("updated_at = ?", m.now().UTC()).
 		Where("id = ?", r.PathValue("id")).Exec(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "backup_plan_update_failed", "The backup plan could not be updated.")
@@ -297,26 +457,86 @@ func (m *Module) togglePlanHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
 		return
 	}
-	// Reflect the new enabled state in the installed timer.
+	// Reflect the new enabled state in the installed timer and preserve any
+	// synchronization error for the client to surface.
 	plan := new(planModel)
 	if err := m.database.NewSelect().Model(plan).Where("id = ?", r.PathValue("id")).Scan(r.Context()); err == nil {
-		m.syncSchedule(r.Context(), *plan)
+		plan.ScheduleState = schedulePending
+		plan.ScheduleError = nil
+		plan.ScheduleSyncedAt = nil
+		if err := m.syncSchedule(r.Context(), plan); err != nil {
+			m.logger.Warn("backup schedule sync failed", "plan", plan.ID, "error", err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m *Module) deletePlanHTTP(w http.ResponseWriter, r *http.Request) {
-	result, err := m.database.NewDelete().Model((*planModel)(nil)).Where("id = ?", r.PathValue("id")).Exec(r.Context())
+	err := m.DeletePlan(r.Context(), r.PathValue("id"))
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
+		return
+	}
+	if errors.Is(err, errPlanHasCopies) {
+		writeError(w, http.StatusConflict, "backup_plan_has_copies", "Delete every stored copy before deleting this backup plan.")
+		return
+	}
+	var removal scheduleRemovalError
+	if errors.As(err, &removal) {
+		writeError(w, http.StatusBadGateway, "backup_schedule_remove_failed", "The backup schedule could not be removed; the plan was kept for a safe retry.")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "backup_plan_delete_failed", "The backup plan could not be removed.")
 		return
 	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
-		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
-		return
-	}
-	m.removeSchedule(r.Context(), r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (m *Module) DeletePlan(ctx context.Context, id string) error {
+	m.scheduleSyncMu.Lock()
+	defer m.scheduleSyncMu.Unlock()
+	plan := new(planModel)
+	id = strings.TrimSpace(id)
+	if err := m.database.NewSelect().Model(plan).Where("id = ?", id).Scan(ctx); err != nil {
+		return err
+	}
+	hasCopies, err := m.database.NewSelect().Model((*copyModel)(nil)).Where("plan_id = ?", plan.ID).Exists(ctx)
+	if err != nil {
+		return err
+	}
+	if hasCopies {
+		return errPlanHasCopies
+	}
+	if err := m.operator.RemoveSchedule(ctx, plan.ID); err != nil {
+		message := err.Error()
+		if len(message) > 500 {
+			message = message[:500]
+		}
+		plan.ScheduleState = scheduleError
+		plan.ScheduleError = &message
+		_, _ = m.database.NewUpdate().Model(plan).Column("schedule_state", "schedule_error").WherePK().Exec(ctx)
+		return scheduleRemovalError{cause: err}
+	}
+	// If the database delete fails, pending state makes the reconciler restore
+	// the schedule that was just removed instead of silently losing automation.
+	if _, err := m.database.NewUpdate().Model((*planModel)(nil)).
+		Set("schedule_state = ?", schedulePending).Set("schedule_error = NULL").Set("schedule_synced_at = NULL").
+		Where("id = ?", plan.ID).Exec(ctx); err != nil {
+		return err
+	}
+	result, err := m.database.NewDelete().Model((*planModel)(nil)).Where("id = ?", id).Exec(ctx)
+	if err != nil {
+		hasCopies, lookupErr := m.database.NewSelect().Model((*copyModel)(nil)).Where("plan_id = ?", plan.ID).Exists(ctx)
+		if lookupErr == nil && hasCopies {
+			return errPlanHasCopies
+		}
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func writePlanError(w http.ResponseWriter, err error) {

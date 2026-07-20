@@ -1,6 +1,7 @@
 runtimes:
   get:
     operationId: listRuntimes
+    summary: List Runtimes
     tags:
     - Runtimes
     x-permission: runtimes.read
@@ -20,3 +21,6 @@ runtimes:
                   type: array
                   items:
                     $ref: ../components/schemas/runtimes.yaml#/Runtime
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

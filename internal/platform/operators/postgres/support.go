@@ -1,26 +1,19 @@
 package postgres
 
 import (
-	"path/filepath"
-
-	"encoding/hex"
-	"os/exec"
-
 	"context"
-
-	"encoding/json"
-
 	"crypto/sha256"
-	"os/user"
-
-	"strconv"
-
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
-
-	"crypto/rand"
-
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 func (execRunner) Run(ctx context.Context, command Command) ([]byte, error) {
@@ -128,13 +121,7 @@ func fingerprint(value any) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomID() string { return secureid.Hex(16) }
 
 func commandError(action string, output []byte, err error) error {
 	message := strings.TrimSpace(string(output))
@@ -156,6 +143,8 @@ func binary(version, program string) string {
 }
 
 func quoteIdentifier(value string) string { return `"` + strings.ReplaceAll(value, `"`, `""`) + `"` }
+
+func quoteLiteral(value string) string { return `'` + strings.ReplaceAll(value, `'`, `''`) + `'` }
 
 func terminateSQL(database string) string {
 	return "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '" + database + "' AND pid <> pg_backend_pid();\n"

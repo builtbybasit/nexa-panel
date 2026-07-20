@@ -8,29 +8,30 @@ Before=nexa-api.service
 Type=simple
 User=root
 Group=nexa
-UMask=0007
+UMask=0177
+ExecStartPre=/usr/bin/nexa agent-token --path /etc/nexa-panel/agent.token
 ExecStart=/usr/bin/nexa agent --socket /run/nexa-panel/agent.sock --token /etc/nexa-panel/agent.token --probe-path /etc/nexa-panel/probe.conf
 Restart=on-failure
 RestartSec=3s
-RuntimeDirectory=nexa-panel
-RuntimeDirectoryMode=0750
-StateDirectory=nexa-panel
-StateDirectoryMode=0750
 ConfigurationDirectory=nexa-panel
-ConfigurationDirectoryMode=0750
-LogsDirectory=nexa-panel
-LogsDirectoryMode=0750
+ConfigurationDirectoryMode=0711
 NoNewPrivileges=true
 PrivateTmp=true
+# Package and service operators need these host trees writable. Everything else
+# remains read-only inside the agent's mount namespace.
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/etc/nexa-panel /etc/containers/systemd /etc/cron.d /etc/systemd/system /etc/nginx /etc/php /etc/postgresql /etc/letsencrypt /etc/passwd /etc/shadow /etc/group /etc/gshadow /srv/nexa /var/lib/nexa-panel /var/lib/postgresql /var/lib/letsencrypt /var/log/postgresql /var/log/letsencrypt /run/nexa-panel /run/php /run/postgresql
+ReadWritePaths=/boot /etc /opt /srv /usr /var /run/containers /run/nexa-panel /run/php /run/postgresql
 ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
 ProtectKernelLogs=true
 ProtectKernelModules=true
 ProtectKernelTunables=true
 RestrictRealtime=true
 LockPersonality=true
+KeyringMode=private
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

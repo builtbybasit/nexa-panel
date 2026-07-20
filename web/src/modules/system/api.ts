@@ -1,4 +1,4 @@
-export interface MemorySnapshot {
+interface MemorySnapshot {
   supported: boolean
   totalBytes: number
   availableBytes: number
@@ -8,7 +8,7 @@ export interface MemorySnapshot {
   profile: 'unsupported' | 'compact' | 'standard' | 'pro'
 }
 
-export interface PodmanStatus {
+interface PodmanStatus {
   available: boolean
   version?: string
   path?: string

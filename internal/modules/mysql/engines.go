@@ -2,7 +2,6 @@ package mysql
 
 import (
 	"context"
-
 	"errors"
 )
 

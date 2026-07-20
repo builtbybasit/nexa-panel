@@ -2,7 +2,6 @@ package runtimes
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 )
 
@@ -134,8 +134,4 @@ func (d FilesystemDiscoverer) Discover(_ context.Context) ([]Runtime, error) {
 	return items, nil
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
+var writeJSON = httpapi.WriteJSON

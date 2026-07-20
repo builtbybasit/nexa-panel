@@ -1,15 +1,8 @@
 package agent
 
 import (
-	"encoding/json"
-
-	"crypto/hmac"
 	"net/http"
 
-	"crypto/sha256"
-	"crypto/subtle"
-
-	"fmt"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
 )
 
@@ -52,14 +45,11 @@ func (s *Server) certificateExecuteHTTP(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) signCertificatePlan(plan certificateoperator.Plan) string {
 	plan.Signature = ""
-	encoded, _ := json.Marshal(plan)
-	mac := hmac.New(sha256.New, []byte(s.token))
-	_, _ = mac.Write(encoded)
-	return fmt.Sprintf("%x", mac.Sum(nil))
+	return signPayload(s.token, "certificate.plan.v1", plan)
 }
 
 func (s *Server) verifyCertificatePlan(plan certificateoperator.Plan) bool {
 	provided := plan.Signature
-	expected := s.signCertificatePlan(plan)
-	return len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+	plan.Signature = ""
+	return verifyPayload(s.token, "certificate.plan.v1", plan, provided)
 }

@@ -2,13 +2,11 @@ package mysql
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-
-	"errors"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-
-	"strings"
 )
 
 func (m *Module) ListAccounts(ctx context.Context, engineID string) ([]Account, error) {

@@ -1,11 +1,11 @@
 package mysql
 
 import (
-	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-
 	"context"
 	"encoding/json"
 	"errors"
+
+	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 )
 
 func (m *Module) applyJob(ctx context.Context, raw json.RawMessage, report func(int, string) error) (any, error) {

@@ -3,23 +3,16 @@ package files
 import (
 	"bytes"
 	"context"
-
-	"crypto/rand"
 	"crypto/sha256"
-
 	"encoding/hex"
 	"errors"
 	"fmt"
-
 	"io"
 	"io/fs"
-
 	"os"
 	"os/user"
-
 	"path"
 	"path/filepath"
-
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +20,7 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 const (
@@ -670,10 +664,4 @@ func (b *budget) spendBytes(size int64) error {
 	return nil
 }
 
-func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomID() string { return secureid.Hex(16) }

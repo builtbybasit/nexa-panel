@@ -1,6 +1,7 @@
 admin-tools:
   get:
     operationId: listAdminTools
+    summary: List Admin Tools
     tags:
     - Admin Tools
     x-permission: databases.read
@@ -9,9 +10,12 @@ admin-tools:
     responses:
       '200':
         description: Observed phpMyAdmin and pgAdmin deployment state
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 admin-tools_kind_plan:
   get:
     operationId: getAdminToolPlan
+    summary: Get Admin Tool Plan
     tags:
     - Admin Tools
     x-permission: databases.read
@@ -29,8 +33,11 @@ admin-tools_kind_plan:
     responses:
       '200':
         description: Agent-signed Podman deployment plan
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: prepareAdminToolChange
+    summary: Prepare Admin Tool Change
     tags:
     - Admin Tools
     x-permission: databases.write
@@ -64,9 +71,12 @@ admin-tools_kind_plan:
     responses:
       '202':
         description: Admin tool change planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 admin-tools_kind_apply:
   post:
     operationId: applyAdminToolPlan
+    summary: Apply Admin Tool Plan
     tags:
     - Admin Tools
     x-permission: operations.apply
@@ -88,9 +98,12 @@ admin-tools_kind_apply:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 admin-tools_kind_launch:
   post:
     operationId: createAdminToolLaunch
+    summary: Create Admin Tool Launch
     tags:
     - Admin Tools
     x-permission: operations.apply
@@ -148,3 +161,6 @@ admin-tools_kind_launch:
                 url:
                   type: string
                   pattern: ^/tools/(phpmyadmin|pgadmin)/$
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

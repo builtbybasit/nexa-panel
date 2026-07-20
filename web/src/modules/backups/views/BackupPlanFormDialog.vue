@@ -107,7 +107,7 @@ function close() {
             <option v-for="account in accounts" :key="account.id" :value="account.id">{{ account.name }}</option>
           </AppSelect>
         </FormField>
-        <FormField label="Backup copies to keep" hint="Older copies beyond this are pruned after each run.">
+        <FormField label="Retention target" hint="Recorded now for policy; automatic pruning is not enabled until copy verification is available.">
           <AppInput v-model="copiesLimit" type="number" min="1" max="1000" step="1" required />
         </FormField>
       </div>

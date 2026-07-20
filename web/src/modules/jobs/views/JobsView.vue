@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
+import { useIdentityStore } from '@/modules/identity/store'
 import { formatDateTime, formatJobKind } from '@/shared/formatters'
 import { useCollection } from '@/shared/composables/useCollection'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
@@ -28,6 +29,7 @@ import {
 import { getJob, listJobs, submitDiagnostics, type Job, type JobState } from '../api'
 
 const route = useRoute()
+const identity = useIdentityStore()
 
 const jobsQuery = useQuery({ queryKey: ['jobs'], queryFn: listJobs, refetchInterval: 3_000 })
 const jobs = computed(() => jobsQuery.data.value ?? [])
@@ -172,7 +174,8 @@ const runnerJobLink = computed(() => (runner.jobId.value === undefined ? {} : { 
 const runnerTiming = computed(() => (runner.startedAtMs.value === undefined ? {} : { startedAtMs: runner.startedAtMs.value }))
 
 async function runDiagnostics() {
-  await runner.run(
+	if (!identity.can('operations.apply')) return
+	await runner.run(
     async () => {
       const job = await submitDiagnostics()
       await jobsQuery.refetch()
@@ -194,9 +197,9 @@ async function runDiagnostics() {
     <PageHeader
       eyebrow="Operations"
       title="Job history"
-      description="Every operation runs as a recorded job with live progress. Interrupted jobs resume after a restart."
+      description="Every operation runs as a recorded job with live progress and an explicit restart-recovery policy."
     >
-      <AppButton variant="primary" icon="play" :loading="runner.busy.value" @click="runDiagnostics">
+      <AppButton v-if="identity.can('operations.apply')" variant="primary" icon="play" :loading="runner.busy.value" @click="runDiagnostics">
         Run diagnostics
       </AppButton>
     </PageHeader>

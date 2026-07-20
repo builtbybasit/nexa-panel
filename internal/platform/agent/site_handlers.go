@@ -1,16 +1,9 @@
 package agent
 
 import (
-	"crypto/hmac"
-
-	"crypto/sha256"
-	"crypto/subtle"
-
-	"encoding/json"
-	"fmt"
-	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
-
 	"net/http"
+
+	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
 
 func WithSiteOperator(operator siteoperator.Operator) Option {
@@ -66,14 +59,11 @@ func (s *Server) sitePlanMutation(w http.ResponseWriter, r *http.Request, rollba
 
 func (s *Server) signSitePlan(plan siteoperator.Plan) string {
 	plan.Signature = ""
-	encoded, _ := json.Marshal(plan)
-	mac := hmac.New(sha256.New, []byte(s.token))
-	_, _ = mac.Write(encoded)
-	return fmt.Sprintf("%x", mac.Sum(nil))
+	return signPayload(s.token, "site.plan.v1", plan)
 }
 
 func (s *Server) verifySitePlan(plan siteoperator.Plan) bool {
 	provided := plan.Signature
-	expected := s.signSitePlan(plan)
-	return len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+	plan.Signature = ""
+	return verifyPayload(s.token, "site.plan.v1", plan, provided)
 }

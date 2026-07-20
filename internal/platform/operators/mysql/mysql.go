@@ -1,12 +1,12 @@
 package mysql
 
 import (
-	"path/filepath"
-	"regexp"
-	"time"
-
 	"context"
 	"errors"
+	"path/filepath"
+	"regexp"
+	"sync"
+	"time"
 )
 
 const PlanKind = "nexa.mysql-family.v1"
@@ -139,6 +139,7 @@ type HostOperator struct {
 	now        func() time.Time
 	socketPath string
 	backupRoot string
+	applyMu    sync.Mutex
 }
 
 func NewHostOperator(runner Runner, config HostConfig) (*HostOperator, error) {

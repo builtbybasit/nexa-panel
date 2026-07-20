@@ -41,7 +41,7 @@ func TestViewerCannotReadAuditButAdminCan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create identity module: %v", err)
 	}
-	server, err := controlplane.New("test", []module.Module{auditLog, identityModule}, logger,
+	server, err := controlplane.New("test", []module.Module{auditLog, identityModule, sensitiveActionModule{}}, logger,
 		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(authorization.New()))
 	if err != nil {
 		t.Fatalf("create control plane: %v", err)
@@ -67,12 +67,43 @@ func TestViewerCannotReadAuditButAdminCan(t *testing.T) {
 	if status := requestAudit(server.Handler(), cookie); status != http.StatusOK {
 		t.Fatalf("admin audit status = %d", status)
 	}
+	fresh := requestSensitiveAction(server.Handler(), cookie)
+	if fresh.Code != http.StatusNoContent {
+		t.Fatalf("fresh sensitive action = %d %s", fresh.Code, fresh.Body.String())
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE identity_sessions SET mfa_verified_at = ? WHERE token_hash = ?", now.Add(-20*time.Minute), tokenHash[:]); err != nil {
+		t.Fatalf("age MFA verification: %v", err)
+	}
+	stale := requestSensitiveAction(server.Handler(), cookie)
+	if stale.Code != http.StatusForbidden || !strings.Contains(stale.Body.String(), `"mfa_step_up_required"`) {
+		t.Fatalf("stale sensitive action = %d %s", stale.Code, stale.Body.String())
+	}
 	if _, err := database.ExecContext(ctx, "UPDATE identity_users SET role = 'viewer'"); err != nil {
 		t.Fatalf("change role: %v", err)
 	}
 	if status := requestAudit(server.Handler(), cookie); status != http.StatusForbidden {
 		t.Fatalf("viewer audit status = %d", status)
 	}
+}
+
+type sensitiveActionModule struct{}
+
+func (sensitiveActionModule) Descriptor() module.Descriptor {
+	return module.Descriptor{ID: "sensitive-test", Name: "Sensitive test", Version: "test", Dependencies: []string{"identity"}}
+}
+
+func (sensitiveActionModule) Register(registry module.Registry) error {
+	return registry.HandleAuthorized("POST /api/v1/sensitive-test", "operations.apply", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+}
+
+func requestSensitiveAction(handler http.Handler, cookie *http.Cookie) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/sensitive-test", nil)
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
 }
 
 func requestAudit(handler http.Handler, cookie *http.Cookie) int {

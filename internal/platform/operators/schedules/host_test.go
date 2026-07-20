@@ -3,13 +3,10 @@ package schedules
 import (
 	"context"
 	"errors"
-
 	"fmt"
 	"os"
-
 	"path/filepath"
 	"regexp"
-
 	"strings"
 	"testing"
 	"time"

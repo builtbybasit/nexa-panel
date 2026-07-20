@@ -1,16 +1,13 @@
 package sites
 
 import (
-	"regexp"
-
 	"context"
 	"errors"
-	"time"
-
 	"path/filepath"
-
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (

@@ -1,6 +1,7 @@
 import type { Job } from '../jobs/api'
+import { apiRequest } from '@/shared/api/request'
 
-export type TaskStatus = 'draft' | 'planning' | 'plan_ready' | 'activating' | 'active' | 'failed'
+type TaskStatus = 'draft' | 'planning' | 'plan_ready' | 'activating' | 'active' | 'failed'
 
 export interface ScheduledTask {
   id: string
@@ -28,7 +29,7 @@ export interface TaskInput {
   enabled: boolean
 }
 
-export interface TaskPlanArtifact {
+interface TaskPlanArtifact {
   path: string
   /** Numeric file mode; render as octal. */
   mode: number
@@ -61,7 +62,7 @@ export interface TaskRunRecord {
   trigger: string
 }
 
-export class ScheduleRequestError extends Error {
+class ScheduleRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
@@ -79,25 +80,11 @@ function taskPath(siteId: string, taskId: string): string {
   return `${base(siteId)}/${encodeURIComponent(taskId)}`
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json',
-      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init.headers,
-    },
+function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return apiRequest<T>(path, init, {
+    errorPrefix: 'Schedules request',
+    createError: (message, status, code) => new ScheduleRequestError(message, status, code),
   })
-  if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as { code?: string; message?: string } | null
-    throw new ScheduleRequestError(
-      error?.message ?? `Schedules request failed with status ${response.status}`,
-      response.status,
-      error?.code,
-    )
-  }
-  return (await response.json()) as T
 }
 
 export async function listTasks(siteId: string): Promise<ScheduledTask[]> {

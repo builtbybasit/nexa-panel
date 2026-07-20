@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { computed, markRaw, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
+import { useIdentityStore } from '@/modules/identity/store'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { formatBytes, formatDateTime } from '@/shared/formatters'
 import {
@@ -55,6 +56,7 @@ import FileEditorDialog from './FileEditorDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
+const identity = useIdentityStore()
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
 const activeSites = computed(() => (sitesQuery.data.value ?? []).filter((site) => site.status === 'active'))
@@ -148,8 +150,14 @@ const crumbs = computed(() => {
 // in read-only trees such as logs/.
 
 const writeZones = new Set(['public', 'private', 'tmp', 'backups'])
-const canMutateHere = computed(() => path.value !== '.' && writeZones.has(path.value.split('/')[0] ?? ''))
-const readOnlyHint = 'Navigate into public/, private/, tmp/ or backups/ to make changes'
+const canWriteFiles = computed(() => identity.can('files.write'))
+const isWritablePath = (target: string) => writeZones.has(target.split('/')[0] ?? '')
+const canMutateHere = computed(
+  () => canWriteFiles.value && path.value !== '.' && isWritablePath(path.value),
+)
+const readOnlyHint = computed(() =>
+  canWriteFiles.value ? 'Navigate into public/, private/, tmp/ or backups/ to make changes' : 'Your role has read-only file access',
+)
 
 const kindIcons: Record<EntryKind, string> = { dir: 'folder', file: 'file-text', symlink: 'external-link', other: 'info' }
 
@@ -239,6 +247,9 @@ function hasActions(entry: FileEntry): boolean {
 // --- Editor ---
 
 const editorPath = ref<string>()
+const editorReadOnly = computed(
+  () => editorPath.value === undefined || !canWriteFiles.value || !isWritablePath(editorPath.value),
+)
 
 function openEntry(entry: FileEntry) {
   if (entry.kind === 'dir') setPath(entryPath(entry))
@@ -287,6 +298,7 @@ function defaultArchiveName(): string {
 }
 
 function openDialog(kind: DialogKind, entry?: FileEntry) {
+  if (kind === 'archive' ? !canWriteFiles.value : !canMutateHere.value) return
   dialogTarget.value = entry
   dialogError.value = ''
   nameInput.value = kind === 'rename' ? (entry?.name ?? '') : ''
@@ -305,6 +317,8 @@ function closeDialog() {
 }
 
 async function runDialog(action: () => Promise<void>) {
+  const kind = dialog.value
+  if (!kind || (kind === 'archive' ? !canWriteFiles.value : !canMutateHere.value)) return
   dialogBusy.value = true
   dialogError.value = ''
   try {
@@ -357,6 +371,7 @@ const submitDelete = () =>
 // --- Bulk operations: loop the per-item calls, keep failures selected ---
 
 async function runBulk(perItem: (name: string) => Promise<void>) {
+  if (!canMutateHere.value) return
   dialogBusy.value = true
   dialogError.value = ''
   const failures: string[] = []
@@ -420,6 +435,7 @@ const sizeResult = ref<DirectorySizeResult & { path: string }>()
 const selectedPaths = computed(() => selectedNames.value.map((name) => joinPath(path.value, name)))
 
 function submitArchive() {
+  if (!canWriteFiles.value) return
   const paths = selectedPaths.value
   const target = destinationInput.value.trim()
   closeDialog()
@@ -435,7 +451,7 @@ function submitArchive() {
 
 function submitExtract() {
   const target = dialogTarget.value
-  if (!target) return
+  if (!target || !canMutateHere.value) return
   const from = entryPath(target)
   const targetDir = destinationInput.value.trim()
   closeDialog()
@@ -478,6 +494,7 @@ const uploads = ref<UploadItem[]>([])
 const filePicker = ref<HTMLInputElement>()
 
 async function queueUploads(files: File[]) {
+  if (!canMutateHere.value) return
   const directory = path.value
   const queued: UploadItem[] = []
   for (const file of files) {
@@ -503,6 +520,11 @@ function onFilesChosen(event: Event) {
 }
 
 async function startUpload(item: UploadItem, overwrite: boolean) {
+  if (!canWriteFiles.value || !isWritablePath(item.targetPath)) {
+    item.status = 'failed'
+    item.error = 'Your account cannot upload to this path.'
+    return
+  }
   item.status = 'uploading'
   item.error = ''
   item.sent = 0
@@ -603,7 +625,7 @@ function onDrop(event: DragEvent) {
     >
       <template #action>
         <RouterLink
-          v-if="!hasAnySites"
+          v-if="!hasAnySites && identity.can('sites.write')"
           to="/sites?create=1"
           class="text-[13px] font-medium text-accent-300 underline-offset-2 hover:text-accent-200 hover:underline"
         >
@@ -738,7 +760,9 @@ function onDrop(event: DragEvent) {
                 <span class="text-[13px] font-medium text-ink" aria-live="polite">{{ selectedNames.length }} selected</span>
                 <AppButton size="sm" variant="ghost" @click="selectedNames = []">Clear</AppButton>
                 <span class="ml-auto flex flex-wrap items-center gap-2">
-                  <AppButton size="sm" icon="archive" @click="openDialog('archive')">Archive</AppButton>
+                  <AppButton v-if="canWriteFiles" size="sm" icon="archive" @click="openDialog('archive')">
+                    Archive
+                  </AppButton>
                   <AppButton v-if="canMutateHere" size="sm" icon="folder-open" @click="openDialog('bulk-move')">Move</AppButton>
                   <AppButton v-if="canMutateHere" size="sm" variant="danger" icon="trash" @click="openDialog('bulk-delete')">
                     Delete
@@ -899,7 +923,11 @@ function onDrop(event: DragEvent) {
     <input ref="filePicker" type="file" multiple class="hidden" @change="onFilesChosen" />
 
     <!-- Form dialogs -->
-    <AppDialog :open="formDialogOpen" :title="dialogTitle" @close="closeDialog">
+    <AppDialog
+      :open="formDialogOpen && (dialog === 'archive' ? canWriteFiles : canMutateHere)"
+      :title="dialogTitle"
+      @close="closeDialog"
+    >
       <form v-if="dialog === 'mkdir'" class="space-y-4" @submit.prevent="submitMkdir">
         <FormField label="Name" :hint="`Created inside ${displayPath}. Nested paths such as a/b are allowed.`">
           <AppInput v-model="nameInput" autocomplete="off" required />
@@ -1017,7 +1045,7 @@ function onDrop(event: DragEvent) {
 
     <!-- Delete confirmations -->
     <AppConfirmDialog
-      :open="dialog === 'delete'"
+      :open="canMutateHere && dialog === 'delete'"
       title="Delete entry"
       confirm-label="Delete"
       v-bind="dialogTarget?.kind === 'dir' ? { typeToConfirm: dialogTarget.name } : {}"
@@ -1033,7 +1061,7 @@ function onDrop(event: DragEvent) {
     </AppConfirmDialog>
 
     <AppConfirmDialog
-      :open="dialog === 'bulk-delete'"
+      :open="canMutateHere && dialog === 'bulk-delete'"
       :title="`Delete ${countLabel(selectedNames.length)}`"
       :confirm-label="`Delete ${countLabel(selectedNames.length)}`"
       v-bind="selectionHasDirectory ? { typeToConfirm: 'delete' } : {}"
@@ -1056,6 +1084,7 @@ function onDrop(event: DragEvent) {
       v-if="editorPath && selectedSite"
       :site-id="siteId"
       :path="editorPath"
+      :read-only="editorReadOnly"
       @close="editorPath = undefined"
       @saved="refetchListing"
     />

@@ -2,9 +2,8 @@ package mysql
 
 import (
 	"context"
-	"errors"
-
 	"database/sql"
+	"errors"
 )
 
 func (m *Module) resourceStatus(ctx context.Context, resourceType, id string) (Status, error) {

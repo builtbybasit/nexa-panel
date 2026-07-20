@@ -3,6 +3,7 @@ package jobs
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,7 +86,60 @@ func TestDurableWorkerStoresFailure(t *testing.T) {
 	}
 }
 
-func TestNewRecoversInterruptedJobs(t *testing.T) {
+func TestHeartbeatKeepsLongRunningJobLeaseActive(t *testing.T) {
+	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	auditLog, err := audit.New(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := NewWithConfig(ctx, database, auditLog, slog.New(slog.NewTextHandler(io.Discard, nil)), Config{
+		PollInterval:  5 * time.Millisecond,
+		LeaseDuration: 150 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(module.Close)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	if err := module.RegisterHandler("test.long", func(ctx context.Context, _ json.RawMessage, _ func(int, string) error) (any, error) {
+		close(started)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-release:
+			return map[string]bool{"ok": true}, nil
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := module.Submit(ctx, "test.long", struct{}{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	module.Start(ctx)
+	<-started
+	time.Sleep(350 * time.Millisecond)
+	if err := module.recoverExpired(ctx); err != nil {
+		t.Fatal(err)
+	}
+	active, err := module.Get(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.State != StateRunning {
+		t.Fatalf("heartbeat did not preserve running lease: %+v", active)
+	}
+	close(release)
+	waitForState(t, module, job.ID, StateSucceeded)
+}
+
+func TestExpiredRetryLeaseRequeuesInterruptedJob(t *testing.T) {
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
@@ -101,7 +155,13 @@ func TestNewRecoversInterruptedJobs(t *testing.T) {
 		t.Fatalf("create first jobs module: %v", err)
 	}
 	now := time.Now().UTC()
-	model := &jobModel{Kind: "platform.diagnostics", State: string(StateRunning), Progress: 50, RequestJSON: `{}`, CreatedAt: now, UpdatedAt: now, StartedAt: &now}
+	expired := now.Add(-time.Minute)
+	leaseToken := "expired-lease"
+	model := &jobModel{
+		Kind: "platform.diagnostics", State: string(StateRunning), Progress: 50,
+		RequestJSON: `{}`, ScopeSiteIDs: `[]`, RecoveryPolicy: string(RecoveryRetry),
+		LeaseToken: &leaseToken, LeaseExpiresAt: &expired, CreatedAt: now, UpdatedAt: now, StartedAt: &now,
+	}
 	if _, err := database.NewInsert().Model(model).Exec(context.Background()); err != nil {
 		t.Fatalf("insert interrupted job: %v", err)
 	}
@@ -123,9 +183,188 @@ func TestNewRecoversInterruptedJobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get recovery events: %v", err)
 	}
-	if len(events) != 1 || events[0].Message != "Job recovered after control-plane restart." {
+	if len(events) != 1 || events[0].Message != "Job lease expired; retrying idempotent work." {
 		t.Fatalf("unexpected recovery events: %+v", events)
 	}
+}
+
+func TestExpiredFailLeaseRequiresReconciliation(t *testing.T) {
+	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	auditLog, err := audit.New(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	seed, err := NewWithConfig(ctx, database, auditLog, logger, Config{PollInterval: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed.Close()
+	now := time.Now().UTC()
+	expired := now.Add(-time.Minute)
+	leaseToken := "expired-lease"
+	model := &jobModel{
+		Kind: "host.mutation", State: string(StateRunning), Progress: 60,
+		RequestJSON: `{}`, ScopeSiteIDs: `[]`, RecoveryPolicy: string(RecoveryFail),
+		LeaseToken: &leaseToken, LeaseExpiresAt: &expired, CreatedAt: now, UpdatedAt: now, StartedAt: &now,
+	}
+	if _, err := database.NewInsert().Model(model).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := NewWithConfig(ctx, database, auditLog, logger, Config{PollInterval: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(recovered.Close)
+	job, err := recovered.Get(ctx, model.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != StateFailed || !strings.Contains(job.Failure, "reconcile") {
+		t.Fatalf("expired non-idempotent job = %+v", job)
+	}
+}
+
+func TestActiveLeaseIsNotRecoveredByAnotherWorker(t *testing.T) {
+	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	auditLog, err := audit.New(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	seed, err := NewWithConfig(ctx, database, auditLog, logger, Config{PollInterval: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed.Close()
+	now := time.Now().UTC()
+	activeUntil := now.Add(time.Minute)
+	leaseToken := "active-lease"
+	model := &jobModel{
+		Kind: "host.mutation", State: string(StateRunning), Progress: 40,
+		RequestJSON: `{}`, ScopeSiteIDs: `[]`, RecoveryPolicy: string(RecoveryRetry),
+		LeaseToken: &leaseToken, LeaseExpiresAt: &activeUntil, CreatedAt: now, UpdatedAt: now, StartedAt: &now,
+	}
+	if _, err := database.NewInsert().Model(model).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	observer, err := NewWithConfig(ctx, database, auditLog, logger, Config{PollInterval: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(observer.Close)
+	job, err := observer.Get(ctx, model.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != StateRunning || job.Progress != 40 {
+		t.Fatalf("active lease was changed: %+v", job)
+	}
+}
+
+func TestEnqueuerDoesNotRecoverAndDeduplicates(t *testing.T) {
+	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	enqueuer, err := NewEnqueuer(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	expired := now.Add(-time.Minute)
+	leaseToken := "expired-lease"
+	running := &jobModel{
+		Kind: "host.mutation", State: string(StateRunning), RequestJSON: `{}`, ScopeSiteIDs: `[]`,
+		RecoveryPolicy: string(RecoveryFail), LeaseToken: &leaseToken, LeaseExpiresAt: &expired,
+		CreatedAt: now, UpdatedAt: now, StartedAt: &now,
+	}
+	if _, err := database.NewInsert().Model(running).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, err := enqueuer.EnqueueTitled(ctx, "backup.run", "Scheduled backup", map[string]string{"planId": "one"}, EnqueueOptions{
+		SubmitOptions:  SubmitOptions{SiteIDs: []string{"site_a"}, IdempotencyKey: "timer:one"},
+		RecoveryPolicy: RecoveryFail,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := enqueuer.EnqueueTitled(ctx, "backup.run", "Scheduled backup", map[string]string{"planId": "one"}, EnqueueOptions{
+		SubmitOptions:  SubmitOptions{SiteIDs: []string{"site_a"}, IdempotencyKey: "timer:one"},
+		RecoveryPolicy: RecoveryFail,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("idempotent submissions created jobs %d and %d", first.ID, second.ID)
+	}
+	if _, err := enqueuer.EnqueueTitled(ctx, "backup.run", "Scheduled backup", map[string]string{"planId": "two"}, EnqueueOptions{
+		SubmitOptions:  SubmitOptions{SiteIDs: []string{"site_a"}, IdempotencyKey: "timer:one"},
+		RecoveryPolicy: RecoveryFail,
+	}); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("conflicting key error = %v", err)
+	}
+	var state string
+	if err := database.QueryRowContext(ctx, "SELECT state FROM jobs WHERE id = ?", running.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if State(state) != StateRunning {
+		t.Fatalf("enqueue-only helper changed running job to %q", state)
+	}
+}
+
+func TestDeveloperJobReadsRespectSiteScope(t *testing.T) {
+	module, _ := newTestModule(t)
+	ctx := context.Background()
+	module.SetSiteAccessPolicy(fakeJobSiteAccess{grants: map[string][]string{"dev-1": {"site_a"}}})
+	if err := module.RegisterHandler("test.scoped", func(context.Context, json.RawMessage, func(int, string) error) (any, error) {
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	other := "admin-1"
+	own := "dev-1"
+	granted, _ := module.SubmitTitledWithOptions(ctx, "test.scoped", "Granted", map[string]string{"value": "safe"}, SubmitOptions{ActorUserID: &other, SiteIDs: []string{"site_a"}})
+	hidden, _ := module.SubmitTitledWithOptions(ctx, "test.scoped", "Hidden", map[string]string{"secret": "hidden"}, SubmitOptions{ActorUserID: &other, SiteIDs: []string{"site_b"}})
+	_, _ = module.SubmitTitledWithOptions(ctx, "test.scoped", "Compound", struct{}{}, SubmitOptions{ActorUserID: &other, SiteIDs: []string{"site_a", "site_b"}})
+	owned, _ := module.SubmitTitledWithOptions(ctx, "test.scoped", "Owned", struct{}{}, SubmitOptions{ActorUserID: &own})
+	_, _ = module.SubmitTitledWithOptions(ctx, "test.scoped", "Unscoped other", struct{}{}, SubmitOptions{ActorUserID: &other})
+
+	developer := identity.User{ID: own, Role: "developer"}
+	items, err := module.ListForUser(ctx, developer, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].ID != owned.ID || items[1].ID != granted.ID {
+		t.Fatalf("developer-visible jobs = %+v", items)
+	}
+	if _, err := module.GetForUser(ctx, developer, hidden.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("hidden job lookup error = %v", err)
+	}
+}
+
+type fakeJobSiteAccess struct {
+	grants map[string][]string
+}
+
+func (policy fakeJobSiteAccess) AccessibleSiteIDs(_ context.Context, user identity.User) (bool, []string, error) {
+	if user.Role != "developer" {
+		return true, nil, nil
+	}
+	return false, policy.grants[user.ID], nil
 }
 
 func TestAuthenticatedDiagnosticsHTTPAndEventStream(t *testing.T) {

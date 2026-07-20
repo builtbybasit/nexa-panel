@@ -1,24 +1,21 @@
 package admintools
 
 import (
-	"os"
-
-	"path/filepath"
-
+	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"strings"
-
-	"errors"
-
-	"os/exec"
-
 	"encoding/hex"
 	"encoding/json"
-	"strconv"
-
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 func (execRunner) Run(ctx context.Context, command Command) ([]byte, error) {
@@ -50,7 +47,7 @@ func (o *HostOperator) prepareToolConfig(kind Kind) error {
 	files := []struct {
 		name, value string
 		mode        os.FileMode
-	}{{"bootstrap-password", randomID() + randomID(), 0o600}, {"pgpass", "", 0o600}, {"servers.json", "{\"Servers\":{}}\n", 0o640}, {"config_local.py", "AUTHENTICATION_SOURCES = ['webserver']\nWEBSERVER_AUTO_CREATE_USER = True\nWEBSERVER_REMOTE_USER = 'HTTP_X_FORWARDED_USER'\nMASTER_PASSWORD_REQUIRED = False\n", 0o640}, {"config_distro.py", "LOG_FILE = '/dev/null'\n", 0o640}}
+	}{{"bootstrap-password", randomID() + randomID(), 0o600}, {"pgpass", "", 0o600}, {"servers.json", "{\"Servers\":{}}\n", 0o640}}
 	for _, file := range files {
 		path := filepath.Join(root, file.name)
 		if _, err := os.Stat(path); err == nil {
@@ -59,6 +56,19 @@ func (o *HostOperator) prepareToolConfig(kind Kind) error {
 		if err := secureWrite(path, []byte(file.value), file.mode); err != nil {
 			return err
 		}
+	}
+	// The stopped/deployed configuration must not trust a deterministic header:
+	// any local process can reach the loopback-published pgAdmin port. Install an
+	// unexposed random capability and keep auto-creation disabled until launch.
+	config, err := pgAdminConfig(randomID()+randomID(), false)
+	if err != nil {
+		return err
+	}
+	if err := secureWrite(filepath.Join(root, "config_local.py"), []byte(config), 0o640); err != nil {
+		return err
+	}
+	if err := secureWrite(filepath.Join(root, "config_distro.py"), []byte("LOG_FILE = '/dev/null'\n"), 0o640); err != nil {
+		return err
 	}
 	return o.ownForRuntime(root, kind)
 }
@@ -82,12 +92,49 @@ func (o *HostOperator) ownForRuntime(root string, kind Kind) error {
 		return nil
 	}
 	id := runtimeUID(kind)
-	return filepath.Walk(root, func(path string, _ os.FileInfo, err error) error {
-		if err != nil {
+	if err := setRuntimeOwnership(root, 0, id, 0o750); err != nil {
+		return err
+	}
+	if kind == PHPMyAdmin {
+		if err := setRuntimeOwnership(filepath.Join(root, "sessions"), id, id, 0o750); err != nil {
 			return err
 		}
-		return os.Chown(path, id, id)
-	})
+		for _, name := range []string{"config.user.inc.php", "config.secret.inc.php"} {
+			if err := setRuntimeOwnership(filepath.Join(root, name), 0, id, 0o640); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := setRuntimeOwnership(filepath.Join(root, "data"), id, id, 0o700); err != nil {
+		return err
+	}
+	if err := setRuntimeOwnership(filepath.Join(root, "bootstrap-password"), id, id, 0o600); err != nil {
+		return err
+	}
+	if err := setRuntimeOwnership(filepath.Join(root, "pgpass"), id, id, 0o600); err != nil {
+		return err
+	}
+	for _, name := range []string{"servers.json", "config_local.py", "config_distro.py"} {
+		if err := setRuntimeOwnership(filepath.Join(root, name), 0, id, 0o640); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func setRuntimeOwnership(path string, uid, gid int, mode os.FileMode) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("admin tool path %s must not be a symlink", path)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		return err
+	}
+	return os.Lchown(path, uid, gid)
 }
 
 func (o *HostOperator) bootstrapLaunch(ctx context.Context, change Change, secret string) (Observation, error) {
@@ -111,26 +158,51 @@ func (o *HostOperator) bootstrapLaunch(ctx context.Context, change Change, secre
 			return Observation{}, fmt.Errorf("write phpMyAdmin signon session: %w", err)
 		}
 		if os.Geteuid() == 0 {
-			_ = os.Chown(path, 33, 33)
+			// The session directory is writable by the container. Lchown cannot
+			// follow a path swapped for a symlink during launch bootstrap.
+			if err := os.Lchown(path, 33, 33); err != nil {
+				return Observation{}, fmt.Errorf("secure phpMyAdmin signon session ownership: %w", err)
+			}
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() {
+				return Observation{}, fmt.Errorf("verify phpMyAdmin signon session: %w", firstError(err, errors.New("session is not a regular file")))
+			}
 		}
 		return Observation{Tool: change.Tool, Verified: true, UpstreamCookieName: "SignonSession", UpstreamCookieValue: change.Launch.SessionID}, nil
 	}
 	pgpass := fmt.Sprintf("%s:%d:%s:%s:%s\n", pgpassEscape(change.Launch.DatabaseHost), change.Launch.DatabasePort, pgpassEscape(change.Launch.Database), pgpassEscape(change.Launch.Username), pgpassEscape(secret))
-	if err := secureWrite(filepath.Join(root, "pgpass"), []byte(pgpass), 0o600); err != nil {
+	pgpassPath := filepath.Join(root, "pgpass")
+	if err := secureWrite(pgpassPath, []byte(pgpass), 0o600); err != nil {
 		return Observation{}, fmt.Errorf("write pgAdmin passfile: %w", err)
 	}
 	if os.Geteuid() == 0 {
-		_ = os.Chown(filepath.Join(root, "pgpass"), 5050, 5050)
+		if err := setRuntimeOwnership(pgpassPath, 5050, 5050, 0o600); err != nil {
+			return Observation{}, fmt.Errorf("secure pgAdmin passfile ownership: %w", err)
+		}
 	}
 	servers := map[string]any{"Servers": map[string]any{"1": map[string]any{"Name": change.Launch.Database, "Group": "Nexa Panel", "Host": change.Launch.DatabaseHost, "Port": change.Launch.DatabasePort, "MaintenanceDB": change.Launch.Database, "Username": change.Launch.Username, "SSLMode": "prefer", "Shared": true}}}
 	encoded, _ := json.MarshalIndent(servers, "", "  ")
-	if err := secureWrite(filepath.Join(root, "servers.json"), append(encoded, '\n'), 0o640); err != nil {
+	serversPath := filepath.Join(root, "servers.json")
+	if err := secureWrite(serversPath, append(encoded, '\n'), 0o640); err != nil {
 		return Observation{}, fmt.Errorf("write pgAdmin server catalog: %w", err)
 	}
-	// secureWrite recreates the file root-owned; the restart below re-reads it as
-	// uid 5050, so hand it back like pgpass above.
 	if os.Geteuid() == 0 {
-		_ = os.Chown(filepath.Join(root, "servers.json"), 5050, 5050)
+		if err := setRuntimeOwnership(serversPath, 0, 5050, 0o640); err != nil {
+			return Observation{}, fmt.Errorf("secure pgAdmin server catalog ownership: %w", err)
+		}
+	}
+	config, err := pgAdminConfig(change.Launch.SessionID, true)
+	if err != nil {
+		return Observation{}, err
+	}
+	configPath := filepath.Join(root, "config_local.py")
+	if err := secureWrite(configPath, []byte(config), 0o640); err != nil {
+		return Observation{}, fmt.Errorf("write pgAdmin session trust configuration: %w", err)
+	}
+	if os.Geteuid() == 0 {
+		if err := setRuntimeOwnership(configPath, 0, 5050, 0o640); err != nil {
+			return Observation{}, fmt.Errorf("secure pgAdmin session trust configuration: %w", err)
+		}
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"restart", change.Tool.SystemdUnit}}); err != nil {
 		return Observation{}, commandError("restart pgAdmin with scoped server catalog", output, err)
@@ -161,19 +233,81 @@ func pgpassEscape(value string) string {
 }
 
 func secureWrite(path string, value []byte, mode os.FileMode) error {
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, value, mode); err != nil {
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(temporary, mode); err != nil {
-		_ = os.Remove(temporary)
+	temporaryPath := temporary.Name()
+	keep := false
+	defer func() {
+		_ = temporary.Close()
+		if !keep {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err := temporary.Chmod(mode); err != nil {
 		return err
 	}
-	if err := os.Rename(temporary, path); err != nil {
-		_ = os.Remove(temporary)
+	if _, err := io.Copy(temporary, bytes.NewReader(value)); err != nil {
 		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	keep = true
+	if handle, openErr := os.Open(directory); openErr == nil {
+		_ = handle.Sync()
+		_ = handle.Close()
 	}
 	return nil
+}
+
+const PGAdminSessionHeaderPrefix = "X-Nexa-PgAdmin-"
+
+// PGAdminSessionHeader derives a capability header name from the existing
+// server-side launch token. The token itself is never forwarded or logged, and
+// a loopback caller cannot invent a different header because pgAdmin trusts
+// only this exact per-launch name.
+func PGAdminSessionHeader(sessionID string) (string, error) {
+	if !validToken(sessionID) {
+		return "", errors.New("pgAdmin session token is invalid")
+	}
+	digest := sha256.Sum256([]byte(sessionID))
+	return PGAdminSessionHeaderPrefix + hex.EncodeToString(digest[:]), nil
+}
+
+func pgAdminRemoteUserVariable(sessionID string) (string, error) {
+	header, err := PGAdminSessionHeader(sessionID)
+	if err != nil {
+		return "", err
+	}
+	return "HTTP_" + strings.ToUpper(strings.ReplaceAll(header, "-", "_")), nil
+}
+
+func pgAdminConfig(sessionID string, autoCreate bool) (string, error) {
+	remoteUser, err := pgAdminRemoteUserVariable(sessionID)
+	if err != nil {
+		return "", err
+	}
+	autoCreateValue := "False"
+	if autoCreate {
+		autoCreateValue = "True"
+	}
+	return "AUTHENTICATION_SOURCES = ['webserver']\n" +
+		"WEBSERVER_AUTO_CREATE_USER = " + autoCreateValue + "\n" +
+		"WEBSERVER_REMOTE_USER = '" + remoteUser + "'\n" +
+		"MASTER_PASSWORD_REQUIRED = False\n" +
+		"ALLOW_SAVE_PASSWORD = False\n" +
+		"ALLOW_SAVE_TUNNEL_PASSWORD = False\n" +
+		"CHECK_EMAIL_DELIVERABILITY = False\n" +
+		"ENHANCED_COOKIE_PROTECTION = True\n", nil
 }
 
 func validToken(value string) bool {
@@ -249,13 +383,7 @@ func fingerprint(value any) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomID() string { return secureid.Hex(16) }
 
 // mentionsMissingUnit reports whether systemctl's output is the "Unit … not
 // found" message it prints when a service does not exist — the signature of a

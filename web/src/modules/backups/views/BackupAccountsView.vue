@@ -2,6 +2,7 @@
 import { useQuery } from '@tanstack/vue-query'
 import { computed, reactive, ref } from 'vue'
 
+import { useIdentityStore } from '@/modules/identity/store'
 import { useToasts } from '@/shared/composables/useToasts'
 import {
   AppAlert,
@@ -31,6 +32,8 @@ import {
 import BackupsTabs from './BackupsTabs.vue'
 
 const { push } = useToasts()
+const identity = useIdentityStore()
+const canWrite = computed(() => identity.can('backups.write'))
 
 const accountsQuery = useQuery({ queryKey: ['backup-accounts'], queryFn: listBackupAccounts, retry: false })
 const accounts = computed(() => accountsQuery.data.value ?? [])
@@ -128,6 +131,7 @@ const form = reactive<{ name: string; type: BackupAccountType; values: Record<st
 const activeCatalog = computed(() => catalogFor(form.type))
 
 function openCreate() {
+  if (!canWrite.value) return
   editing.value = undefined
   formError.value = ''
   form.name = ''
@@ -137,6 +141,7 @@ function openCreate() {
 }
 
 function openEdit(account: BackupAccount) {
+  if (!canWrite.value) return
   editing.value = account
   formError.value = ''
   form.name = account.name
@@ -179,6 +184,7 @@ function buildRequest(): BackupAccountRequest | undefined {
 }
 
 async function save() {
+  if (!canWrite.value) return
   formError.value = ''
   const request = buildRequest()
   if (!request) return
@@ -204,6 +210,7 @@ async function save() {
 const testingId = ref<string>()
 
 async function runTest(account: BackupAccount) {
+  if (!canWrite.value) return
   testingId.value = account.id
   try {
     const result = await testBackupAccount(account.id)
@@ -224,6 +231,7 @@ const confirmDelete = ref<BackupAccount>()
 const deleting = ref(false)
 
 async function doDelete() {
+  if (!canWrite.value) return
   const account = confirmDelete.value
   if (!account) return
   deleting.value = true
@@ -252,9 +260,9 @@ function typeIcon(type: BackupAccountType) {
     <PageHeader
       eyebrow="Backups"
       title="Backup accounts"
-      description="Storage destinations for your backups. An account can be a local directory or a remote target reached over rclone — S3-compatible object storage, SFTP, or Google Drive. Backup plans (coming next) write copies to these accounts."
+      description="Storage destinations for scheduled and on-demand backups. Accounts can use a local directory or a remote target reached through rclone: S3-compatible storage, SFTP, or Google Drive."
     >
-      <AppButton variant="primary" icon="plus" @click="openCreate">New account</AppButton>
+      <AppButton v-if="canWrite" variant="primary" icon="plus" @click="openCreate">New account</AppButton>
     </PageHeader>
 
     <BackupsTabs />
@@ -275,7 +283,7 @@ function typeIcon(type: BackupAccountType) {
       description="Create a storage destination to start backing up sites and databases."
     >
       <template #action>
-        <AppButton variant="primary" icon="plus" @click="openCreate">New account</AppButton>
+        <AppButton v-if="canWrite" variant="primary" icon="plus" @click="openCreate">New account</AppButton>
       </template>
     </EmptyState>
 
@@ -293,7 +301,7 @@ function typeIcon(type: BackupAccountType) {
           <p class="truncate font-mono text-xs text-ink-muted">{{ account.path || '—' }}</p>
         </div>
         <StatusPill tone="neutral" :label="typeLabel(account.type)" :pulse="false" />
-        <div class="flex shrink-0 items-center gap-2">
+        <div v-if="canWrite" class="flex shrink-0 items-center gap-2">
           <AppButton size="sm" icon="plug-zap" :loading="testingId === account.id" @click="runTest(account)">Test</AppButton>
           <AppButton size="sm" icon="pencil" @click="openEdit(account)">Edit</AppButton>
           <AppButton size="sm" variant="danger" icon="trash" @click="confirmDelete = account">Delete</AppButton>
@@ -303,7 +311,7 @@ function typeIcon(type: BackupAccountType) {
 
     <!-- create / edit -->
     <AppDialog
-      :open="dialogOpen"
+      :open="dialogOpen && canWrite"
       :title="editing ? 'Edit backup account' : 'New backup account'"
       size="lg"
       @close="dialogOpen = false"
@@ -354,7 +362,7 @@ function typeIcon(type: BackupAccountType) {
     </AppDialog>
 
     <AppConfirmDialog
-      :open="!!confirmDelete"
+      :open="canWrite && !!confirmDelete"
       title="Delete backup account"
       :confirm-label="`Delete ${confirmDelete?.name ?? ''}`"
       tone="danger"

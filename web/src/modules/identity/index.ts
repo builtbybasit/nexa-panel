@@ -4,7 +4,7 @@ export const identityModule: FeatureModule = {
   id: 'identity',
   name: 'Users',
   description: 'Panel accounts, roles, MFA state, and per-site developer access.',
-  navigation: { label: 'Users', to: '/users', icon: 'users', group: 'Administration', order: 40, roles: ['admin'] },
+  navigation: { label: 'Users', to: '/users', icon: 'users', group: 'Administration', order: 40, permission: 'users.manage' },
   routes: [
     {
       path: '/users',

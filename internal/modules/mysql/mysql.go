@@ -1,18 +1,16 @@
 package mysql
 
 import (
+	"context"
 	"errors"
+	"regexp"
+	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
-	"regexp"
 
-	"time"
-
-	"context"
 	"github.com/uptrace/bun"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"

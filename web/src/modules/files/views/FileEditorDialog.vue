@@ -6,7 +6,7 @@ import { AppAlert, AppButton, AppConfirmDialog, AppDialog, AppIcon, AppTextarea 
 
 import { downloadUrl, FilesRequestError, readFileContent, writeFileContent } from '../api'
 
-const props = defineProps<{ siteId: string; path: string }>()
+const props = withDefaults(defineProps<{ siteId: string; path: string; readOnly?: boolean }>(), { readOnly: false })
 const emit = defineEmits<{ close: []; saved: [] }>()
 
 const loading = ref(true)
@@ -27,7 +27,7 @@ const discardAsk = ref(false)
 const href = downloadUrl(props.siteId, props.path)
 
 const dirty = computed(
-  () => !loading.value && !loadError.value && !uneditable.value && content.value !== savedContent.value,
+  () => !props.readOnly && !loading.value && !loadError.value && !uneditable.value && content.value !== savedContent.value,
 )
 
 async function load() {
@@ -52,6 +52,7 @@ async function load() {
 }
 
 async function write(expectedEtag: string, closeAfter: boolean) {
+  if (props.readOnly) return
   saving.value = true
   saveError.value = ''
   try {
@@ -84,6 +85,7 @@ async function reloadServerCopy() {
 
 /** Keep the local edits: fetch the fresh etag, then save over the server copy. */
 async function overwriteServerCopy() {
+  if (props.readOnly) return
   saving.value = true
   saveError.value = ''
   try {
@@ -119,6 +121,7 @@ function discard() {
 function onKeydown(event: KeyboardEvent) {
   if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 's') return
   event.preventDefault()
+  if (props.readOnly) return
   if (loading.value || loadError.value || uneditable.value || saving.value || conflict.value || discardAsk.value) return
   void save()
 }
@@ -162,7 +165,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </template>
 
       <template v-else>
-        <AppTextarea v-model="content" rows="18" spellcheck="false" aria-label="File content" :disabled="saving || conflict" />
+        <AppAlert v-if="readOnly" tone="info">Your account can view this file but cannot edit it.</AppAlert>
+        <AppTextarea
+          v-model="content"
+          rows="18"
+          spellcheck="false"
+          aria-label="File content"
+          :readonly="readOnly"
+          :disabled="saving || conflict"
+        />
 
         <AppAlert v-if="conflict" tone="warning" title="The file changed on the server">
           <p class="mb-2">Someone else saved this file after you opened it. Reload the server copy, or overwrite it with your edits.</p>
@@ -183,12 +194,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                 Saved
               </span>
             </span>
-            <span class="hidden text-ink-muted sm:inline">Ctrl/Cmd+S saves</span>
+            <span v-if="!readOnly" class="hidden text-ink-muted sm:inline">Ctrl/Cmd+S saves</span>
           </span>
           <span class="flex flex-wrap gap-2">
             <AppButton :disabled="saving" @click="requestClose">Close</AppButton>
-            <AppButton :loading="saving" :disabled="conflict" @click="save">Save</AppButton>
-            <AppButton variant="primary" :loading="saving" :disabled="conflict" @click="saveAndClose">Save and close</AppButton>
+            <AppButton v-if="!readOnly" :loading="saving" :disabled="conflict" @click="save">Save</AppButton>
+            <AppButton
+              v-if="!readOnly"
+              variant="primary"
+              :loading="saving"
+              :disabled="conflict"
+              @click="saveAndClose"
+            >
+              Save and close
+            </AppButton>
           </span>
         </div>
       </template>

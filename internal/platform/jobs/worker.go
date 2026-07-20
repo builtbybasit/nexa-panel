@@ -23,6 +23,13 @@ func (m *Module) worker(ctx context.Context) {
 		case <-m.notify:
 		case <-ticker.C:
 		}
+		if err := m.recoverExpired(ctx); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			m.logger.Error("recover expired job leases", "error", err)
+			continue
+		}
 		for {
 			job, err := m.claim(ctx)
 			if errors.Is(err, sql.ErrNoRows) {
@@ -48,11 +55,19 @@ func (m *Module) claim(ctx context.Context) (jobModel, error) {
 			return err
 		}
 		now := m.now().UTC()
+		leaseToken := randomToken()
+		leaseExpiresAt := now.Add(m.config.LeaseDuration)
 		model.State = string(StateRunning)
 		model.StartedAt = &now
 		model.UpdatedAt = now
+		model.Attempt++
+		model.LeaseOwner = &m.workerID
+		model.LeaseToken = &leaseToken
+		model.LeaseExpiresAt = &leaseExpiresAt
 		result, err := tx.NewUpdate().Model((*jobModel)(nil)).
 			Set("state = ?", StateRunning).Set("started_at = ?", now).Set("updated_at = ?", now).
+			Set("attempt = attempt + 1").Set("lease_owner = ?", m.workerID).
+			Set("lease_token = ?", leaseToken).Set("lease_expires_at = ?", leaseExpiresAt).
 			Where("id = ?", model.ID).Where("state = ?", StateQueued).Exec(ctx)
 		if err != nil {
 			return err
@@ -73,12 +88,27 @@ func (m *Module) claim(ctx context.Context) (jobModel, error) {
 
 func (m *Module) execute(workerContext context.Context, model jobModel) {
 	m.handlersMu.RLock()
-	handler := m.handlers[model.Kind]
+	registration, registered := m.handlers[model.Kind]
 	m.handlersMu.RUnlock()
-	if handler == nil {
+	if !registered || registration.handler == nil {
 		m.finishFailed(context.WithoutCancel(workerContext), &model, errors.New("registered job handler is unavailable"))
 		return
 	}
+	if model.LeaseToken == nil {
+		m.logger.Error("claimed job has no lease token", "job_id", model.ID)
+		return
+	}
+
+	executionContext, cancelExecution := context.WithCancel(workerContext)
+	heartbeatDone := make(chan struct{})
+	leaseLost := make(chan error, 1)
+	go func() {
+		defer close(heartbeatDone)
+		if err := m.heartbeatLease(executionContext, model.ID, *model.LeaseToken); err != nil && executionContext.Err() == nil {
+			leaseLost <- err
+			cancelExecution()
+		}
+	}()
 
 	progress := model.Progress
 	report := func(next int, message string) error {
@@ -88,7 +118,7 @@ func (m *Module) execute(workerContext context.Context, model jobModel) {
 		if message == "" {
 			return errors.New("job progress message is required")
 		}
-		if err := m.updateProgress(workerContext, model.ID, next, message); err != nil {
+		if err := m.updateProgress(executionContext, model.ID, *model.LeaseToken, next, message); err != nil {
 			return err
 		}
 		progress = next
@@ -96,10 +126,18 @@ func (m *Module) execute(workerContext context.Context, model jobModel) {
 		return nil
 	}
 
-	result, err := handler(workerContext, json.RawMessage(model.RequestJSON), report)
+	result, err := registration.handler(executionContext, json.RawMessage(model.RequestJSON), report)
+	cancelExecution()
+	<-heartbeatDone
+	select {
+	case leaseErr := <-leaseLost:
+		m.logger.Error("job lease lost during execution", "job_id", model.ID, "error", leaseErr)
+		return
+	default:
+	}
 	if err != nil && errors.Is(err, context.Canceled) && workerContext.Err() != nil {
-		// Leave the row running during shutdown. New() deterministically recovers
-		// interrupted work to queued state on the next process start.
+		// Leave the row running during shutdown. Its lease and persisted recovery
+		// policy decide what happens after ownership expires.
 		return
 	}
 	finishContext, cancel := context.WithTimeout(context.WithoutCancel(workerContext), 5*time.Second)
@@ -118,16 +156,21 @@ func (m *Module) execute(workerContext context.Context, model jobModel) {
 	}
 }
 
-func (m *Module) updateProgress(ctx context.Context, jobID int64, progress int, message string) error {
+func (m *Module) updateProgress(ctx context.Context, jobID int64, leaseToken string, progress int, message string) error {
 	now := m.now().UTC()
 	return m.database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewUpdate().Model((*jobModel)(nil)).
+		result, err := tx.NewUpdate().Model((*jobModel)(nil)).
 			Set("progress = ?", progress).Set("updated_at = ?", now).
-			Where("id = ?", jobID).Where("state = ?", StateRunning).Exec(ctx); err != nil {
+			Set("lease_expires_at = ?", now.Add(m.config.LeaseDuration)).
+			Where("id = ?", jobID).Where("state = ?", StateRunning).Where("lease_token = ?", leaseToken).Exec(ctx)
+		if err != nil {
 			return err
 		}
+		if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+			return ErrLeaseLost
+		}
 		event := &eventModel{JobID: jobID, State: string(StateRunning), Progress: progress, Message: message, OccurredAt: now}
-		_, err := tx.NewInsert().Model(event).Exec(ctx)
+		_, err = tx.NewInsert().Model(event).Exec(ctx)
 		return err
 	})
 }
@@ -135,13 +178,19 @@ func (m *Module) updateProgress(ctx context.Context, jobID int64, progress int, 
 func (m *Module) finishSucceeded(ctx context.Context, model *jobModel, resultJSON string) error {
 	now := m.now().UTC()
 	err := m.database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewUpdate().Model((*jobModel)(nil)).
+		result, err := tx.NewUpdate().Model((*jobModel)(nil)).
 			Set("state = ?", StateSucceeded).Set("progress = 100").Set("result_json = ?", resultJSON).
-			Set("updated_at = ?", now).Set("completed_at = ?", now).Where("id = ?", model.ID).Exec(ctx); err != nil {
+			Set("updated_at = ?", now).Set("completed_at = ?", now).
+			Set("lease_owner = NULL").Set("lease_token = NULL").Set("lease_expires_at = NULL").
+			Where("id = ?", model.ID).Where("state = ?", StateRunning).Where("lease_token = ?", *model.LeaseToken).Exec(ctx)
+		if err != nil {
 			return err
 		}
+		if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+			return ErrLeaseLost
+		}
 		event := &eventModel{JobID: model.ID, State: string(StateSucceeded), Progress: 100, Message: "Job completed.", OccurredAt: now}
-		_, err := tx.NewInsert().Model(event).Exec(ctx)
+		_, err = tx.NewInsert().Model(event).Exec(ctx)
 		return err
 	})
 	if err != nil {
@@ -158,13 +207,19 @@ func (m *Module) finishFailed(ctx context.Context, model *jobModel, failure erro
 		message = message[:500]
 	}
 	err := m.database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewUpdate().Model((*jobModel)(nil)).
+		result, err := tx.NewUpdate().Model((*jobModel)(nil)).
 			Set("state = ?", StateFailed).Set("failure = ?", message).
-			Set("updated_at = ?", now).Set("completed_at = ?", now).Where("id = ?", model.ID).Exec(ctx); err != nil {
+			Set("updated_at = ?", now).Set("completed_at = ?", now).
+			Set("lease_owner = NULL").Set("lease_token = NULL").Set("lease_expires_at = NULL").
+			Where("id = ?", model.ID).Where("state = ?", StateRunning).Where("lease_token = ?", *model.LeaseToken).Exec(ctx)
+		if err != nil {
 			return err
 		}
+		if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+			return ErrLeaseLost
+		}
 		event := &eventModel{JobID: model.ID, State: string(StateFailed), Progress: model.Progress, Message: "Job failed.", OccurredAt: now}
-		_, err := tx.NewInsert().Model(event).Exec(ctx)
+		_, err = tx.NewInsert().Model(event).Exec(ctx)
 		return err
 	})
 	if err != nil {
@@ -174,22 +229,75 @@ func (m *Module) finishFailed(ctx context.Context, model *jobModel, failure erro
 	m.recordAudit(ctx, audit.Entry{ActorUserID: model.ActorUserID, Action: "job.failed", Subject: fmt.Sprintf("job:%d", model.ID), Metadata: map[string]any{"kind": model.Kind, "failure": message}})
 }
 
-func (m *Module) recoverInterrupted(ctx context.Context) error {
+var ErrLeaseLost = errors.New("job worker lease is no longer owned")
+
+func (m *Module) heartbeatLease(ctx context.Context, jobID int64, leaseToken string) error {
+	interval := m.config.LeaseDuration / 3
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			now := m.now().UTC()
+			result, err := m.database.NewUpdate().Model((*jobModel)(nil)).
+				Set("updated_at = ?", now).Set("lease_expires_at = ?", now.Add(m.config.LeaseDuration)).
+				Where("id = ?", jobID).Where("state = ?", StateRunning).Where("lease_token = ?", leaseToken).Exec(ctx)
+			if err != nil {
+				return err
+			}
+			if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+				return ErrLeaseLost
+			}
+		}
+	}
+}
+
+func (m *Module) recoverExpired(ctx context.Context) error {
 	interrupted := make([]jobModel, 0)
-	if err := m.database.NewSelect().Model(&interrupted).Where("state = ?", StateRunning).Scan(ctx); err != nil {
+	now := m.now().UTC()
+	if err := m.database.NewSelect().Model(&interrupted).Where("state = ?", StateRunning).
+		Where("lease_expires_at IS NULL OR lease_expires_at <= ?", now).Scan(ctx); err != nil {
 		return fmt.Errorf("find interrupted jobs: %w", err)
 	}
 	for index := range interrupted {
 		job := &interrupted[index]
-		now := m.now().UTC()
 		err := m.database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-			if _, err := tx.NewUpdate().Model((*jobModel)(nil)).Set("state = ?", StateQueued).
-				Set("progress = 0").Set("updated_at = ?", now).Set("started_at = NULL").
-				Where("id = ?", job.ID).Exec(ctx); err != nil {
+			if RecoveryPolicy(job.RecoveryPolicy) == RecoveryRetry {
+				result, err := tx.NewUpdate().Model((*jobModel)(nil)).Set("state = ?", StateQueued).
+					Set("progress = 0").Set("updated_at = ?", now).Set("started_at = NULL").
+					Set("lease_owner = NULL").Set("lease_token = NULL").Set("lease_expires_at = NULL").
+					Where("id = ?", job.ID).Where("state = ?", StateRunning).
+					Where("lease_expires_at IS NULL OR lease_expires_at <= ?", now).Exec(ctx)
+				if err != nil {
+					return err
+				}
+				if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+					return nil
+				}
+				event := &eventModel{JobID: job.ID, State: string(StateQueued), Progress: 0, Message: "Job lease expired; retrying idempotent work.", OccurredAt: now}
+				_, err = tx.NewInsert().Model(event).Exec(ctx)
 				return err
 			}
-			event := &eventModel{JobID: job.ID, State: string(StateQueued), Progress: 0, Message: "Job recovered after control-plane restart.", OccurredAt: now}
-			_, err := tx.NewInsert().Model(event).Exec(ctx)
+
+			failure := "Job interrupted after its worker lease expired; reconcile the target before retrying."
+			result, err := tx.NewUpdate().Model((*jobModel)(nil)).Set("state = ?", StateFailed).
+				Set("failure = ?", failure).Set("updated_at = ?", now).Set("completed_at = ?", now).
+				Set("lease_owner = NULL").Set("lease_token = NULL").Set("lease_expires_at = NULL").
+				Where("id = ?", job.ID).Where("state = ?", StateRunning).
+				Where("lease_expires_at IS NULL OR lease_expires_at <= ?", now).Exec(ctx)
+			if err != nil {
+				return err
+			}
+			if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+				return nil
+			}
+			event := &eventModel{JobID: job.ID, State: string(StateFailed), Progress: job.Progress, Message: "Job failed after its worker lease expired.", OccurredAt: now}
+			_, err = tx.NewInsert().Model(event).Exec(ctx)
 			return err
 		})
 		if err != nil {

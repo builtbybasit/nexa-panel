@@ -1,15 +1,14 @@
 package domains
 
 import (
-	"sort"
-
 	"context"
-	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
-	"github.com/uptrace/bun"
-	"time"
-
 	"encoding/json"
 	"errors"
+	"sort"
+	"time"
+
+	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+	"github.com/uptrace/bun"
 )
 
 func (m *Module) planJob(ctx context.Context, raw json.RawMessage, report func(int, string) error) (any, error) {
@@ -43,13 +42,12 @@ func (m *Module) planJob(ctx context.Context, raw json.RawMessage, report func(i
 	if err != nil {
 		return nil, err
 	}
-	var tls *siteoperator.TLS
-	var tlsDomains []string
-	if m.tls != nil {
-		tls, tlsDomains, err = m.tls.TLSForSite(ctx, domain.SiteID)
-		if err != nil {
-			return nil, err
-		}
+	if m.tls == nil {
+		return nil, errors.New("TLS provider is unavailable")
+	}
+	tls, tlsDomains, err := m.tls.TLSForSite(ctx, domain.SiteID)
+	if err != nil {
+		return nil, err
 	}
 	nodePlan, err := m.operator.Plan(ctx, siteoperator.Site{ID: site.ID, Slug: site.Slug, PrimaryDomain: site.PrimaryDomain, PHPVersion: site.PHPVersion, UnixUser: site.UnixUser, RootPath: site.RootPath, SocketPath: site.SocketPath, Routes: routes, TLS: tls, TLSDomains: tlsDomains})
 	if err != nil {

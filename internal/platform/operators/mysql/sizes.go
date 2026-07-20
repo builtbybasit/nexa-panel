@@ -2,9 +2,8 @@ package mysql
 
 import (
 	"context"
-	"strconv"
-
 	"errors"
+	"strconv"
 	"strings"
 )
 

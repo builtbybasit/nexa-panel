@@ -1,19 +1,15 @@
 package postgres
 
 import (
+	"context"
+	"errors"
 	"fmt"
-
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-
-	"context"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
-
-	"errors"
-
-	"path/filepath"
 )
 
 func (m *Module) SyncInstances(ctx context.Context) ([]Instance, error) {

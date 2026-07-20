@@ -30,9 +30,7 @@ var defaultPasswordParameters = passwordParameters{
 
 func hashPassword(password string, parameters passwordParameters) (string, error) {
 	salt := make([]byte, parameters.saltLength)
-	if _, err := rand.Read(salt); err != nil {
-		return "", fmt.Errorf("generate password salt: %w", err)
-	}
+	rand.Read(salt)
 	key := argon2.IDKey([]byte(password), salt, parameters.iterations, parameters.memory,
 		parameters.parallelism, parameters.keyLength)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",

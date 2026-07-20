@@ -2,11 +2,9 @@ package schedules
 
 import (
 	"context"
-	"errors"
-
 	"encoding/json"
+	"errors"
 	"fmt"
-
 	"net/http"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"

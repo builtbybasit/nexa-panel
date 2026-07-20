@@ -2,12 +2,14 @@ package admintools
 
 import (
 	"context"
-	"strings"
-	"time"
-
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
+	"time"
 )
+
+var containerImagePattern = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`)
 
 func (o *HostOperator) Plan(ctx context.Context, change Change) (Plan, error) {
 	change, err := normalize(change)
@@ -62,6 +64,9 @@ func normalize(change Change) (Change, error) {
 	}
 	if change.Tool.MemoryMB != 0 {
 		base.MemoryMB = change.Tool.MemoryMB
+	}
+	if len(base.Image) > 512 || !containerImagePattern.MatchString(base.Image) {
+		return Change{}, errors.New("admin tool image reference is invalid")
 	}
 	if base.Port < 1024 || base.Port > 65535 || base.MemoryMB < 64 || base.MemoryMB > 1024 {
 		return Change{}, errors.New("admin tool port or memory limit is outside the safe range")

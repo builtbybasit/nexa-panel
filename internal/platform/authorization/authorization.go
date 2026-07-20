@@ -2,7 +2,9 @@ package authorization
 
 import (
 	"net/http"
+	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 )
 
@@ -36,11 +38,13 @@ const (
 )
 
 type Policy struct {
-	grants map[string]map[Permission]struct{}
+	grants    map[string]map[Permission]struct{}
+	now       func() time.Time
+	stepUpTTL time.Duration
 }
 
 func New() *Policy {
-	return &Policy{grants: map[string]map[Permission]struct{}{
+	return &Policy{now: time.Now, stepUpTTL: 10 * time.Minute, grants: map[string]map[Permission]struct{}{
 		"viewer": {
 			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, DomainsRead: {}, CertificatesRead: {}, DatabasesRead: {}, FilesRead: {}, LogsRead: {}, SchedulesRead: {}, ApplicationsRead: {}, BackupsRead: {},
 		},
@@ -72,12 +76,18 @@ func (p *Policy) Middleware(permission string, next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "permission_denied", "Your role cannot perform this action.")
 			return
 		}
+		if sensitivePermission(Permission(permission)) && !identity.RecentMFA(r.Context(), p.now(), p.stepUpTTL) {
+			writeError(w, http.StatusForbidden, "mfa_step_up_required", "Confirm multi-factor authentication again to perform this sensitive action.")
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
 
+func sensitivePermission(permission Permission) bool {
+	return permission == OperationsApply || permission == UsersManage
+}
+
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_, _ = w.Write([]byte(`{"code":"` + code + `","message":"` + message + `"}` + "\n"))
+	httpapi.WriteError(w, status, code, message)
 }

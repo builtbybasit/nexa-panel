@@ -9,6 +9,17 @@ Liveness:
       const: ok
     version:
       type: string
+Readiness:
+  type: object
+  required:
+  - status
+  - version
+  properties:
+    status:
+      type: string
+      const: ready
+    version:
+      type: string
 ModuleDescriptor:
   type: object
   required:

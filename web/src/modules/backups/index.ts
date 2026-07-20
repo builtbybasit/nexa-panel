@@ -4,7 +4,7 @@ export const backupsModule: FeatureModule = {
   id: 'backups',
   name: 'Backups',
   description: 'Back up sites and databases to local or remote storage',
-  navigation: { label: 'Backups', to: '/backups', icon: 'archive', group: 'Web hosting', order: 16 },
+  navigation: { label: 'Backups', to: '/backups', icon: 'archive', group: 'Web hosting', order: 16, permission: 'backups.read' },
   routes: [
     {
       path: '/backups',

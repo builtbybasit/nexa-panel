@@ -2,11 +2,10 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"regexp"
 	"time"
-
-	"errors"
 )
 
 const PlanKind = "nexa.postgresql.v1"

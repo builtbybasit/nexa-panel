@@ -2,13 +2,10 @@ package sitefs
 
 import (
 	"errors"
-
 	"os"
 	"os/user"
-
 	"path"
 	"path/filepath"
-
 	"regexp"
 	"strconv"
 	"strings"
@@ -95,10 +92,3 @@ func (HostOwnership) Chown(path string, unixUser string) error {
 	}
 	return os.Lchown(path, uid, gid)
 }
-
-// NopOwnership keeps operator tests hermetic on hosts without site accounts.
-func NopOwnership() Ownership { return nopOwnership{} }
-
-type nopOwnership struct{}
-
-func (nopOwnership) Chown(string, string) error { return nil }

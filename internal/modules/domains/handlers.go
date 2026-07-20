@@ -2,9 +2,7 @@ package domains
 
 import (
 	"database/sql"
-
 	"errors"
-
 	"net/http"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"

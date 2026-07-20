@@ -1,6 +1,7 @@
 sites_id_files:
   get:
     operationId: listSiteFiles
+    summary: List Site Files
     tags:
     - Files
     x-permission: files.read
@@ -41,6 +42,7 @@ sites_id_files:
 sites_id_files_stat:
   get:
     operationId: statSiteFile
+    summary: Stat Site File
     tags:
     - Files
     x-permission: files.read
@@ -81,6 +83,7 @@ sites_id_files_stat:
 sites_id_files_content:
   get:
     operationId: readSiteFileContent
+    summary: Read Site File Content
     tags:
     - Files
     x-permission: files.read
@@ -120,6 +123,7 @@ sites_id_files_content:
               $ref: ../components/schemas/common.yaml#/Error
   put:
     operationId: writeSiteFileContent
+    summary: Write Site File Content
     tags:
     - Files
     x-permission: files.write
@@ -161,6 +165,7 @@ sites_id_files_content:
 sites_id_files_download:
   get:
     operationId: downloadSiteFile
+    summary: Download Site File
     tags:
     - Files
     x-permission: files.read
@@ -211,6 +216,7 @@ sites_id_files_download:
 sites_id_files_mkdir:
   post:
     operationId: createSiteDirectory
+    summary: Create Site Directory
     tags:
     - Files
     x-permission: files.write
@@ -258,6 +264,7 @@ sites_id_files_mkdir:
 sites_id_files_move:
   post:
     operationId: moveSiteFile
+    summary: Move Site File
     tags:
     - Files
     x-permission: files.write
@@ -311,6 +318,7 @@ sites_id_files_move:
 sites_id_files_copy:
   post:
     operationId: copySiteFile
+    summary: Copy Site File
     tags:
     - Files
     x-permission: files.write
@@ -361,6 +369,7 @@ sites_id_files_copy:
 sites_id_files_delete:
   post:
     operationId: deleteSiteFile
+    summary: Delete Site File
     tags:
     - Files
     x-permission: files.write
@@ -417,6 +426,7 @@ sites_id_files_delete:
 sites_id_files_uploads:
   post:
     operationId: beginSiteFileUpload
+    summary: Begin Site File Upload
     tags:
     - Files
     x-permission: files.write
@@ -472,6 +482,7 @@ sites_id_files_uploads:
 sites_id_files_uploads_uploadId:
   put:
     operationId: uploadSiteFileChunk
+    summary: Upload Site File Chunk
     tags:
     - Files
     x-permission: files.write
@@ -535,6 +546,7 @@ sites_id_files_uploads_uploadId:
               $ref: ../components/schemas/common.yaml#/Error
   delete:
     operationId: abortSiteFileUpload
+    summary: Abort Site File Upload
     tags:
     - Files
     x-permission: files.write
@@ -571,6 +583,7 @@ sites_id_files_uploads_uploadId:
 sites_id_files_uploads_uploadId_commit:
   post:
     operationId: commitSiteFileUpload
+    summary: Commit Site File Upload
     tags:
     - Files
     x-permission: files.write
@@ -607,6 +620,7 @@ sites_id_files_uploads_uploadId_commit:
 sites_id_files_archive:
   post:
     operationId: archiveSiteFiles
+    summary: Archive Site Files
     tags:
     - Files
     x-permission: files.write
@@ -667,6 +681,7 @@ sites_id_files_archive:
 sites_id_files_extract:
   post:
     operationId: extractSiteArchive
+    summary: Extract Site Archive
     tags:
     - Files
     x-permission: files.write
@@ -723,6 +738,7 @@ sites_id_files_extract:
 sites_id_files_size:
   post:
     operationId: measureSiteDirectorySize
+    summary: Measure Site Directory Size
     tags:
     - Files
     x-permission: files.read

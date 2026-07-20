@@ -26,18 +26,8 @@ export interface JobEvent {
   occurredAt: string
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json',
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  })
-  if (!response.ok) throw new Error(`Jobs request failed with status ${response.status}`)
-  return (await response.json()) as T
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return apiRequest<T>(path, init, 'Jobs request')
 }
 
 export async function listJobs(): Promise<Job[]> {
@@ -68,3 +58,4 @@ export function subscribeToJob(jobId: number, onEvent: (event: JobEvent) => void
   }
   return () => source.close()
 }
+import { apiRequest } from '@/shared/api/request'

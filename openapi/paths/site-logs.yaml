@@ -1,6 +1,7 @@
 sites_id_logs:
   get:
     operationId: listSiteLogs
+    summary: List Site Logs
     tags:
     - Logs
     x-permission: logs.read
@@ -37,6 +38,7 @@ sites_id_logs:
 sites_id_logs_read:
   get:
     operationId: readSiteLog
+    summary: Read Site Log
     tags:
     - Logs
     x-permission: logs.read
@@ -112,6 +114,7 @@ sites_id_logs_read:
 sites_id_logs_stream:
   get:
     operationId: streamSiteLog
+    summary: Stream Site Log
     tags:
     - Logs
     x-permission: logs.read
@@ -169,6 +172,7 @@ sites_id_logs_stream:
 sites_id_logs_download:
   get:
     operationId: downloadSiteLog
+    summary: Download Site Log
     tags:
     - Logs
     x-permission: logs.read

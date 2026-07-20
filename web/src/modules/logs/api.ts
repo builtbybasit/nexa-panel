@@ -28,7 +28,7 @@ export interface ReadLogParams {
   max?: number
 }
 
-export class LogsRequestError extends Error {
+class LogsRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
@@ -42,16 +42,11 @@ function base(siteId: string): string {
   return `/api/v1/sites/${encodeURIComponent(siteId)}/logs`
 }
 
-async function request<T>(path: string): Promise<T> {
-  const response = await fetch(path, {
-    credentials: 'same-origin',
-    headers: { Accept: 'application/json' },
+function request<T>(path: string): Promise<T> {
+  return apiRequest<T>(path, undefined, {
+    errorPrefix: 'Logs request',
+    createError: (message, status, code) => new LogsRequestError(message, status, code),
   })
-  if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as { code?: string; message?: string } | null
-    throw new LogsRequestError(error?.message ?? `Logs request failed with status ${response.status}`, response.status, error?.code)
-  }
-  return (await response.json()) as T
 }
 
 export async function listLogs(siteId: string): Promise<LogFile[]> {
@@ -73,7 +68,7 @@ export function downloadUrl(siteId: string, name: string): string {
 }
 
 /** One `lines` SSE event from the live stream. */
-export interface LogStreamEvent {
+interface LogStreamEvent {
   lines: string[]
   /** True when the file was rotated; the stream restarts from the new file. */
   rotated: boolean
@@ -106,3 +101,4 @@ export function subscribeToLogStream(siteId: string, name: string, filter: strin
   }
   return () => source.close()
 }
+import { apiRequest } from '@/shared/api/request'

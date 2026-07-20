@@ -2,20 +2,14 @@ package schedules
 
 import (
 	"context"
-	"errors"
-
-	"crypto/rand"
 	"crypto/sha256"
-
 	"encoding/hex"
+	"errors"
 	"fmt"
-
 	"io"
 	"io/fs"
-
 	"os"
 	"os/exec"
-
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -23,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 const (
@@ -456,13 +451,7 @@ func digestBytes(content []byte) string {
 
 func digestString(content string) string { return digestBytes([]byte(content)) }
 
-func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomID() string { return secureid.Hex(16) }
 
 func commandFailure(action string, output []byte, err error) string {
 	message := strings.TrimSpace(string(output))

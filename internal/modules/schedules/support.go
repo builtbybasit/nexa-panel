@@ -2,22 +2,17 @@ package schedules
 
 import (
 	"context"
-	"crypto/rand"
-
 	"database/sql"
-	"encoding/hex"
-
 	"encoding/json"
 	"errors"
-
-	"io"
 	"net/http"
-
 	"strings"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 // validateRequest normalizes and checks the desired task fields against the
@@ -92,37 +87,19 @@ func (model taskModel) toTask() Task {
 
 // randomID matches the agent's ^[a-f0-9]{32}$ managed task identifier shape.
 func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
-	}
-	return hex.EncodeToString(value)
+	return secureid.Hex(16)
 }
 
 func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return errors.New("Request body must be valid JSON.")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("Request body must contain one JSON object.")
-	}
-	return nil
+	return httpapi.DecodeJSON(w, r, destination)
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"code": code, "message": message})
-}
+var (
+	writeJSON  = httpapi.WriteJSON
+	writeError = httpapi.WriteError
+)
 
 // writeOperatorError relays the operator's typed failure with its HTTP
 // status; anything else is an agent transport problem and stays generic.

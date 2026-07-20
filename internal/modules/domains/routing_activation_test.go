@@ -37,9 +37,11 @@ func (o fakeOperator) Plan(_ context.Context, site siteoperator.Site) (siteopera
 	}
 	return plan, nil
 }
+
 func (fakeOperator) Apply(_ context.Context, plan siteoperator.Plan) (siteoperator.Observation, error) {
 	return siteoperator.Observation{SiteID: plan.Site.ID, Active: true}, nil
 }
+
 func (fakeOperator) Rollback(_ context.Context, plan siteoperator.Plan) (siteoperator.Observation, error) {
 	return siteoperator.Observation{SiteID: plan.Site.ID}, nil
 }
@@ -48,6 +50,12 @@ type fakeResolver struct{}
 
 func (fakeResolver) LookupHost(_ context.Context, host string) ([]string, error) {
 	return []string{"203.0.113.10"}, nil
+}
+
+type emptyTLSProvider struct{}
+
+func (emptyTLSProvider) TLSForSite(context.Context, string) (*siteoperator.TLS, []string, error) {
+	return nil, nil, nil
 }
 
 func TestDomainPlanAndActivationIncludeAlias(t *testing.T) {
@@ -75,6 +83,7 @@ func TestDomainPlanAndActivationIncludeAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	module.SetTLSProvider(emptyTLSProvider{})
 	queue.Start(ctx)
 	t.Cleanup(queue.Close)
 	waitJob(t, queue, site.LastJobID)
@@ -109,6 +118,7 @@ func TestDomainPlanAndActivationIncludeAlias(t *testing.T) {
 		t.Fatalf("active domain = %+v, %v", active, err)
 	}
 }
+
 func waitJob(t *testing.T, queue *jobs.Module, id *int64) {
 	t.Helper()
 	if id == nil {

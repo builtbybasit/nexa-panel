@@ -3,18 +3,14 @@ package files
 import (
 	"database/sql"
 	"errors"
-
 	"mime"
 	"net/http"
-
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
-
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )

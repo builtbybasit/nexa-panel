@@ -1,6 +1,7 @@
 applications:
   get:
     operationId: listApplications
+    summary: List Applications
     tags:
     - Applications
     x-permission: applications.read
@@ -9,9 +10,12 @@ applications:
     responses:
       '200':
         description: Installable application catalog joined with observed package state
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 applications_id_plan:
   get:
     operationId: getApplicationPlan
+    summary: Get Application Plan
     tags:
     - Applications
     x-permission: applications.read
@@ -26,8 +30,11 @@ applications_id_plan:
     responses:
       '200':
         description: Agent-signed apt package plan awaiting approval
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: prepareApplicationChange
+    summary: Prepare Application Change
     tags:
     - Applications
     x-permission: applications.write
@@ -57,9 +64,12 @@ applications_id_plan:
     responses:
       '202':
         description: Application change planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 applications_id_apply:
   post:
     operationId: applyApplicationPlan
+    summary: Apply Application Plan
     tags:
     - Applications
     x-permission: operations.apply
@@ -78,3 +88,6 @@ applications_id_apply:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

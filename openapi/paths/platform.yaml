@@ -1,8 +1,10 @@
 health_live:
   get:
     operationId: getLiveness
+    summary: Get Liveness
     tags:
     - Platform
+    security: []
     responses:
       '200':
         description: The control-plane process is running.
@@ -10,11 +12,37 @@ health_live:
           application/json:
             schema:
               $ref: ../components/schemas/common.yaml#/Liveness
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+health_ready:
+  get:
+    operationId: getReadiness
+    summary: Get Readiness
+    tags:
+    - Platform
+    security: []
+    responses:
+      '200':
+        description: The control-plane database and privileged node agent are reachable.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Readiness
+      '503':
+        description: At least one required local dependency is unavailable.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 modules:
   get:
     operationId: listModules
+    summary: List Modules
     tags:
     - Platform
+    x-permission: system.read
     security:
     - sessionCookie: []
     responses:
@@ -31,11 +59,15 @@ modules:
                   type: array
                   items:
                     $ref: ../components/schemas/common.yaml#/ModuleDescriptor
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 system_overview:
   get:
     operationId: getSystemOverview
+    summary: Get System Overview
     tags:
     - System
+    x-permission: system.read
     security:
     - sessionCookie: []
     responses:
@@ -45,3 +77,6 @@ system_overview:
           application/json:
             schema:
               $ref: ../components/schemas/system.yaml#/SystemOverview
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

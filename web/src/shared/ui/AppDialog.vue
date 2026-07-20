@@ -2,12 +2,13 @@
 import { VisuallyHidden } from 'reka-ui'
 import { nextTick } from 'vue'
 
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './dialog'
 
 const props = withDefaults(
   defineProps<{
     open: boolean
     title?: string
+    description?: string
     size?: 'sm' | 'md' | 'lg'
   }>(),
   { size: 'md' },
@@ -57,6 +58,12 @@ function onOpenAutoFocus(event: Event) {
         </DialogTitle>
         <VisuallyHidden v-else as-child>
           <DialogTitle>Dialog</DialogTitle>
+        </VisuallyHidden>
+        <DialogDescription v-if="description || $slots.description">
+          <slot name="description">{{ description }}</slot>
+        </DialogDescription>
+        <VisuallyHidden v-else as-child>
+          <DialogDescription>Dialog content</DialogDescription>
         </VisuallyHidden>
       </DialogHeader>
       <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">

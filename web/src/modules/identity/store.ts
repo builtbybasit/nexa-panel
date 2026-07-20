@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 
+import { hasPermission, type Permission } from './permissions'
+
 import {
   bootstrap as bootstrapRequest,
   confirmMFA,
@@ -30,6 +32,7 @@ export const useIdentityStore = defineStore('identity', {
   }),
   getters: {
     authenticated: (state) => state.phase === 'authenticated' && state.user !== undefined,
+    can: (state) => (permission: Permission) => hasPermission(state.user?.role, permission),
   },
   actions: {
     async initialize() {
@@ -42,7 +45,10 @@ export const useIdentityStore = defineStore('identity', {
         // Second-factor setup is optional, so we never force the enroll phase on
         // load: an account without MFA is simply authenticated.
         if (status.bootstrapRequired) this.phase = 'bootstrap'
-        else if (status.mfaChallengeRequired) this.phase = 'challenge'
+        else if (status.mfaEnrollmentRequired) {
+          this.phase = 'enroll'
+          await this.prepareEnrollment()
+        } else if (status.mfaChallengeRequired) this.phase = 'challenge'
         else if (status.authenticated) this.phase = 'authenticated'
         else this.phase = 'login'
       } catch (error) {
@@ -78,8 +84,9 @@ export const useIdentityStore = defineStore('identity', {
       else if (next === 'mfa_challenge') this.phase = 'challenge'
       else this.phase = 'authenticated'
     },
-    /** Bootstrap offers MFA setup, but the operator may defer it and enable it later. */
+    /** Non-admin accounts may defer MFA; administrators must complete enrollment. */
     skipEnrollment() {
+      if (this.user?.role === 'admin') return
       this.enrollment = undefined
       this.error = ''
       this.phase = 'authenticated'
@@ -117,6 +124,7 @@ export const useIdentityStore = defineStore('identity', {
     async verify(code: string, recovery: boolean) {
       await this.runMFA(async () => {
         this.user = await verifyMFA(code, recovery)
+        this.mfaEnabled = true
         this.phase = 'authenticated'
       })
     },

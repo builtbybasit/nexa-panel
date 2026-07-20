@@ -21,16 +21,18 @@ function dismissAndResume(id: number) {
 const toneShell = {
   info: 'border-sky-400/25',
   success: 'border-emerald-400/25',
+  warning: 'border-amber-400/25',
   danger: 'border-rose-400/25',
 }
 
 const toneBody = {
   info: 'bg-sky-400/[0.07] text-sky-200',
   success: 'bg-emerald-400/[0.07] text-emerald-200',
+  warning: 'bg-amber-400/[0.07] text-amber-200',
   danger: 'bg-rose-400/[0.07] text-rose-200',
 }
 
-const toneIcons = { info: 'info', success: 'check', danger: 'alert-triangle' }
+const toneIcons = { info: 'info', success: 'check', warning: 'alert-triangle', danger: 'alert-triangle' }
 </script>
 
 <template>

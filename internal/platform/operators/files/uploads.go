@@ -2,17 +2,13 @@ package files
 
 import (
 	"context"
-
 	"encoding/json"
 	"errors"
 	"fmt"
-
 	"io"
 	"io/fs"
-
 	"os"
 	"path"
-
 	"regexp"
 	"strings"
 	"time"

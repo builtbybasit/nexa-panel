@@ -21,13 +21,11 @@ interface NavigationGroup {
 }
 
 const groups = computed<NavigationGroup[]>(() => {
-  const role = identity.user?.role
   const grouped: NavigationGroup[] = []
   for (const feature of featureModules) {
     if (!feature.navigation) continue
-    const { group, label, to, icon, roles } = feature.navigation
-    // Cosmetic gating only; the server rejects unauthorized requests regardless.
-    if (roles && (!role || !roles.includes(role))) continue
+    const { group, label, to, icon, permission } = feature.navigation
+    if (!identity.can(permission)) continue
     const existing = grouped.find((entry) => entry.label === group)
     const item = { id: feature.id, label, to, icon }
     if (existing) existing.items.push(item)

@@ -33,6 +33,7 @@ const headline = computed(() => {
 })
 const errorMessage = computed(() => localError.value || identity.error)
 const enrollmentFailed = computed(() => !identity.enrollment && !identity.loading && !!identity.error)
+const enrollmentRequired = computed(() => identity.user?.role === 'admin')
 
 function focusCodeField(select = false) {
   const el = codeField.value?.$el as HTMLInputElement | undefined
@@ -162,7 +163,7 @@ function downloadRecoveryCodes() {
             <p class="mt-1.5 text-sm text-ink-secondary">
               {{
                 isBootstrap
-                  ? 'Use at least 12 characters. Two-factor authentication is offered next, and optional.'
+                  ? 'Use at least 12 characters. Administrators must connect an authenticator before entering the panel.'
                   : 'Enter your username and password to continue.'
               }}
             </p>
@@ -201,12 +202,14 @@ function downloadRecoveryCodes() {
 
         <form v-else-if="identity.phase === 'enroll'" class="space-y-4" @submit.prevent="submitMFA">
           <div class="mb-6">
-            <p class="text-[11px] font-bold tracking-[0.14em] text-accent-400 uppercase">Recommended second factor</p>
+            <p class="text-[11px] font-bold tracking-[0.14em] text-accent-400 uppercase">
+              {{ enrollmentRequired ? 'Required administrator factor' : 'Recommended second factor' }}
+            </p>
             <h2 class="mt-1.5 text-2xl font-semibold tracking-tight text-ink">Connect an authenticator</h2>
             <p class="mt-1.5 text-sm text-ink-secondary">
               A code from your authenticator means a stolen password alone can never reach your servers. Scan the QR
-              code with any authenticator app, then enter its six-digit code. You can also skip this and enable it later
-              from account security.
+              code with any authenticator app, then enter its six-digit code.
+              <template v-if="!enrollmentRequired"> You can also defer this and enable it later from account security.</template>
             </p>
           </div>
 
@@ -248,6 +251,7 @@ function downloadRecoveryCodes() {
             Verify and enable two-factor authentication
           </AppButton>
           <button
+            v-if="!enrollmentRequired"
             type="button"
             class="w-full text-center text-[13px] font-medium text-ink-secondary transition-colors hover:text-ink"
             :disabled="identity.loading"

@@ -1,6 +1,7 @@
 backups_accounts:
   get:
     operationId: listBackupAccounts
+    summary: List Backup Accounts
     tags:
     - Backups
     x-permission: backups.read
@@ -8,9 +9,12 @@ backups_accounts:
     - sessionCookie: []
     responses:
       '200':
-        description: Configured backup storage accounts (rclone remotes)
+        description: Configured backup storage accounts (site-scoped developers receive only accounts used by fully visible plans)
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createBackupAccount
+    summary: Create Backup Account
     tags:
     - Backups
     x-permission: backups.write
@@ -24,6 +28,7 @@ backups_accounts:
 backups_accounts_id:
   get:
     operationId: getBackupAccount
+    summary: Get Backup Account
     tags:
     - Backups
     x-permission: backups.read
@@ -42,6 +47,7 @@ backups_accounts_id:
         description: Not found
   put:
     operationId: updateBackupAccount
+    summary: Update Backup Account
     tags:
     - Backups
     x-permission: backups.write
@@ -56,8 +62,11 @@ backups_accounts_id:
     responses:
       '200':
         description: The updated backup account
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   delete:
     operationId: deleteBackupAccount
+    summary: Delete Backup Account
     tags:
     - Backups
     x-permission: backups.write
@@ -77,6 +86,7 @@ backups_accounts_id:
 backups_accounts_id_test:
   post:
     operationId: testBackupAccount
+    summary: Test Backup Account
     tags:
     - Backups
     x-permission: backups.write
@@ -91,9 +101,12 @@ backups_accounts_id_test:
     responses:
       '200':
         description: Connectivity result (ok plus a message); a failed connection is 200 with ok=false
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 backups_plans:
   get:
     operationId: listBackupPlans
+    summary: List Backup Plans
     tags:
     - Backups
     x-permission: backups.read
@@ -101,9 +114,12 @@ backups_plans:
     - sessionCookie: []
     responses:
       '200':
-        description: Backup plans
+        description: Backup plans, including installed/error schedule reconciliation state; site-scoped developers receive only plans whose every site is granted
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createBackupPlan
+    summary: Create Backup Plan
     tags:
     - Backups
     x-permission: backups.write
@@ -117,6 +133,7 @@ backups_plans:
 backups_plans_id:
   get:
     operationId: getBackupPlan
+    summary: Get Backup Plan
     tags:
     - Backups
     x-permission: backups.read
@@ -131,8 +148,11 @@ backups_plans_id:
     responses:
       '200':
         description: A single backup plan
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   put:
     operationId: updateBackupPlan
+    summary: Update Backup Plan
     tags:
     - Backups
     x-permission: backups.write
@@ -147,8 +167,11 @@ backups_plans_id:
     responses:
       '200':
         description: The updated backup plan
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   delete:
     operationId: deleteBackupPlan
+    summary: Delete Backup Plan
     tags:
     - Backups
     x-permission: backups.write
@@ -163,9 +186,16 @@ backups_plans_id:
     responses:
       '204':
         description: Deleted (its systemd timer is removed)
+      '409':
+        description: Stored copies still reference the plan and must be removed first
+      '502':
+        description: The timer could not be removed, so the plan was retained for reconciliation
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 backups_plans_id_toggle:
   post:
     operationId: toggleBackupPlan
+    summary: Toggle Backup Plan
     tags:
     - Backups
     x-permission: backups.write
@@ -180,9 +210,12 @@ backups_plans_id_toggle:
     responses:
       '204':
         description: Enabled/disabled; the plan's timer is installed or removed to match
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 backups_plans_id_run:
   post:
     operationId: runBackupPlan
+    summary: Run Backup Plan
     tags:
     - Backups
     x-permission: backups.write
@@ -194,12 +227,22 @@ backups_plans_id_run:
       required: true
       schema:
         type: string
+    - name: Idempotency-Key
+      in: header
+      required: false
+      description: Repeating the same key and request returns the original durable job.
+      schema:
+        type: string
+        maxLength: 200
     responses:
       '202':
         description: A backup.run job was queued (Location header points at the job)
+      '409':
+        description: The idempotency key was previously used with a different request
 backups_plans_id_copies:
   get:
     operationId: listBackupCopies
+    summary: List Backup Copies
     tags:
     - Backups
     x-permission: backups.read
@@ -213,13 +256,16 @@ backups_plans_id_copies:
         type: string
     responses:
       '200':
-        description: Stored copies for the plan, newest first
+        description: Stored copies for the plan, newest first; uploaded copies remain healthy=false until integrity and restore-test states both pass
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 backups_copies_copyId_restore:
   post:
     operationId: restoreBackupCopy
+    summary: Restore Backup Copy
     tags:
     - Backups
-    x-permission: backups.write
+    x-permission: operations.apply
     security:
     - sessionCookie: []
     parameters:
@@ -228,14 +274,63 @@ backups_copies_copyId_restore:
       required: true
       schema:
         type: string
+    - name: Idempotency-Key
+      in: header
+      required: false
+      description: Repeating the same key and request returns the original durable job.
+      schema:
+        type: string
+        maxLength: 200
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - sites
+            - databases
+            - allowUnverified
+            properties:
+              allowUnverified:
+                type: boolean
+                description: Explicit acknowledgement required when the copy has no passing integrity check.
+              sites:
+                type: array
+                maxItems: 128
+                description: Entries and destination site IDs must each be unique within the restore request.
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [entry, siteId, clear]
+                  properties:
+                    entry: {type: string}
+                    siteId: {type: string}
+                    clear: {type: boolean}
+              databases:
+                type: array
+                maxItems: 128
+                description: Entries and destination database references must each be unique within the restore request.
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [entry, databaseRef, clear]
+                  properties:
+                    entry: {type: string}
+                    databaseRef: {type: string, pattern: '^(postgres|mysql):.+'}
+                    clear: {type: boolean}
     responses:
       '202':
         description: A backup.restore job was queued
+      '409':
+        description: The idempotency key conflicts or an unverified restore was not explicitly acknowledged
       '422':
         description: A selected item is not part of the copy, or nothing was selected
 backups_copies_copyId:
   delete:
     operationId: deleteBackupCopy
+    summary: Delete Backup Copy
     tags:
     - Backups
     x-permission: backups.write
@@ -250,3 +345,6 @@ backups_copies_copyId:
     responses:
       '204':
         description: The copy was purged from storage and its record removed
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

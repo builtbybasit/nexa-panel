@@ -51,3 +51,18 @@ func TestOpenKeyFileCreatesAndReusesPrivateKey(t *testing.T) {
 		t.Fatalf("key permissions = %o, want 600", info.Mode().Perm())
 	}
 }
+
+func TestOpenKeyFileRejectsSymlinkedKey(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "real.key")
+	if _, err := OpenKeyFile(target); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "master.key")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenKeyFile(link); err == nil {
+		t.Fatal("symlinked master key should be rejected")
+	}
+}

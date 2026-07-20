@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { Tooltip, TooltipTrigger, TooltipContent } from './tooltip'
 
-export type PillTone = 'success' | 'warning' | 'danger' | 'info' | 'accent' | 'neutral'
+type PillTone = 'success' | 'warning' | 'danger' | 'info' | 'accent' | 'neutral'
 
 const props = defineProps<{
   /** Raw machine status such as `plan_ready`; humanized for display. */

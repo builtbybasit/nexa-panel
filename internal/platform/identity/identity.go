@@ -1,22 +1,17 @@
 package identity
 
 import (
-	"io"
-
-	"time"
-
 	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
-
 	"regexp"
+	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-
-	"errors"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
-	"log/slog"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 
 	"github.com/uptrace/bun"
@@ -132,6 +127,18 @@ type principalContextKey struct{}
 func UserFromContext(ctx context.Context) (User, bool) {
 	value, ok := ctx.Value(principalContextKey{}).(principal)
 	return value.User, ok
+}
+
+// RecentMFA reports whether the current authenticated session completed a
+// second-factor challenge within maxAge. Authorization uses this for sensitive
+// actions without exposing the session model or identity's context key.
+func RecentMFA(ctx context.Context, now time.Time, maxAge time.Duration) bool {
+	value, ok := ctx.Value(principalContextKey{}).(principal)
+	if !ok || value.MFAVerifiedAt == nil || maxAge <= 0 {
+		return false
+	}
+	verifiedAt := value.MFAVerifiedAt.UTC()
+	return !verifiedAt.After(now.UTC()) && now.UTC().Sub(verifiedAt) <= maxAge
 }
 
 // principalFromContext returns the full authenticated principal, including the
@@ -260,9 +267,10 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 			return
 		}
-		// MFA is optional: only sessions belonging to a user who has enrolled a
-		// second factor must complete the challenge. Accounts without TOTP pass
-		// straight through, and can enable it later from account security.
+		if person.Role == "admin" && person.TOTPConfirmedAt == nil {
+			writeError(w, http.StatusForbidden, "mfa_enrollment_required", "Administrators must enroll multi-factor authentication to continue.")
+			return
+		}
 		if person.TOTPConfirmedAt != nil && person.MFAVerifiedAt == nil {
 			writeError(w, http.StatusUnauthorized, "mfa_required", "Complete multi-factor authentication to continue.")
 			return

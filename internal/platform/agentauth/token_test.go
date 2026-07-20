@@ -26,3 +26,18 @@ func TestOpenOrCreatePersistsPrivateToken(t *testing.T) {
 		t.Fatal("world-readable token should be rejected")
 	}
 }
+
+func TestReadRejectsSymlinkedToken(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "real.token")
+	if _, err := OpenOrCreate(target); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "agent.token")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(link); err == nil {
+		t.Fatal("symlinked token should be rejected")
+	}
+}

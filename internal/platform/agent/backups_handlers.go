@@ -35,6 +35,10 @@ func (s *Server) backupRunHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	if err := backupoperator.ValidateRunRequest(request); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_request", err.Error())
+		return
+	}
 	manifest, err := s.backups.Run(r.Context(), request)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "backup_run_failed", err.Error())
@@ -49,6 +53,10 @@ func (s *Server) backupRestoreHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	if err := backupoperator.ValidateRestoreRequest(request); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_request", err.Error())
+		return
+	}
 	if err := s.backups.Restore(r.Context(), request); err != nil {
 		writeError(w, http.StatusInternalServerError, "backup_restore_failed", err.Error())
 		return
@@ -60,6 +68,10 @@ func (s *Server) backupDeleteCopyHTTP(w http.ResponseWriter, r *http.Request) {
 	var request backupoperator.DeleteRequest
 	if err := decodeJSON(w, r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := backupoperator.ValidateDeleteRequest(request); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_request", err.Error())
 		return
 	}
 	if err := s.backups.DeleteCopy(r.Context(), request); err != nil {

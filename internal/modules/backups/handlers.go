@@ -4,11 +4,18 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 )
 
 func (m *Module) listAccountsHTTP(w http.ResponseWriter, r *http.Request) {
-	var models []accountModel
-	if err := m.database.NewSelect().Model(&models).Order("name ASC").Scan(r.Context()); err != nil {
+	user, ok := identity.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		return
+	}
+	models, err := m.listAccountsForUser(r.Context(), user)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "backup_accounts_unavailable", "The backup accounts could not be loaded.")
 		return
 	}
@@ -34,7 +41,12 @@ func (m *Module) createAccountHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) getAccountHTTP(w http.ResponseWriter, r *http.Request) {
-	model, err := m.getAccountModel(r.Context(), r.PathValue("id"))
+	user, ok := identity.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		return
+	}
+	model, err := m.getAccountForUser(r.Context(), user, r.PathValue("id"))
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "backup_account_not_found", "The requested backup account does not exist.")
 		return

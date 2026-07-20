@@ -1,42 +1,27 @@
 package agent
 
 import (
-	"log/slog"
-	"strings"
-
-	"errors"
-	"os"
-
-	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-	"net/http"
-
-	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
-
-	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
-
-	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
-
+	"context"
 	"crypto/subtle"
-	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
-
-	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
-
-	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
-
-	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
-
-	"fmt"
-	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
-
-	"net"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
 	"time"
 
-	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
-
-	"context"
+	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
+	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
-
-	"path/filepath"
+	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
+	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
+	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
+	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
+	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
+	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
+	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/unixsocket"
 )
 
 type Server struct {
@@ -60,6 +45,9 @@ type Server struct {
 type Option func(*Server)
 
 func New(socketPath, version, token string, operator nodeoperator.Operator, logger *slog.Logger, options ...Option) *Server {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	server := &Server{socketPath: socketPath, version: version, token: token, operator: operator, logger: logger}
 	for _, option := range options {
 		option(server)
@@ -68,22 +56,17 @@ func New(socketPath, version, token string, operator nodeoperator.Operator, logg
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0o750); err != nil {
-		return fmt.Errorf("create socket directory: %w", err)
+	if strings.TrimSpace(s.token) == "" {
+		return errors.New("agent credential is required")
 	}
-	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove stale socket: %w", err)
+	if s.operator == nil {
+		return errors.New("node operator is required")
 	}
-
-	listener, err := net.Listen("unix", s.socketPath)
+	listener, cleanup, err := unixsocket.Listen(s.socketPath, 0o750, 0o660)
 	if err != nil {
-		return fmt.Errorf("listen on agent socket: %w", err)
+		return err
 	}
-	defer listener.Close()
-	defer os.Remove(s.socketPath)
-	if err := os.Chmod(s.socketPath, 0o660); err != nil {
-		return fmt.Errorf("set socket permissions: %w", err)
-	}
+	defer cleanup()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.healthHTTP)
@@ -165,8 +148,11 @@ func (s *Server) Serve(ctx context.Context) error {
 		Handler:           s.authenticate(mux),
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      6 * time.Minute,
-		MaxHeaderBytes:    16 * 1024,
+		// Package installs and verified database/backup restores legitimately
+		// exceed a few minutes. Operator clients cap them at 30 minutes, so the
+		// server allows a small shutdown/error-reporting margin beyond that cap.
+		WriteTimeout:   35 * time.Minute,
+		MaxHeaderBytes: 16 * 1024,
 	}
 
 	errCh := make(chan error, 1)
@@ -261,8 +247,4 @@ func (s *Server) rollbackHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, observation)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"code": code, "message": message})
 }

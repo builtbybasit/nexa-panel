@@ -2,7 +2,6 @@ package nodes
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 const ProbeKind = "nexa.probe.v1"
@@ -235,10 +236,4 @@ func digest(content []byte) string {
 	return hex.EncodeToString(value[:])
 }
 
-func randomPlanID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
-	}
-	return hex.EncodeToString(value)
-}
+func randomPlanID() string { return secureid.Hex(16) }

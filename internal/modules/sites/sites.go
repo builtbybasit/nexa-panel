@@ -2,22 +2,19 @@ package sites
 
 import (
 	"context"
-	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+	"errors"
+	"net/http"
+	"regexp"
+	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
+	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 
 	"github.com/uptrace/bun"
 
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
-	"regexp"
-
-	"time"
-
-	"net/http"
-
-	"errors"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 )
 
 const schema = `

@@ -1,15 +1,11 @@
 package sites
 
 import (
-	"net/http"
-
-	"path/filepath"
-
-	"fmt"
-	"strings"
-
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -39,6 +35,16 @@ func NewHostOperator(renderer Renderer, enabledRoot string, system NodeSystem) (
 	}
 	if !filepath.IsAbs(enabledRoot) {
 		return nil, errors.New("Nginx enabled root must be absolute")
+	}
+	for label, root := range map[string]string{
+		"Nginx available":   renderer.NginxAvailableRoot,
+		"PHP configuration": renderer.PHPConfigRoot,
+		"site":              renderer.SiteRoot,
+		"socket":            renderer.SocketRoot,
+	} {
+		if root != "" && !filepath.IsAbs(root) {
+			return nil, fmt.Errorf("%s root must be absolute", label)
+		}
 	}
 	return &HostOperator{renderer: renderer, enabledRoot: filepath.Clean(enabledRoot), system: system, now: time.Now}, nil
 }
@@ -153,12 +159,4 @@ func (o *HostOperator) Rollback(ctx context.Context, plan Plan) (Observation, er
 		return Observation{}, err
 	}
 	return o.observe(plan)
-}
-
-type HostSystem struct {
-	command func(context.Context, string, ...string) ([]byte, error)
-	client  *http.Client
-	// verifyTimeout bounds how long VerifyHost waits for a reload to take effect.
-	verifyTimeout  time.Duration
-	verifyInterval time.Duration
 }

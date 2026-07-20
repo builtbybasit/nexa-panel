@@ -1,20 +1,12 @@
 package schedules
 
 import (
-	"bytes"
 	"context"
-
-	"encoding/json"
 	"errors"
-	"fmt"
-
-	"io"
-	"net"
 	"net/http"
-
 	"time"
 
-	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
+	"github.com/nexa-panel/nexa-panel/internal/platform/agentclient"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
 
@@ -37,23 +29,18 @@ type RunsResult struct {
 }
 
 type UnixClient struct {
-	tokenPath string
-	json      *http.Client
+	json *agentclient.Client
 	// Manual runs last up to the task timeout; they are bounded by the
 	// caller's context, not a wall-clock timeout every long task would hit.
-	run *http.Client
+	run *agentclient.Client
 }
 
 var _ Operator = (*UnixClient)(nil)
 
 func NewUnixClient(socketPath, tokenPath string) *UnixClient {
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
-	}}
 	return &UnixClient{
-		tokenPath: tokenPath,
-		json:      &http.Client{Transport: transport, Timeout: 2 * time.Minute},
-		run:       &http.Client{Transport: transport},
+		json: agentclient.New(socketPath, tokenPath, "schedules", "node agent rejected the schedule operation", 2*time.Minute, agentclient.WithResponseLimit(8*1024*1024)),
+		run:  agentclient.New(socketPath, tokenPath, "schedules", "node agent rejected the schedule operation", 0, agentclient.WithResponseLimit(8*1024*1024)),
 	}
 }
 
@@ -89,43 +76,11 @@ func (c *UnixClient) Runs(ctx context.Context, scope sitefs.Scope, taskID string
 	return result.Items, nil
 }
 
-func (c *UnixClient) call(ctx context.Context, client *http.Client, path string, input, output any) error {
-	encoded, err := json.Marshal(input)
-	if err != nil {
-		return err
+func (c *UnixClient) call(ctx context.Context, client *agentclient.Client, path string, input, output any) error {
+	err := client.JSON(ctx, http.MethodPost, path, input, output)
+	var responseError *agentclient.ResponseError
+	if errors.As(err, &responseError) && responseError.Code != "" && StatusFor(responseError.Code) != http.StatusInternalServerError {
+		return &OperationError{Code: responseError.Code, Message: responseError.Message}
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix"+path, bytes.NewReader(encoded))
-	if err != nil {
-		return err
-	}
-	token, err := agentauth.Read(c.tokenPath)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("call schedules agent: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return decodeFailure(response)
-	}
-	if output == nil {
-		return nil
-	}
-	return json.NewDecoder(io.LimitReader(response.Body, 8*1024*1024)).Decode(output)
-}
-
-func decodeFailure(response *http.Response) error {
-	var payload OperationError
-	_ = json.NewDecoder(io.LimitReader(response.Body, 16*1024)).Decode(&payload)
-	if payload.Code != "" && StatusFor(payload.Code) != http.StatusInternalServerError {
-		return &payload
-	}
-	if payload.Message == "" {
-		payload.Message = "node agent rejected the schedule operation"
-	}
-	return errors.New(payload.Message)
+	return err
 }

@@ -225,7 +225,10 @@ function downloadRecoveryCodes() {
           <AppButton v-if="!identity.mfaEnabled" variant="primary" icon="lock" @click="openEnable">
             Enable
           </AppButton>
-          <AppButton v-else variant="danger" icon="lock" @click="openDisable">Disable</AppButton>
+          <AppButton v-else-if="identity.user?.role !== 'admin'" variant="danger" icon="lock" @click="openDisable">
+            Disable
+          </AppButton>
+          <span v-else class="max-w-48 text-right text-xs text-ink-muted">Required for administrator accounts</span>
         </div>
       </div>
     </AppCard>

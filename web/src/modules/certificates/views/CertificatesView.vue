@@ -4,6 +4,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { listSites } from '@/modules/sites/api'
+import { useIdentityStore } from '@/modules/identity/store'
 import { useCollection } from '@/shared/composables/useCollection'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { daysUntil, formatDateTime } from '@/shared/formatters'
@@ -51,6 +52,8 @@ const operationToasts: Record<CertificateOperation, string> = {
 
 const route = useRoute()
 const router = useRouter()
+const identity = useIdentityStore()
+const canWrite = computed(() => identity.can('certificates.write'))
 const runner = useJobRunner()
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites })
@@ -80,7 +83,7 @@ const planError = ref('')
 
 // The create dialog is URL-driven (?create=1) so deep links, the header
 // button, and history navigation all agree on whether it is open.
-const createOpen = computed(() => route.query.create === '1')
+const createOpen = computed(() => canWrite.value && route.query.create === '1')
 const createSiteId = ref('')
 const email = ref(localStorage.getItem(ACME_EMAIL_KEY) ?? '')
 
@@ -146,6 +149,7 @@ onMounted(() => {
 })
 
 function openCreate() {
+  if (!canWrite.value) return
   if (!createOpen.value) void router.replace({ query: { ...route.query, create: '1' } })
 }
 
@@ -178,6 +182,7 @@ async function openPlan(certificate: Certificate) {
 }
 
 async function submitCreate() {
+  if (!canWrite.value) return
   if (!createSiteId.value) return
   let createdId = ''
   await runner.run(
@@ -199,6 +204,7 @@ async function submitCreate() {
 }
 
 async function prepareOperation(operation: CertificateOperation) {
+  if (!canWrite.value) return
   const certificate = selected.value
   if (!certificate) return
   await runner.run(async () => (await prepareCertificate(certificate.id, operation)).id, {
@@ -211,11 +217,13 @@ async function prepareOperation(operation: CertificateOperation) {
 }
 
 async function regeneratePlan() {
+  if (!canWrite.value) return
   const operation = plan.value?.operation
   if (operation) await prepareOperation(operation)
 }
 
 async function approvePlan() {
+  if (!identity.can('operations.apply')) return
   const certificate = selected.value
   const operation = plan.value?.operation ?? 'issue'
   if (!certificate) return
@@ -228,6 +236,7 @@ async function approvePlan() {
 }
 
 function confirmRevoke() {
+  if (!canWrite.value) return
   revokeOpen.value = false
   void prepareOperation('revoke')
 }
@@ -317,7 +326,7 @@ const planDnsRows = computed(() =>
       title="Certificates"
       description="Free Let's Encrypt certificates keep your sites on HTTPS. A failed renewal never removes a working certificate."
     >
-      <AppButton variant="primary" icon="plus" @click="openCreate">Enable HTTPS</AppButton>
+      <AppButton v-if="canWrite" variant="primary" icon="plus" @click="openCreate">Enable HTTPS</AppButton>
     </PageHeader>
 
     <AppCard flush>
@@ -343,7 +352,7 @@ const planDnsRows = computed(() =>
           description="Enable HTTPS to serve a managed site securely."
         >
           <template #action>
-            <AppButton variant="primary" icon="plus" @click="openCreate">Enable HTTPS</AppButton>
+            <AppButton v-if="canWrite" variant="primary" icon="plus" @click="openCreate">Enable HTTPS</AppButton>
           </template>
         </EmptyState>
         <EmptyState
@@ -427,7 +436,7 @@ const planDnsRows = computed(() =>
             >
               Review plan
             </AppButton>
-            <template v-else-if="selected.status === 'active'">
+            <template v-else-if="selected.status === 'active' && canWrite">
               <AppButton icon="refresh-cw" :disabled="runner.busy.value" @click="prepareOperation('renew')">
                 Renew certificate
               </AppButton>
@@ -436,7 +445,7 @@ const planDnsRows = computed(() =>
               </AppButton>
             </template>
             <AppButton
-              v-else-if="selected.status === 'revoked'"
+              v-else-if="selected.status === 'revoked' && canWrite"
               variant="primary"
               :disabled="runner.busy.value"
               @click="prepareOperation('issue')"
@@ -483,6 +492,8 @@ const planDnsRows = computed(() =>
       :facts="planFacts"
       :expires-at="planExpiresAt"
       :busy="planLoading || runner.busy.value"
+      :can-approve="identity.can('operations.apply')"
+      :can-regenerate="canWrite"
       :approve-label="planApproveLabel"
       @approve="approvePlan"
       @regenerate="regeneratePlan"
@@ -518,7 +529,7 @@ const planDnsRows = computed(() =>
     </PlanReviewDialog>
 
     <AppConfirmDialog
-      :open="revokeOpen"
+      :open="canWrite && revokeOpen"
       title="Revoke certificate"
       confirm-label="Revoke certificate"
       @confirm="confirmRevoke"

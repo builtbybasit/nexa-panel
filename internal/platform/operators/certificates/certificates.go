@@ -2,9 +2,7 @@ package certificates
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -16,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 const PlanKind = "nexa.certificate.v1"
@@ -84,6 +84,7 @@ func NewHostOperator(runner CommandRunner, webroot, liveRoot string) (*HostOpera
 	}
 	return &HostOperator{runner: runner, webroot: filepath.Clean(webroot), liveRoot: filepath.Clean(liveRoot), now: time.Now}, nil
 }
+
 func (o *HostOperator) Plan(_ context.Context, request Request) (Plan, error) {
 	request.PrimaryDomain = normalize(request.PrimaryDomain)
 	for index := range request.Domains {
@@ -98,6 +99,7 @@ func (o *HostOperator) Plan(_ context.Context, request Request) (Plan, error) {
 	root := filepath.Join(o.liveRoot, request.PrimaryDomain)
 	return Plan{ID: randomID(), Kind: PlanKind, Request: request, CertificatePath: filepath.Join(root, "fullchain.pem"), PrivateKeyPath: filepath.Join(root, "privkey.pem"), PlannedAt: now, ExpiresAt: now.Add(30 * time.Minute)}, nil
 }
+
 func (o *HostOperator) Execute(ctx context.Context, plan Plan) (Observation, error) {
 	if plan.ID == "" || plan.Kind != PlanKind || o.now().UTC().After(plan.ExpiresAt) {
 		return Observation{}, errors.New("certificate plan is invalid or expired")
@@ -139,6 +141,7 @@ func (o *HostOperator) Execute(ctx context.Context, plan Plan) (Observation, err
 	}
 	return o.inspect(plan)
 }
+
 func (o *HostOperator) inspect(plan Plan) (Observation, error) {
 	encoded, err := os.ReadFile(plan.CertificatePath)
 	if err != nil {
@@ -157,6 +160,7 @@ func (o *HostOperator) inspect(plan Plan) (Observation, error) {
 	}
 	return Observation{CertificateID: plan.Request.CertificateID, PrimaryDomain: plan.Request.PrimaryDomain, Domains: certificate.DNSNames, CertificatePath: plan.CertificatePath, PrivateKeyPath: plan.PrivateKeyPath, IssuedAt: certificate.NotBefore.UTC(), ExpiresAt: certificate.NotAfter.UTC()}, nil
 }
+
 func validate(request Request) error {
 	if request.CertificateID == "" || !hostnamePattern.MatchString(request.PrimaryDomain) {
 		return errors.New("certificate identity and primary domain are required")
@@ -186,9 +190,11 @@ func validate(request Request) error {
 	}
 	return nil
 }
+
 func normalize(value string) string {
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
 }
+
 func unique(values []string) []string {
 	result := values[:0]
 	for _, value := range values {
@@ -198,10 +204,4 @@ func unique(values []string) []string {
 	}
 	return result
 }
-func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomID() string { return secureid.Hex(16) }

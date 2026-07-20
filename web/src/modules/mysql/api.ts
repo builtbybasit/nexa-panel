@@ -1,9 +1,8 @@
 import { apiRequest } from '@/shared/api/request'
 
-import type { Job, JobEvent } from '../jobs/api'
-import { subscribeToJob } from '../jobs/api'
+import type { Job } from '../jobs/api'
 
-export type Status =
+type Status =
   | 'planning'
   | 'plan_ready'
   | 'applying'
@@ -174,8 +173,4 @@ export function getPlan(type: ResourceType, id: string) {
 
 export function applyPlan(type: ResourceType, id: string) {
   return request<Job>(`/api/v1/mysql-family/${type}/${encodeURIComponent(id)}/apply`, { method: 'POST' })
-}
-
-export function watchJob(id: number, onEvent: (event: JobEvent) => void, onError?: () => void) {
-  return subscribeToJob(id, onEvent, onError)
 }

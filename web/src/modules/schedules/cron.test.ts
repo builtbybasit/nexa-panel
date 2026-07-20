@@ -1,80 +1,42 @@
 import { describe, expect, it } from 'vitest'
 
-import { describe as describeExpression, nextRuns, normalize, parse } from './cron'
+import { describe as describeExpression, nextRuns, normalize } from './cron'
 
-describe('parse', () => {
-  it('parses a weekly expression', () => {
-    const schedule = parse('0 0 * * 0')
-    expect(schedule.minute.values).toEqual([0])
-    expect(schedule.hour.values).toEqual([0])
-    expect(schedule.dayOfMonth.any).toBe(true)
-    expect(schedule.month.any).toBe(true)
-    expect(schedule.dayOfWeek).toMatchObject({ values: [0], any: false })
+describe('cron validation', () => {
+  it.each([
+    ['0 0 * * 0', '0 0 * * 0'],
+    ['*/15 * * * *', '*/15 * * * *'],
+    ['0 3 1 jan mon', '0 3 1 1 1'],
+    ['0,30 8-18 * * 1-5', '0,30 8-18 * * 1-5'],
+    ['0 0-23/6 * * *', '0 0-23/6 * * *'],
+    ['0 0 * jan,jul mon-fri', '0 0 * 1,7 1-5'],
+    ['0 0 * * 7', '0 0 * * 7'],
+    ['0 0 * * 5-7', '0 0 * * 5-7'],
+    ['*/59 * * * *', '*/59 * * * *'],
+  ])('accepts %s', (expression, normalized) => {
+    expect(normalize(expression)).toBe(normalized)
   })
 
-  it('expands wildcard steps', () => {
-    const schedule = parse('*/15 * * * *')
-    expect(schedule.minute.values).toEqual([0, 15, 30, 45])
-    expect(schedule.minute.step).toBe(15)
-    expect(schedule.minute.any).toBe(false)
-  })
-
-  it('resolves month and day names case-insensitively', () => {
-    const schedule = parse('0 3 1 JAN MON')
-    expect(schedule.month.values).toEqual([1])
-    expect(schedule.dayOfWeek.values).toEqual([1])
-    expect(parse('0 3 1 jan mon')).toEqual(schedule)
-  })
-
-  it('expands lists and ranges', () => {
-    const schedule = parse('0,30 8-18 * * 1-5')
-    expect(schedule.minute.values).toEqual([0, 30])
-    expect(schedule.hour.values).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])
-    expect(schedule.dayOfWeek.values).toEqual([1, 2, 3, 4, 5])
-  })
-
-  it('expands range steps and name ranges', () => {
-    expect(parse('0 0-23/6 * * *').hour.values).toEqual([0, 6, 12, 18])
-    expect(parse('0 0 * jan,jul mon-fri').month.values).toEqual([1, 7])
-    expect(parse('0 0 * jan,jul mon-fri').dayOfWeek.values).toEqual([1, 2, 3, 4, 5])
-  })
-
-  it('normalizes day-of-week 7 to Sunday', () => {
-    expect(parse('0 0 * * 7').dayOfWeek.values).toEqual([0])
-    expect(parse('0 0 * * 5-7').dayOfWeek.values).toEqual([0, 5, 6])
-  })
-
-  it('rejects out-of-range values with a precise message', () => {
-    expect(() => parse('99 * * * *')).toThrow('minute must be 0-59, got 99')
-    expect(() => parse('0 24 * * *')).toThrow('hour must be 0-23, got 24')
-    expect(() => parse('0 0 0 * *')).toThrow('day-of-month must be 1-31, got 0')
-    expect(() => parse('0 0 * 13 *')).toThrow('month must be 1-12, got 13')
-    expect(() => parse('0 0 * * 8')).toThrow('day-of-week must be 0-7, got 8')
-  })
-
-  it('rejects the wrong number of fields', () => {
-    expect(() => parse('0 0 * * * *')).toThrow('expected 5 fields (minute hour day-of-month month day-of-week), got 6')
-    expect(() => parse('0 0 *')).toThrow('got 3')
-    expect(() => parse('   ')).toThrow('the expression is empty')
-  })
-
-  it('rejects unknown names', () => {
-    expect(() => parse('0 0 * FOO *')).toThrow("month has an invalid value 'FOO'")
-    expect(() => parse('0 0 * * FUNDAY')).toThrow("day-of-week has an invalid value 'FUNDAY'")
-  })
-
-  it('rejects malformed steps, ranges, and lists', () => {
-    expect(() => parse('*/0 * * * *')).toThrow("minute step must be a positive number, got '0'")
-    expect(() => parse('5/2 * * * *')).toThrow("minute step is only allowed after * or a range, got '5/2'")
-    expect(() => parse('30-10 * * * *')).toThrow('minute range must run low to high, got 30-10')
-    expect(() => parse('1-2-3 * * * *')).toThrow("minute has an invalid value '1-2-3'")
-    expect(() => parse('1, * * * *')).toThrow('minute has an empty list item')
-  })
-
-  it('rejects steps above the field maximum, matching the server validator', () => {
-    expect(() => parse('*/120 * * * *')).toThrow('minute step must be at most 59, got 120')
-    expect(() => parse('0 */24 * * *')).toThrow('hour step must be at most 23, got 24')
-    expect(parse('*/59 * * * *').minute.step).toBe(59)
+  it.each([
+    ['99 * * * *', 'minute must be 0-59, got 99'],
+    ['0 24 * * *', 'hour must be 0-23, got 24'],
+    ['0 0 0 * *', 'day-of-month must be 1-31, got 0'],
+    ['0 0 * 13 *', 'month must be 1-12, got 13'],
+    ['0 0 * * 8', 'day-of-week must be 0-7, got 8'],
+    ['0 0 * * * *', 'expected 5 fields (minute hour day-of-month month day-of-week), got 6'],
+    ['0 0 *', 'got 3'],
+    ['   ', 'the expression is empty'],
+    ['0 0 * FOO *', "month has an invalid value 'FOO'"],
+    ['0 0 * * FUNDAY', "day-of-week has an invalid value 'FUNDAY'"],
+    ['*/0 * * * *', "minute step must be a positive number, got '0'"],
+    ['5/2 * * * *', "minute step is only allowed after * or a range, got '5/2'"],
+    ['30-10 * * * *', 'minute range must run low to high, got 30-10'],
+    ['1-2-3 * * * *', "minute has an invalid value '1-2-3'"],
+    ['1, * * * *', 'minute has an empty list item'],
+    ['*/120 * * * *', 'minute step must be at most 59, got 120'],
+    ['0 */24 * * *', 'hour step must be at most 23, got 24'],
+  ])('rejects %s', (expression, message) => {
+    expect(() => normalize(expression)).toThrow(message)
   })
 })
 
@@ -104,6 +66,7 @@ describe('describe', () => {
     ['0 0 * * *', 'At 00:00'],
     ['0 0,12 * * *', 'At 00:00 and 12:00'],
     ['0 0 * * 0', 'At 00:00 on Sunday'],
+    ['0 0 * * 7', 'At 00:00 on Sunday'],
     ['0 9 * * MON-FRI', 'At 09:00 on Monday through Friday'],
     ['0 0 1 * *', 'At 00:00 on day 1 of the month'],
     ['0 0 1,15 * *', 'At 00:00 on days 1 and 15 of the month'],

@@ -1,3 +1,5 @@
+import { requestMFAStepUp } from './mfaStepUp'
+
 /**
  * Shared JSON request helper for feature-module API clients.
  *
@@ -5,7 +7,32 @@
  * safe `message` field when a request fails. `errorPrefix` keeps failure text
  * attributable to the owning module (e.g. "PostgreSQL request").
  */
-export async function apiRequest<T>(path: string, init?: RequestInit, errorPrefix = 'Request'): Promise<T> {
+interface ApiErrorPayload {
+  code?: string
+  message?: string
+}
+
+export interface ApiRequestOptions {
+  errorPrefix?: string
+  createError?: (message: string, status: number, code?: string) => Error
+  retryAfterMFAStepUp?: boolean
+}
+
+class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message)
+  }
+}
+
+export async function apiRequest<T>(
+  path: string,
+  init?: RequestInit,
+  options: string | ApiRequestOptions = 'Request',
+): Promise<T> {
   const response = await fetch(path, {
     ...init,
     credentials: 'same-origin',
@@ -16,8 +43,25 @@ export async function apiRequest<T>(path: string, init?: RequestInit, errorPrefi
     },
   })
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { message?: string } | null
-    throw new Error(payload?.message ?? `${errorPrefix} failed with status ${response.status}`)
+    const payload = (await response.json().catch(() => null)) as ApiErrorPayload | null
+    const resolved = typeof options === 'string' ? { errorPrefix: options } : options
+    const message = payload?.message ?? `${resolved.errorPrefix ?? 'Request'} failed with status ${response.status}`
+    const error = resolved.createError?.(message, response.status, payload?.code) ?? new ApiRequestError(message, response.status, payload?.code)
+    if (payload?.code === 'mfa_step_up_required' && resolved.retryAfterMFAStepUp !== false) {
+      try {
+        if (await requestMFAStepUp()) {
+          return apiRequest<T>(path, init, { ...resolved, retryAfterMFAStepUp: false })
+        }
+      } catch {
+        // Cancellation keeps the original server error, which is more useful
+        // to the initiating flow than a UI-specific cancellation error.
+      }
+    }
+    throw error
   }
-  return (await response.json()) as T
+  if (response.status === 204 || response.status === 205) return undefined as T
+
+  const body = await response.text()
+  if (!body.trim()) return undefined as T
+  return JSON.parse(body) as T
 }

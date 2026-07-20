@@ -130,6 +130,7 @@ type launchModel struct {
 func (m toolModel) toTool() Tool {
 	return Tool{Tool: admintooloperator.Tool{Kind: admintooloperator.Kind(m.Kind), Image: m.Image, ContainerName: m.ContainerName, Port: m.Port, MemoryMB: m.MemoryMB, PIDsLimit: m.PIDsLimit, Status: m.Status, SystemdUnit: m.SystemdUnit, OnDemand: m.OnDemand}, LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
+
 func (m planModel) toStoredPlan() (StoredPlan, error) {
 	var plan admintooloperator.Plan
 	if err := json.Unmarshal([]byte(m.PlanJSON), &plan); err != nil {
@@ -137,6 +138,7 @@ func (m planModel) toStoredPlan() (StoredPlan, error) {
 	}
 	return StoredPlan{ID: m.ID, ToolKind: admintooloperator.Kind(m.ToolKind), Operation: admintooloperator.Action(m.Operation), AgentPlan: plan, CreatedAt: m.CreatedAt, ExpiresAt: m.ExpiresAt}, nil
 }
+
 func pointerString(value *string) string {
 	if value == nil {
 		return ""

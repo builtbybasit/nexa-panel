@@ -1,13 +1,12 @@
 package mysql
 
 import (
-	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-
 	"context"
 	"encoding/json"
 	"errors"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 )
 
 func (m *Module) StoredPlan(ctx context.Context, resourceType, resourceID string) (StoredPlan, error) {

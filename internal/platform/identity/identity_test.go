@@ -36,7 +36,7 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBootstrapOptionalMFAEnableDisableAndLogin(t *testing.T) {
+func TestBootstrapRequiresAdministratorMFAAndLoginChallenge(t *testing.T) {
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
@@ -81,26 +81,26 @@ func TestBootstrapOptionalMFAEnableDisableAndLogin(t *testing.T) {
 		t.Fatalf("unexpected bootstrap cookies: %+v", bootstrapCookies)
 	}
 
-	// Bootstrap offers enrollment but no longer forces it: the session works
-	// immediately, and the account can reach protected routes without a second
-	// factor.
+	// Bootstrap creates a restricted enrollment session. It cannot cross the
+	// authenticated interface until the administrator confirms MFA.
 	if !strings.Contains(bootstrap.Body.String(), `"next":"mfa_enrollment"`) {
 		t.Fatalf("bootstrap did not offer enrollment: %s", bootstrap.Body.String())
 	}
 	openSession := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/session", "", bootstrapCookies[0])
-	if openSession.Code != http.StatusOK || !strings.Contains(openSession.Body.String(), `"username":"admin"`) {
+	if openSession.Code != http.StatusForbidden || !strings.Contains(openSession.Body.String(), `"mfa_enrollment_required"`) {
 		t.Fatalf("session without MFA = %d %s", openSession.Code, openSession.Body.String())
 	}
 	openModules := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", bootstrapCookies[0])
-	if openModules.Code != http.StatusOK {
+	if openModules.Code != http.StatusForbidden || !strings.Contains(openModules.Body.String(), `"mfa_enrollment_required"`) {
 		t.Fatalf("protected route without MFA = %d %s", openModules.Code, openModules.Body.String())
 	}
 	openStatus := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/status", "", bootstrapCookies[0])
-	if !strings.Contains(openStatus.Body.String(), `"authenticated":true`) || !strings.Contains(openStatus.Body.String(), `"mfaEnabled":false`) {
+	if !strings.Contains(openStatus.Body.String(), `"authenticated":false`) || !strings.Contains(openStatus.Body.String(), `"mfaEnrollmentRequired":true`) {
 		t.Fatalf("status without MFA = %s", openStatus.Body.String())
 	}
 
-	// Enable MFA later, from within an already-authenticated session.
+	// Enrollment endpoints deliberately accept the restricted pre-authentication
+	// session so bootstrap can be completed.
 	enrollment := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/enroll", "", bootstrapCookies[0])
 	if enrollment.Code != http.StatusOK {
 		t.Fatalf("enrollment = %d %s", enrollment.Code, enrollment.Body.String())
@@ -206,40 +206,20 @@ func TestBootstrapOptionalMFAEnableDisableAndLogin(t *testing.T) {
 		t.Fatalf("recovery challenge = %d %s", recovery.Code, recovery.Body.String())
 	}
 
-	// Disabling requires the current password; a wrong one is rejected.
-	wrongDisable := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/disable",
-		`{"password":"not-my-password"}`, secondCookie)
-	if wrongDisable.Code != http.StatusUnauthorized || !strings.Contains(wrongDisable.Body.String(), `"invalid_credentials"`) {
-		t.Fatalf("disable with wrong password = %d %s", wrongDisable.Code, wrongDisable.Body.String())
-	}
+	// Administrator MFA cannot be removed through ordinary self-service. A
+	// controlled recovery procedure must replace the factor instead.
 	disable := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/disable",
 		`{"password":"a-strong-password"}`, secondCookie)
-	if disable.Code != http.StatusOK || !strings.Contains(disable.Body.String(), `"mfaEnabled":false`) {
+	if disable.Code != http.StatusForbidden || !strings.Contains(disable.Body.String(), `"administrator_mfa_required"`) {
 		t.Fatalf("disable MFA = %d %s", disable.Code, disable.Body.String())
-	}
-
-	// After disabling, the next sign-in skips the challenge entirely.
-	thirdLogout := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/logout", "", secondCookie)
-	if thirdLogout.Code != http.StatusNoContent {
-		t.Fatalf("third logout = %d %s", thirdLogout.Code, thirdLogout.Body.String())
-	}
-	finalLogin := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/login",
-		`{"username":"admin","password":"a-strong-password"}`, nil)
-	if finalLogin.Code != http.StatusOK || !strings.Contains(finalLogin.Body.String(), `"next":"authenticated"`) {
-		t.Fatalf("login after disabling MFA = %d %s", finalLogin.Code, finalLogin.Body.String())
-	}
-	finalCookie := finalLogin.Result().Cookies()[0]
-	finalModules := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", finalCookie)
-	if finalModules.Code != http.StatusOK {
-		t.Fatalf("protected route after disabling MFA = %d %s", finalModules.Code, finalModules.Body.String())
 	}
 
 	events, err := auditModule.List(ctx, 30)
 	if err != nil {
 		t.Fatalf("list audit events: %v", err)
 	}
-	if len(events) < 9 {
-		t.Fatalf("audit event count = %d, want at least 9", len(events))
+	if len(events) < 7 {
+		t.Fatalf("audit event count = %d, want at least 7", len(events))
 	}
 }
 
@@ -277,6 +257,11 @@ func TestSelfServicePasswordChange(t *testing.T) {
 		t.Fatalf("bootstrap = %d %s", bootstrap.Code, bootstrap.Body.String())
 	}
 	cookie := bootstrap.Result().Cookies()[0]
+	// Password-change behavior is role-independent. Use a non-administrator so
+	// this focused test does not bypass the mandatory administrator MFA flow.
+	if _, err := database.ExecContext(ctx, "UPDATE identity_users SET role = 'operator'"); err != nil {
+		t.Fatalf("set password-change fixture role: %v", err)
+	}
 
 	// A wrong current password is rejected.
 	wrong := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/password",

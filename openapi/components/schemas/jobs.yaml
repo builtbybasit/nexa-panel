@@ -5,6 +5,7 @@ Job:
   - kind
   - state
   - progress
+  - attempt
   - request
   - createdAt
   - updatedAt
@@ -13,6 +14,8 @@ Job:
       type: integer
       format: int64
     kind:
+      type: string
+    title:
       type: string
     state:
       type: string
@@ -27,12 +30,20 @@ Job:
       maximum: 100
     actorUserId:
       type: string
+    siteIds:
+      type: array
+      description: Site scope used to enforce developer grants; omitted for unscoped jobs.
+      uniqueItems: true
+      items:
+        type: string
+    attempt:
+      type: integer
+      minimum: 0
+      description: Number of worker leases claimed for this job.
     request:
-      type: object
-      additionalProperties: true
+      description: Kind-specific JSON payload; it may be an object, array, scalar, or null.
     result:
-      type: object
-      additionalProperties: true
+      description: Kind-specific JSON result; it may be an object, array, scalar, or null.
     failure:
       type: string
     createdAt:

@@ -1,22 +1,18 @@
 package postgres
 
 import (
-	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+	"context"
+	"errors"
+	"regexp"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/uptrace/bun"
 
-	"context"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
-
-	"regexp"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-
-	"errors"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 )
 
 const (

@@ -4,6 +4,8 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { useJobRunner, type JobMessage } from '@/shared/composables/useJobRunner'
+import { usePlanReview } from '@/shared/composables/usePlanReview'
+import { useIdentityStore } from '@/modules/identity/store'
 import { formatBytes, formatDateTime, formatMeasuredBytes, humanize } from '@/shared/formatters'
 import {
   AppAlert,
@@ -26,8 +28,10 @@ import {
 } from '@/shared/ui'
 
 import {
+  applyPlan,
   createBackup,
   createGrant,
+  getPlan,
   listAccounts,
   listDatabases,
   listEngines,
@@ -39,9 +43,10 @@ import {
   type Access,
   type Account,
   type Engine,
+  type Plan,
+  type ResourceType,
   type RestorePoint,
 } from '../api'
-import { usePlanReview } from '../composables/usePlanReview'
 
 const ACCESS_LABELS: Record<Access, string> = {
   connect: 'Connect only',
@@ -53,6 +58,9 @@ const ACCESS_LABELS: Record<Access, string> = {
 const ENGINE_NAMES: Record<Engine['kind'], string> = { mysql: 'MySQL', mariadb: 'MariaDB' }
 
 const route = useRoute()
+const identity = useIdentityStore()
+const canWrite = computed(() => identity.can('databases.write'))
+const canApply = computed(() => identity.can('operations.apply'))
 const databaseId = computed(() => String(route.params.databaseId ?? ''))
 
 const enginesQuery = useQuery({ queryKey: ['mysql-engines'], queryFn: listEngines, retry: false })
@@ -118,7 +126,14 @@ async function refreshAll() {
   ])
 }
 
-const plans = usePlanReview(refreshAll)
+const plans = usePlanReview<ResourceType, Plan>({
+  loadPlan: getPlan,
+  applyPlan,
+  refresh: refreshAll,
+  canApply: () => identity.can('operations.apply'),
+  isDestructive: (target, plan) =>
+    target.type === 'restore-points' && (plan.operation.toLowerCase().includes('restore') || plan.agentPlan.interruption),
+})
 
 /** The host is part of an account's identity: `app_usr@localhost` ≠ `app_usr@%`. */
 function accountLabel(id: string) {
@@ -221,6 +236,7 @@ const grantableAccounts = computed(() =>
 )
 
 function openGrantDialog() {
+  if (!canWrite.value) return
   grantAttempted.value = false
   grantRunner.progress.value = undefined
   grantRunner.error.value = ''
@@ -228,6 +244,7 @@ function openGrantDialog() {
 }
 
 async function submitGrant() {
+  if (!canWrite.value) return
   grantAttempted.value = true
   if (grantAccountError.value) return
   let created: { id: string; label: string } | undefined
@@ -269,7 +286,7 @@ watch(rotateRunner.busy, (busy) => {
 
 function backupNow() {
   const item = database.value
-  if (!item) return
+  if (!item || !canWrite.value) return
   void backupRunner.run(async () => (await createBackup(item.id)).job.id, {
     onSettled: refreshAll,
     successToast: `Backed up ${item.name}`,
@@ -293,7 +310,7 @@ const restoreFacts = computed<Fact[]>(() => {
 
 function confirmPrepareRestore() {
   const point = restoreTarget.value
-  if (!point) return
+  if (!point || !canWrite.value) return
   restoreTarget.value = undefined
   restorePendingId.value = point.id
   void restoreRunner.run(async () => (await prepareRestore(point.id)).job.id, {
@@ -306,9 +323,10 @@ function confirmPrepareRestore() {
 const restoreConfirmOpen = ref(false)
 
 function onApprove() {
+  if (!canApply.value) return
   // Restoring destroys the current data, so it gets a typed confirmation on top
   // of the plan review that every operation already has.
-  if (plans.isRestore.value) {
+  if (plans.isDestructive.value) {
     restoreConfirmOpen.value = true
     return
   }
@@ -316,6 +334,7 @@ function onApprove() {
 }
 
 async function applyAfterConfirm() {
+  if (!canApply.value) return
   restoreConfirmOpen.value = false
   await plans.apply()
 }
@@ -336,7 +355,7 @@ function clearCredential() {
 
 function confirmRotate() {
   const account = rotateTarget.value
-  if (!account) return
+  if (!account || !canWrite.value) return
   rotateTarget.value = undefined
   rotatePendingId.value = account.id
   clearCredential()
@@ -350,7 +369,7 @@ function confirmRotate() {
 
 async function confirmReveal() {
   const account = revealTarget.value
-  if (!account) return
+  if (!account || !canApply.value) return
   revealBusy.value = true
   revealError.value = ''
   try {
@@ -414,7 +433,7 @@ const revealFacts = computed<Fact[]>(() => {
       >
         <StatusPill :status="database.status" />
         <AppButton
-          v-if="database.status === 'active'"
+          v-if="canWrite && database.status === 'active'"
           icon="copy"
           :loading="backupRunner.busy.value"
           @click="backupNow"
@@ -422,6 +441,8 @@ const revealFacts = computed<Fact[]>(() => {
           Back up now
         </AppButton>
       </PageHeader>
+
+      <AppAlert v-if="!canWrite" tone="info">Your account has read-only access to this database.</AppAlert>
 
       <JobFailureNotice v-if="plans.applyRunner.error.value" v-bind="failureProps(plans.applyRunner)" />
       <JobProgress
@@ -447,7 +468,13 @@ const revealFacts = computed<Fact[]>(() => {
            calls the database's users. -->
       <AppCard flush eyebrow="Who can reach this database" title="Access">
         <template #actions>
-          <AppButton size="sm" icon="plus" :disabled="database.status !== 'active'" @click="openGrantDialog">
+          <AppButton
+            v-if="canWrite"
+            size="sm"
+            icon="plus"
+            :disabled="database.status !== 'active'"
+            @click="openGrantDialog"
+          >
             Grant access
           </AppButton>
         </template>
@@ -518,7 +545,7 @@ const revealFacts = computed<Fact[]>(() => {
                         Review
                       </AppButton>
                       <AppButton
-                        v-if="row.account.credentialAvailable"
+                        v-if="row.account.credentialAvailable && canApply"
                         size="sm"
                         icon="key"
                         :disabled="revealBusy"
@@ -527,7 +554,7 @@ const revealFacts = computed<Fact[]>(() => {
                         Reveal once
                       </AppButton>
                       <AppButton
-                        v-if="row.account.status === 'active'"
+                        v-if="canWrite && row.account.status === 'active'"
                         size="sm"
                         variant="ghost"
                         icon="refresh-cw"
@@ -612,7 +639,7 @@ const revealFacts = computed<Fact[]>(() => {
                         Review
                       </AppButton>
                       <AppButton
-                        v-if="point.status === 'verified'"
+                        v-if="canWrite && point.status === 'verified'"
                         size="sm"
                         variant="danger"
                         :loading="restoreRunner.busy.value && restorePendingId === point.id"
@@ -630,7 +657,7 @@ const revealFacts = computed<Fact[]>(() => {
         </div>
       </AppCard>
 
-      <AppDialog :open="showGrantDialog" title="Grant access" @close="showGrantDialog = false">
+      <AppDialog :open="canWrite && showGrantDialog" title="Grant access" @close="showGrantDialog = false">
         <form class="space-y-4" novalidate @submit.prevent="submitGrant">
           <FormField label="Account" :error="grantAccountError">
             <AppSelect
@@ -670,6 +697,7 @@ const revealFacts = computed<Fact[]>(() => {
         :facts="planFacts"
         :warnings="plans.warnings.value"
         :busy="plans.busy.value || plans.applyRunner.busy.value"
+        :can-approve="canApply"
         approve-label="Approve and execute"
         v-bind="plans.dialogProps.value"
         @approve="onApprove"
@@ -678,7 +706,7 @@ const revealFacts = computed<Fact[]>(() => {
       />
 
       <AppConfirmDialog
-        :open="!!restoreTarget"
+        :open="canWrite && !!restoreTarget"
         title="Restore database"
         confirm-label="Prepare restore"
         @confirm="confirmPrepareRestore"
@@ -695,7 +723,7 @@ const revealFacts = computed<Fact[]>(() => {
       </AppConfirmDialog>
 
       <AppConfirmDialog
-        :open="restoreConfirmOpen"
+        :open="canApply && restoreConfirmOpen"
         :title="`Restore ${database.name}?`"
         confirm-label="Restore database"
         :type-to-confirm="database.name"
@@ -706,7 +734,7 @@ const revealFacts = computed<Fact[]>(() => {
       </AppConfirmDialog>
 
       <AppConfirmDialog
-        :open="!!rotateTarget"
+        :open="canWrite && !!rotateTarget"
         :title="rotateTarget ? `Rotate credential for ${rotateTarget.name}@${rotateTarget.host}?` : 'Rotate credential?'"
         confirm-label="Rotate credential"
         @confirm="confirmRotate"
@@ -717,7 +745,7 @@ const revealFacts = computed<Fact[]>(() => {
       </AppConfirmDialog>
 
       <AppConfirmDialog
-        :open="!!revealTarget"
+        :open="canApply && !!revealTarget"
         :title="revealTarget ? `Reveal credential for ${revealTarget.name}@${revealTarget.host}?` : 'Reveal credential?'"
         confirm-label="Reveal now"
         tone="accent"

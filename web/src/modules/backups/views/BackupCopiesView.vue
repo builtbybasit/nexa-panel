@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
+import { useIdentityStore } from '@/modules/identity/store'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { useToasts } from '@/shared/composables/useToasts'
 import { formatBytes, formatDateTime } from '@/shared/formatters'
@@ -16,6 +17,7 @@ import {
   JobProgress,
   PageHeader,
   SkeletonRow,
+  StatusPill,
 } from '@/shared/ui'
 
 import {
@@ -26,9 +28,13 @@ import {
   type BackupCopy,
   type BackupRestoreRequest,
 } from '../api'
+import { backupCopyHealth } from '../status'
 import BackupRestoreDialog from './BackupRestoreDialog.vue'
 
 const route = useRoute()
+const identity = useIdentityStore()
+const canWrite = computed(() => identity.can('backups.write'))
+const canRestore = computed(() => identity.can('operations.apply'))
 const planId = computed(() => String(route.params.planId ?? ''))
 
 const { push } = useToasts()
@@ -48,7 +54,7 @@ const restoring = ref<BackupCopy>()
 
 async function submitRestore(body: BackupRestoreRequest) {
   const copy = restoring.value
-  if (!copy) return
+  if (!copy || !canRestore.value) return
   await restoreRunner.run(async () => (await restoreBackupCopy(copy.id, body)).id, {
     successToast: `Restored ${copy.copyName}`,
     failureMessage: `Restore of ${copy.copyName} failed`,
@@ -62,7 +68,7 @@ const confirmDelete = ref<BackupCopy>()
 const deleting = ref(false)
 async function doDelete() {
   const copy = confirmDelete.value
-  if (!copy) return
+  if (!copy || !canWrite.value) return
   deleting.value = true
   try {
     await deleteBackupCopy(copy.id)
@@ -82,7 +88,7 @@ async function doDelete() {
     <PageHeader
       eyebrow="Backups"
       :title="plan ? `Copies · ${plan.name}` : 'Backup copies'"
-      description="The backup copies stored for this plan, newest first. Restore a copy onto its sites and databases, or delete copies you no longer need."
+      description="The backup copies stored for this plan, newest first. Health is based on recorded integrity and restore verification, never on upload success alone."
       :breadcrumbs="[
         { label: 'Backups', to: '/backups' },
         { label: plan?.name ?? 'Plan' },
@@ -132,8 +138,15 @@ async function doDelete() {
             <span>{{ copy.entries.length }} item(s)</span>
           </p>
         </div>
+        <StatusPill
+          :tone="backupCopyHealth(copy).tone"
+          :label="backupCopyHealth(copy).label"
+          :description="backupCopyHealth(copy).description"
+          :pulse="false"
+        />
         <div class="flex shrink-0 items-center gap-2">
           <AppButton
+            v-if="canRestore"
             size="sm"
             icon="rotate-ccw"
             :disabled="restoreRunner.busy.value"
@@ -141,13 +154,21 @@ async function doDelete() {
           >
             Restore
           </AppButton>
-          <AppButton size="sm" variant="danger" icon="trash" @click="confirmDelete = copy">Delete</AppButton>
+          <AppButton
+            v-if="canWrite"
+            size="sm"
+            variant="danger"
+            icon="trash"
+            @click="confirmDelete = copy"
+          >
+            Delete
+          </AppButton>
         </div>
       </li>
     </ul>
 
     <BackupRestoreDialog
-      v-if="restoring"
+      v-if="restoring && canRestore"
       :copy="restoring"
       :busy="restoreRunner.busy.value"
       @restore="submitRestore"
@@ -155,7 +176,7 @@ async function doDelete() {
     />
 
     <AppConfirmDialog
-      :open="!!confirmDelete"
+      :open="canWrite && !!confirmDelete"
       title="Delete backup copy"
       :confirm-label="`Delete ${confirmDelete?.copyName ?? ''}`"
       tone="danger"

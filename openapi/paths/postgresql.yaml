@@ -1,6 +1,7 @@
 postgresql_instances:
   get:
     operationId: listPostgreSQLInstances
+    summary: List PostgreSQL Instances
     tags:
     - Databases
     x-permission: databases.read
@@ -18,8 +19,11 @@ postgresql_instances:
                   type: array
                   items:
                     $ref: ../components/schemas/postgresql.yaml#/PostgreSQLInstance
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createPostgreSQLInstance
+    summary: Create PostgreSQL Instance
     tags:
     - Databases
     x-permission: databases.write
@@ -34,9 +38,12 @@ postgresql_instances:
     responses:
       '202':
         description: PostgreSQL instance provisioning plan was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 postgresql_roles:
   get:
     operationId: listPostgreSQLRoles
+    summary: List PostgreSQL Roles
     tags:
     - Databases
     x-permission: databases.read
@@ -54,8 +61,11 @@ postgresql_roles:
                   type: array
                   items:
                     $ref: ../components/schemas/postgresql.yaml#/PostgreSQLRole
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createPostgreSQLRole
+    summary: Create PostgreSQL Role
     tags:
     - Databases
     x-permission: databases.write
@@ -70,9 +80,12 @@ postgresql_roles:
     responses:
       '202':
         description: Role creation and encrypted credential planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 postgresql_roles_id_rotate:
   post:
     operationId: rotatePostgreSQLRole
+    summary: Rotate PostgreSQL Role
     tags:
     - Databases
     x-permission: databases.write
@@ -87,9 +100,12 @@ postgresql_roles_id_rotate:
     responses:
       '202':
         description: Failure-safe credential rotation planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 postgresql_roles_id_credential:
   post:
     operationId: revealPostgreSQLCredentialOnce
+    summary: Reveal PostgreSQL Credential Once
     tags:
     - Databases
     x-permission: operations.apply
@@ -120,9 +136,12 @@ postgresql_roles_id_credential:
                   type: string
                   format: password
                   x-one-time-secret: true
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 postgresql_databases:
   get:
     operationId: listManagedPostgreSQLDatabases
+    summary: List Managed PostgreSQL Databases
     tags:
     - Databases
     x-permission: databases.read
@@ -140,8 +159,11 @@ postgresql_databases:
                   type: array
                   items:
                     $ref: ../components/schemas/postgresql.yaml#/ManagedPostgreSQLDatabase
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createManagedPostgreSQLDatabase
+    summary: Create Managed PostgreSQL Database
     tags:
     - Databases
     x-permission: databases.write
@@ -156,9 +178,12 @@ postgresql_databases:
     responses:
       '202':
         description: Logical database creation planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 postgresql_grants:
   get:
     operationId: listPostgreSQLGrants
+    summary: List PostgreSQL Grants
     tags:
     - Databases
     x-permission: databases.read
@@ -176,8 +201,11 @@ postgresql_grants:
                   type: array
                   items:
                     $ref: ../components/schemas/postgresql.yaml#/PostgreSQLGrant
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createPostgreSQLGrant
+    summary: Create PostgreSQL Grant
     tags:
     - Databases
     x-permission: databases.write
@@ -192,9 +220,12 @@ postgresql_grants:
     responses:
       '202':
         description: Scoped grant planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 postgresql_databases_id_backups:
   post:
     operationId: createPostgreSQLRestorePoint
+    summary: Create PostgreSQL Restore Point
     tags:
     - Databases
     x-permission: databases.write
@@ -209,9 +240,12 @@ postgresql_databases_id_backups:
     responses:
       '202':
         description: Custom-format logical backup planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 postgresql_restore-points:
   get:
     operationId: listPostgreSQLRestorePoints
+    summary: List PostgreSQL Restore Points
     tags:
     - Databases
     x-permission: databases.read
@@ -229,9 +263,12 @@ postgresql_restore-points:
                   type: array
                   items:
                     $ref: ../components/schemas/postgresql.yaml#/PostgreSQLRestorePoint
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 postgresql_restore-points_id_restore:
   post:
     operationId: preparePostgreSQLRestore
+    summary: Prepare PostgreSQL Restore
     tags:
     - Databases
     x-permission: databases.write
@@ -246,9 +283,12 @@ postgresql_restore-points_id_restore:
     responses:
       '202':
         description: Failure-safe staged restore planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 postgresql_resourceType_id_plan:
   get:
     operationId: getPostgreSQLPlan
+    summary: Get PostgreSQL Plan
     tags:
     - Databases
     x-permission: databases.read
@@ -281,9 +321,12 @@ postgresql_resourceType_id_plan:
               properties:
                 plan:
                   $ref: ../components/schemas/postgresql.yaml#/PostgreSQLStoredPlan
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 postgresql_resourceType_id_apply:
   post:
     operationId: applyPostgreSQLPlan
+    summary: Apply PostgreSQL Plan
     tags:
     - Databases
     x-permission: operations.apply
@@ -313,3 +356,6 @@ postgresql_resourceType_id_apply:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

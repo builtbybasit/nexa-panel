@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -136,21 +137,47 @@ type HostOperator struct {
 	binary      string
 	nexaBinary  string
 	systemdRoot string
+	stagingRoot string
+	siteRoot    string
+}
+
+// HostConfig contains paths owned by the privileged agent. They are never
+// accepted from an HTTP request.
+type HostConfig struct {
+	StagingRoot string
+	SiteRoot    string
 }
 
 // NewHostOperator builds the operator. A nil runner uses the real exec runner;
 // tests inject a fake. binary defaults to "rclone" on PATH; nexaBinary is the
 // path this process was launched as (so generated timer services re-invoke the
 // same binary), falling back to /usr/bin/nexa.
-func NewHostOperator(runner Runner) (*HostOperator, error) {
+func NewHostOperator(runner Runner, configs ...HostConfig) (*HostOperator, error) {
+	if len(configs) > 1 {
+		return nil, errors.New("backups host operator accepts at most one configuration")
+	}
 	if runner == nil {
 		runner = execRunner{}
+	}
+	stagingRoot := defaultStagingRoot
+	siteRoot := defaultSiteRoot
+	if len(configs) == 1 && configs[0].StagingRoot != "" {
+		if !filepath.IsAbs(configs[0].StagingRoot) {
+			return nil, errors.New("backup staging root must be absolute")
+		}
+		stagingRoot = filepath.Clean(configs[0].StagingRoot)
+	}
+	if len(configs) == 1 && configs[0].SiteRoot != "" {
+		if !filepath.IsAbs(configs[0].SiteRoot) {
+			return nil, errors.New("managed site root must be absolute")
+		}
+		siteRoot = filepath.Clean(configs[0].SiteRoot)
 	}
 	nexaBinary := "/usr/bin/nexa"
 	if executable, err := os.Executable(); err == nil && executable != "" {
 		nexaBinary = executable
 	}
-	return &HostOperator{runner: runner, binary: "rclone", nexaBinary: nexaBinary, systemdRoot: systemdRoot}, nil
+	return &HostOperator{runner: runner, binary: "rclone", nexaBinary: nexaBinary, systemdRoot: systemdRoot, stagingRoot: stagingRoot, siteRoot: siteRoot}, nil
 }
 
 // TestAccount verifies the account is reachable AND writable by creating the

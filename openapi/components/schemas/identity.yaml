@@ -35,10 +35,9 @@ PasswordResponse:
     next:
       type: string
       description: >-
-        Where the client should go next. `mfa_enrollment` offers optional
-        second-factor setup after the first-administrator bootstrap;
-        `mfa_challenge` is required only for accounts that enrolled a second
-        factor; `authenticated` means no further step is needed.
+        Where the client should go next. `mfa_enrollment` is mandatory for an
+        administrator without a confirmed factor; `mfa_challenge` is required
+        for an enrolled account; `authenticated` means no further step is needed.
       enum:
       - mfa_enrollment
       - mfa_challenge
@@ -50,6 +49,7 @@ IdentityStatus:
   - authenticated
   - mfaEnabled
   - mfaChallengeRequired
+  - mfaEnrollmentRequired
   properties:
     bootstrapRequired:
       type: boolean
@@ -60,6 +60,9 @@ IdentityStatus:
       description: Whether the current session's account has a confirmed second factor.
     mfaChallengeRequired:
       type: boolean
+    mfaEnrollmentRequired:
+      type: boolean
+      description: Whether the administrator must finish MFA enrollment before using protected routes.
     user:
       $ref: '#/User'
 TOTPCode:

@@ -1,32 +1,22 @@
 package nodes
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"time"
 
-	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
+	"github.com/nexa-panel/nexa-panel/internal/platform/agentclient"
 )
 
 type UnixClient struct {
-	tokenPath string
-	client    *http.Client
+	client *agentclient.Client
 }
 
 func NewUnixClient(socketPath, tokenPath string) *UnixClient {
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var dialer net.Dialer
-			return dialer.DialContext(ctx, "unix", socketPath)
-		},
-	}
-	return &UnixClient{tokenPath: tokenPath, client: &http.Client{Transport: transport, Timeout: 8 * time.Second}}
+	return &UnixClient{client: agentclient.New(
+		socketPath, tokenPath, "node", "node agent rejected the operation", 8*time.Second,
+		agentclient.WithResponseLimit(64*1024),
+	)}
 }
 
 func (c *UnixClient) Plan(ctx context.Context, change Change) (Plan, error) {
@@ -54,47 +44,5 @@ func (c *UnixClient) Rollback(ctx context.Context, plan Plan) (Snapshot, error) 
 }
 
 func (c *UnixClient) call(ctx context.Context, method, path string, input, output any) error {
-	var body io.Reader
-	if input != nil {
-		encoded, err := json.Marshal(input)
-		if err != nil {
-			return fmt.Errorf("encode agent request: %w", err)
-		}
-		body = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, body)
-	if err != nil {
-		return fmt.Errorf("create agent request: %w", err)
-	}
-	token, err := agentauth.Read(c.tokenPath)
-	if err != nil {
-		return fmt.Errorf("read agent credential: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("Accept", "application/json")
-	if input != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	response, err := c.client.Do(request)
-	if err != nil {
-		return fmt.Errorf("call node agent: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		var agentError struct {
-			Message string `json:"message"`
-		}
-		_ = json.NewDecoder(io.LimitReader(response.Body, 16*1024)).Decode(&agentError)
-		if agentError.Message == "" {
-			agentError.Message = "node agent rejected the operation"
-		}
-		return errors.New(agentError.Message)
-	}
-	if output == nil || response.StatusCode == http.StatusNoContent {
-		return nil
-	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 64*1024)).Decode(output); err != nil {
-		return fmt.Errorf("decode agent response: %w", err)
-	}
-	return nil
+	return c.client.JSON(ctx, method, path, input, output)
 }

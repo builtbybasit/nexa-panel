@@ -2,12 +2,10 @@ package identity
 
 import (
 	"context"
-	"strings"
-
 	"database/sql"
-	"net/http"
-
 	"errors"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"

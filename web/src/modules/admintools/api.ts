@@ -1,7 +1,6 @@
 import { apiRequest } from '@/shared/api/request'
 
-import type { Job, JobEvent } from '../jobs/api'
-import { subscribeToJob } from '../jobs/api'
+import type { Job } from '../jobs/api'
 
 export type ToolKind = 'phpmyadmin' | 'pgadmin'
 export type ToolAction = 'tool.deploy' | 'tool.start' | 'tool.stop'
@@ -62,8 +61,4 @@ export function launchTool(kind: ToolKind, input: LaunchInput) {
     method: 'POST',
     body: JSON.stringify(input),
   })
-}
-
-export function watchToolJob(id: number, onEvent: (event: JobEvent) => void, onError?: () => void) {
-  return subscribeToJob(id, onEvent, onError)
 }

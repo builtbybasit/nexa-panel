@@ -5,6 +5,7 @@ import { RouterLink, useRoute } from 'vue-router'
 
 import { listCertificates, type Certificate } from '@/modules/certificates/api'
 import { listDomains, type Domain } from '@/modules/domains/api'
+import { useIdentityStore } from '@/modules/identity/store'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { daysUntil, formatDateTime } from '@/shared/formatters'
 import {
@@ -27,14 +28,30 @@ import { activateSite, getSitePlan, listSites, prepareSitePlan, rollbackSite, ty
 
 const route = useRoute()
 const runner = useJobRunner()
+const identity = useIdentityStore()
+
+const canWriteSites = computed(() => identity.can('sites.write'))
+const canApplyOperations = computed(() => identity.can('operations.apply'))
+const canWriteDomains = computed(() => identity.can('domains.write'))
+const canWriteCertificates = computed(() => identity.can('certificates.write'))
+const canWriteFiles = computed(() => identity.can('files.write'))
+const canReadDomains = computed(() => identity.can('domains.read'))
+const canReadCertificates = computed(() => identity.can('certificates.read'))
+const canReadFiles = computed(() => identity.can('files.read'))
 
 const siteId = computed(() => String(route.params.siteId ?? ''))
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
-const domainsQuery = useQuery({ queryKey: ['domains', siteId], queryFn: () => listDomains(siteId.value), retry: false })
+const domainsQuery = useQuery({
+  queryKey: ['domains', siteId],
+  queryFn: () => listDomains(siteId.value),
+  enabled: canReadDomains,
+  retry: false,
+})
 const certificatesQuery = useQuery({
   queryKey: ['certificates', siteId],
   queryFn: () => listCertificates(siteId.value),
+  enabled: canReadCertificates,
   retry: false,
 })
 
@@ -74,7 +91,13 @@ const heroFacts = computed<HeroFact[]>(() => {
   if (!current) return []
   return [
     { icon: 'user', label: 'Site user', value: current.unixUser, mono: true },
-    { icon: 'folder', label: 'Root directory', value: current.rootPath, mono: true, to: `/files?site=${current.id}` },
+    {
+      icon: 'folder',
+      label: 'Root directory',
+      value: current.rootPath,
+      mono: true,
+      ...(canReadFiles.value ? { to: `/files?site=${current.id}` } : {}),
+    },
     { icon: 'plug', label: 'FPM socket', value: current.socketPath, mono: true },
     { icon: 'globe', label: 'Primary domain', value: current.primaryDomain, mono: true },
     { icon: 'file-code-2', label: 'Runtime', value: `PHP ${current.phpVersion} · PHP-FPM + Nginx` },
@@ -85,42 +108,36 @@ const heroFacts = computed<HeroFact[]>(() => {
 interface ManageTile {
   label: string
   icon: string
-  to?: string
-  soon?: boolean
-  tone?: 'default' | 'danger'
+  to: string
 }
 
-// "Site managing" launchers — working links first, "Soon" placeholders next,
-// destructive actions last. Ids resolve through siteId so the routes point at
-// this site.
+// Only render workflows that exist today. Ids resolve through siteId so each
+// launcher opens the current site's corresponding module.
 const tiles = computed<ManageTile[]>(() => {
   const id = siteId.value
-  return [
-    { label: 'Files', icon: 'folder', to: `/files?site=${id}` },
-    { label: 'Databases', icon: 'database', to: '/databases' },
-    { label: 'Domains (DNS)', icon: 'globe', to: `/domains?site=${id}` },
-    { label: 'SSL certificates', icon: 'lock', to: `/certificates?site=${id}` },
-    { label: 'Scheduler', icon: 'clock', to: `/schedules?site=${id}` },
-    { label: 'Logs', icon: 'file-text', to: `/logs?site=${id}` },
-    { label: 'Subdomains', icon: 'network', to: `/domains?site=${id}` },
-    { label: 'Backup copies', icon: 'archive', to: '/backups' },
-    { label: 'Mail', icon: 'mail', soon: true },
-    { label: 'PHP settings', icon: 'file-code-2', soon: true },
-    { label: 'Terminal', icon: 'terminal', soon: true },
-    { label: 'Scanning', icon: 'scan', soon: true },
-    { label: 'Manual settings', icon: 'settings-2', soon: true },
-    { label: 'Site access', icon: 'key-round', soon: true },
-    { label: 'Disable website', icon: 'power', soon: true },
-    { label: 'Delete website', icon: 'trash', soon: true, tone: 'danger' },
-  ]
+  const items: ManageTile[] = []
+  if (identity.can('files.read')) items.push({ label: 'Files', icon: 'folder', to: `/files?site=${id}` })
+  if (identity.can('databases.read')) items.push({ label: 'Databases', icon: 'database', to: '/databases' })
+  if (identity.can('domains.read')) items.push({ label: 'Domains (DNS)', icon: 'globe', to: `/domains?site=${id}` })
+  if (identity.can('certificates.read')) {
+    items.push({ label: 'SSL certificates', icon: 'lock', to: `/certificates?site=${id}` })
+  }
+  if (identity.can('schedules.read')) items.push({ label: 'Scheduler', icon: 'clock', to: `/schedules?site=${id}` })
+  if (identity.can('logs.read')) items.push({ label: 'Logs', icon: 'file-text', to: `/logs?site=${id}` })
+  if (identity.can('backups.read')) items.push({ label: 'Backup copies', icon: 'archive', to: '/backups' })
+  return items
 })
 
-const nextSteps = computed(() => [
-  { label: 'Upload files', icon: 'upload', to: `/files?site=${siteId.value}` },
-  { label: 'Add domain', icon: 'globe', to: `/domains?site=${siteId.value}&create=1` },
-  { label: 'Enable HTTPS', icon: 'lock', to: `/certificates?site=${siteId.value}&create=1` },
-  { label: 'View logs', icon: 'file-text', to: `/logs?site=${siteId.value}` },
-])
+const nextSteps = computed(() => {
+  const items: ManageTile[] = []
+  if (identity.can('logs.read')) items.push({ label: 'View logs', icon: 'file-text', to: `/logs?site=${siteId.value}` })
+  if (canWriteFiles.value) items.unshift({ label: 'Upload files', icon: 'upload', to: `/files?site=${siteId.value}` })
+  if (canWriteDomains.value) items.push({ label: 'Add domain', icon: 'globe', to: `/domains?site=${siteId.value}&create=1` })
+  if (canWriteCertificates.value) {
+    items.push({ label: 'Enable HTTPS', icon: 'lock', to: `/certificates?site=${siteId.value}&create=1` })
+  }
+  return items
+})
 
 const domainKindLabels: Record<Domain['kind'], string> = {
   primary: 'Primary domain',
@@ -231,7 +248,7 @@ async function refreshSite() {
 
 async function approve() {
   const current = site.value
-  if (!current) return
+  if (!current || !canApplyOperations.value) return
   await runner.run(async () => (await activateSite(current.id)).id, {
     onSettled: refreshSite,
     onSuccess: () => {
@@ -246,7 +263,7 @@ async function approve() {
 
 async function rollback() {
   const current = site.value
-  if (!current) return
+  if (!current || !canApplyOperations.value) return
   rollbackOpen.value = false
   activated.value = false
   await runner.run(async () => (await rollbackSite(current.id)).id, {
@@ -258,7 +275,7 @@ async function rollback() {
 
 async function preparePlan() {
   const current = site.value
-  if (!current) return
+  if (!current || !canWriteSites.value) return
   plan.value = undefined
   planExpiresAt.value = ''
   await runner.run(async () => (await prepareSitePlan(current.id)).id, {
@@ -452,10 +469,13 @@ watch(siteId, () => {
                 Activating checks the web server and PHP configuration, reloads services, and verifies the site responds.
                 If anything fails, the previous state is restored automatically.
               </AppAlert>
+              <AppAlert v-if="!canApplyOperations" tone="info">
+                You can review this plan, but only an administrator can activate it.
+              </AppAlert>
 
               <div class="flex flex-wrap gap-2">
                 <AppButton
-                  v-if="planExpired"
+                  v-if="planExpired && canWriteSites"
                   variant="primary"
                   icon="refresh-cw"
                   :loading="runner.busy.value"
@@ -463,7 +483,12 @@ watch(siteId, () => {
                 >
                   Regenerate plan
                 </AppButton>
-                <AppButton v-else variant="primary" :loading="runner.busy.value" @click="approve">
+                <AppButton
+                  v-else-if="!planExpired && canApplyOperations"
+                  variant="primary"
+                  :loading="runner.busy.value"
+                  @click="approve"
+                >
                   Approve and activate
                 </AppButton>
               </div>
@@ -476,9 +501,19 @@ watch(siteId, () => {
           v-else-if="site.status === 'active'"
           eyebrow="Configuration"
           title="This site is live"
-          description="Roll back if something is wrong — visitors will see the previous configuration."
+          :description="
+            canApplyOperations
+              ? 'Roll back if something is wrong — visitors will see the previous configuration.'
+              : 'The active configuration is available for review. An administrator is required to roll it back.'
+          "
         >
-          <AppButton variant="danger" icon="rotate-ccw" :disabled="runner.busy.value" @click="rollbackOpen = true">
+          <AppButton
+            v-if="canApplyOperations"
+            variant="danger"
+            icon="rotate-ccw"
+            :disabled="runner.busy.value"
+            @click="rollbackOpen = true"
+          >
             Roll back site
           </AppButton>
         </AppCard>
@@ -515,22 +550,30 @@ watch(siteId, () => {
                 : 'Prepare a plan to review exactly what will change before anything is applied.'
           "
         >
-          <AppButton variant="primary" icon="refresh-cw" :loading="runner.busy.value" @click="preparePlan">
+          <AppButton
+            v-if="canWriteSites"
+            variant="primary"
+            icon="refresh-cw"
+            :loading="runner.busy.value"
+            @click="preparePlan"
+          >
             {{ site.status === 'draft' ? 'Prepare plan' : 'Prepare new plan' }}
           </AppButton>
+          <AppAlert v-else tone="info">Your account has read-only access to this site.</AppAlert>
         </AppCard>
       </section>
 
-      <AppCard eyebrow="Manage" title="Site managing">
+      <AppCard v-if="tiles.length" eyebrow="Manage" title="Site managing">
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           <FeatureTile v-for="tile in tiles" :key="tile.label" v-bind="tile" />
         </div>
       </AppCard>
 
       <div class="grid items-start gap-4 lg:grid-cols-2">
-        <AppCard eyebrow="Routing" title="Domains">
+        <AppCard v-if="canReadDomains" eyebrow="Routing" title="Domains">
           <template #actions>
             <RouterLink
+              v-if="canWriteDomains"
               :to="`/domains?site=${site.id}&create=1`"
               class="inline-flex items-center gap-1 text-[13px] font-medium text-accent-300 transition-colors hover:text-accent-200"
             >
@@ -566,9 +609,10 @@ watch(siteId, () => {
           </div>
         </AppCard>
 
-        <AppCard eyebrow="Security" title="HTTPS">
+        <AppCard v-if="canReadCertificates" eyebrow="Security" title="HTTPS">
           <template #actions>
             <RouterLink
+              v-if="canWriteCertificates"
               :to="`/certificates?site=${site.id}&create=1`"
               class="inline-flex items-center gap-1 text-[13px] font-medium text-accent-300 transition-colors hover:text-accent-200"
             >
@@ -610,7 +654,7 @@ watch(siteId, () => {
       </div>
 
       <AppConfirmDialog
-        :open="rollbackOpen"
+        :open="canApplyOperations && rollbackOpen"
         :title="`Roll back ${site.primaryDomain}`"
         confirm-label="Roll back site"
         :busy="runner.busy.value"

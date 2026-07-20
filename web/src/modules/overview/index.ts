@@ -4,7 +4,7 @@ export const overviewModule: FeatureModule = {
   id: 'overview',
   name: 'Overview',
   description: 'Operational summary for this Nexa node.',
-  navigation: { label: 'Overview', to: '/', icon: 'grid', group: 'General', order: 0 },
+  navigation: { label: 'Overview', to: '/', icon: 'grid', group: 'General', order: 0, permission: 'system.read' },
   routes: [
     {
       path: '/',

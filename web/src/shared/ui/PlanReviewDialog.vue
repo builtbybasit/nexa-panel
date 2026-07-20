@@ -18,10 +18,12 @@ const props = withDefaults(
     expiresAt?: string
     busy?: boolean
     approveLabel?: string
+    /** Whether this session may execute the reviewed plan. */
+    canApprove?: boolean
     /** Set false when the consumer has no way to produce a fresh plan. */
     canRegenerate?: boolean
   }>(),
-  { approveLabel: 'Approve plan', canRegenerate: true },
+  { approveLabel: 'Approve plan', canApprove: true, canRegenerate: true },
 )
 
 const emit = defineEmits<{ approve: []; regenerate: []; close: [] }>()
@@ -91,6 +93,7 @@ onBeforeUnmount(() => {
       </AppAlert>
       <FactList v-if="facts?.length" :facts="facts" />
       <PlanSteps v-if="steps?.length || warnings?.length" :steps="steps ?? []" :warnings="warnings ?? []" />
+      <AppAlert v-if="!canApprove" tone="info">You can review this plan, but only an administrator can apply it.</AppAlert>
       <slot />
     </div>
 
@@ -105,7 +108,7 @@ onBeforeUnmount(() => {
       >
         Regenerate plan
       </AppButton>
-      <AppButton v-else-if="!expired" variant="primary" :loading="busy" @click="emit('approve')">
+      <AppButton v-else-if="!expired && canApprove" variant="primary" :loading="busy" @click="emit('approve')">
         {{ approveLabel }}
       </AppButton>
     </template>

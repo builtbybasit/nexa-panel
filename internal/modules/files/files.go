@@ -3,17 +3,13 @@ package files
 import (
 	"context"
 	"errors"
-
 	"net/http"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
 )
 

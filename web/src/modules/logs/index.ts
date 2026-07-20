@@ -4,7 +4,7 @@ export const logsModule: FeatureModule = {
   id: 'logs',
   name: 'Logs',
   description: 'Inspect, filter, and live-tail the log files under each managed site root.',
-  navigation: { label: 'Logs', to: '/logs', icon: 'file-text', group: 'Web hosting', order: 14 },
+  navigation: { label: 'Logs', to: '/logs', icon: 'file-text', group: 'Web hosting', order: 14, permission: 'logs.read' },
   routes: [
     {
       path: '/logs',

@@ -572,9 +572,18 @@ func TestSchedulesSiteGuardsAndScoping(t *testing.T) {
 	if response := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/tasks", createBody, h.dev); response.Code != http.StatusAccepted {
 		t.Fatalf("developer create = %d %s", response.Code, response.Body.String())
 	}
+	// Planning remains available to schedule writers, but applying, rolling
+	// back, and manually running site-user commands require the sensitive
+	// operations permission (and its recent-MFA step-up).
+	task := h.provision(t, `{"name":"Scoped","cronExpression":"* * * * *","command":"true","timeoutSeconds":60,"enabled":true}`)
+	for _, action := range []string{"apply", "rollback", "run"} {
+		response := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/tasks/"+task.ID+"/"+action, "", h.dev)
+		if response.Code != http.StatusForbidden || errorCode(t, response) != "permission_denied" {
+			t.Fatalf("developer %s = %d %s", action, response.Code, response.Body.String())
+		}
+	}
 
 	// Tasks are scoped to their site: the same task ID under another site 404s.
-	task := h.provision(t, `{"name":"Scoped","cronExpression":"* * * * *","command":"true","timeoutSeconds":60,"enabled":true}`)
 	if response := h.do(t, http.MethodGet, "/api/v1/sites/"+h.failed.ID+"/tasks/"+task.ID, "", h.admin); response.Code != http.StatusNotFound || errorCode(t, response) != "schedule_not_found" {
 		t.Fatalf("cross-site task get = %d %s", response.Code, response.Body.String())
 	}

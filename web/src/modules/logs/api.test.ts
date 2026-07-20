@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { downloadUrl, listLogs, LogsRequestError, readLog, subscribeToLogStream, type LogStreamEvent } from './api'
+import { downloadUrl, listLogs, readLog, subscribeToLogStream } from './api'
 
 const getInit = { credentials: 'same-origin', headers: { Accept: 'application/json' } }
 
@@ -79,9 +79,11 @@ describe('logs API', () => {
       'fetch',
       vi.fn().mockResolvedValue(Response.json({ code: 'invalid_name', message: 'Log names cannot escape logs/.' }, { status: 422 })),
     )
-    await expect(readLog('site_1', { name: '../secret', tail: 200 })).rejects.toEqual(
-      new LogsRequestError('Log names cannot escape logs/.', 422, 'invalid_name'),
-    )
+    await expect(readLog('site_1', { name: '../secret', tail: 200 })).rejects.toMatchObject({
+      message: 'Log names cannot escape logs/.',
+      status: 422,
+      code: 'invalid_name',
+    })
   })
 
   it('builds a same-origin streaming download URL', () => {
@@ -103,7 +105,7 @@ describe('logs API', () => {
   it('delivers parsed lines events and reports only terminal stream errors', () => {
     vi.stubGlobal('EventSource', FakeEventSource)
 
-    const received: LogStreamEvent[] = []
+    const received: Array<{ lines: string[]; rotated: boolean }> = []
     const onError = vi.fn()
     subscribeToLogStream('site_1', 'access.log', '', { onLines: (event) => received.push(event), onError })
     const source = FakeEventSource.instances[0]

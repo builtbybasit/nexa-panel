@@ -1,15 +1,13 @@
 package identity
 
 import (
-	"net/http"
-
 	"context"
+	"database/sql"
+	"errors"
+	"net/http"
 	"strings"
 
-	"database/sql"
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
-
-	"errors"
 
 	"github.com/uptrace/bun"
 )
@@ -23,16 +21,15 @@ func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	response := map[string]any{
 		"bootstrapRequired": bootstrapRequired, "authenticated": false,
-		"mfaEnabled": false, "mfaChallengeRequired": false,
+		"mfaEnabled": false, "mfaChallengeRequired": false, "mfaEnrollmentRequired": false,
 	}
 	if person, err := m.authenticate(r.Context(), r); err == nil {
 		response["user"] = person.User
 		enrolled := person.TOTPConfirmedAt != nil
 		response["mfaEnabled"] = enrolled
-		// Second-factor is optional: a session for an account without TOTP is
-		// authenticated straight away. Only an enrolled-but-unverified session
-		// still owes the challenge.
-		if enrolled && person.MFAVerifiedAt == nil {
+		if person.Role == "admin" && !enrolled {
+			response["mfaEnrollmentRequired"] = true
+		} else if enrolled && person.MFAVerifiedAt == nil {
 			response["mfaChallengeRequired"] = true
 		} else {
 			response["authenticated"] = true
@@ -95,8 +92,8 @@ func (m *Module) loginHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.Username = strings.TrimSpace(input.Username)
-	attemptKey := "password:" + remoteAddress(r)
-	if !m.attempts.Allow(attemptKey, m.now()) {
+	attemptKeys := loginAttemptKeys(input.Username, remoteAddress(r))
+	if !m.allowAttempts(attemptKeys) {
 		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many sign-in attempts. Try again later.")
 		return
 	}
@@ -123,18 +120,43 @@ func (m *Module) loginHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "session_unavailable", "A session could not be started.")
 		return
 	}
-	m.attempts.Reset(attemptKey)
+	m.resetAttempts(attemptKeys)
 	lastLogin := m.now().UTC()
 	_, _ = m.database.NewUpdate().Model((*userModel)(nil)).
 		Set("last_login_at = ?", lastLogin).Where("id = ?", user.ID).Exec(r.Context())
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &user.ID, Action: "identity.password_accepted", Subject: "user:" + user.ID, RemoteAddress: remoteAddress(r)})
-	// Accounts that never enrolled a second factor sign straight in; only an
-	// enrolled account is challenged. Enrollment is offered later, in the panel.
 	next := "mfa_challenge"
 	if model.TOTPConfirmedAt == nil {
-		next = "authenticated"
+		if user.Role == "admin" {
+			next = "mfa_enrollment"
+		} else {
+			next = "authenticated"
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": user, "next": next})
+}
+
+func loginAttemptKeys(username, peerAddress string) []string {
+	account := strings.ToLower(strings.TrimSpace(username))
+	return []string{
+		"password-account:" + account,
+		"password-peer-account:" + peerAddress + ":" + account,
+	}
+}
+
+func (m *Module) allowAttempts(keys []string) bool {
+	for _, key := range keys {
+		if !m.attempts.Allow(key, m.now()) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Module) resetAttempts(keys []string) {
+	for _, key := range keys {
+		m.attempts.Reset(key)
+	}
 }
 
 func (m *Module) invalidLogin(w http.ResponseWriter, r *http.Request, username string) {

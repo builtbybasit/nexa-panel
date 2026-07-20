@@ -1,8 +1,10 @@
 auth_status:
   get:
     operationId: getIdentityStatus
+    summary: Get Identity Status
     tags:
     - Identity
+    security: []
     responses:
       '200':
         description: Bootstrap and current-session status.
@@ -10,11 +12,15 @@ auth_status:
           application/json:
             schema:
               $ref: ../components/schemas/identity.yaml#/IdentityStatus
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 auth_bootstrap:
   post:
     operationId: bootstrapAdministrator
+    summary: Bootstrap Administrator
     tags:
     - Identity
+    security: []
     requestBody:
       required: true
       content:
@@ -37,8 +43,10 @@ auth_bootstrap:
 auth_login:
   post:
     operationId: login
+    summary: Login
     tags:
     - Identity
+    security: []
     requestBody:
       required: true
       content:
@@ -59,6 +67,7 @@ auth_login:
 auth_mfa_enroll:
   post:
     operationId: enrollMFA
+    summary: Enroll MFA
     tags:
     - Identity
     security:
@@ -75,6 +84,7 @@ auth_mfa_enroll:
 auth_mfa_confirm:
   post:
     operationId: confirmMFA
+    summary: Confirm MFA
     tags:
     - Identity
     security:
@@ -105,6 +115,7 @@ auth_mfa_confirm:
 auth_mfa_verify:
   post:
     operationId: verifyMFA
+    summary: Verify MFA
     tags:
     - Identity
     security:
@@ -144,12 +155,15 @@ auth_mfa_verify:
 auth_mfa_disable:
   post:
     operationId: disableMFA
+    summary: Disable MFA
     tags:
     - Identity
     description: >-
       Turn off the second factor for the signed-in account. Requires a fully
       authenticated session (a completed MFA challenge) and the account password,
-      so a stolen password alone cannot strip MFA.
+      so a stolen password alone cannot strip MFA. Administrators cannot disable
+      their mandatory factor through self-service; a recovery procedure must
+      replace it.
     security:
     - sessionCookie: []
     requestBody:
@@ -167,6 +181,8 @@ auth_mfa_disable:
               $ref: ../components/schemas/identity.yaml#/MFADisableResponse
       '401':
         description: The session is not fully authenticated, or the password is incorrect.
+      '403':
+        description: Administrator MFA cannot be disabled through self-service.
       '409':
         description: Multi-factor authentication is not enabled.
       '429':
@@ -174,6 +190,7 @@ auth_mfa_disable:
 auth_password:
   post:
     operationId: changePassword
+    summary: Change Password
     tags:
     - Identity
     description: >-
@@ -200,6 +217,7 @@ auth_password:
 auth_session:
   get:
     operationId: getSession
+    summary: Get Session
     tags:
     - Identity
     security:
@@ -216,6 +234,7 @@ auth_session:
 auth_logout:
   post:
     operationId: logout
+    summary: Logout
     tags:
     - Identity
     security:
@@ -223,3 +242,6 @@ auth_logout:
     responses:
       '204':
         description: The current session was revoked.
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

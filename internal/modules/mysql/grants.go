@@ -2,13 +2,11 @@ package mysql
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-
-	"database/sql"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-
-	"errors"
 )
 
 func (m *Module) ListGrants(ctx context.Context, databaseID string) ([]Grant, error) {

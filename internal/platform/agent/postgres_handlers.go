@@ -1,16 +1,9 @@
 package agent
 
 import (
-	"encoding/json"
-	"fmt"
-
 	"net/http"
 
-	"crypto/hmac"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
-
-	"crypto/sha256"
-	"crypto/subtle"
 )
 
 func WithPostgresOperator(operator postgresoperator.Operator) Option {
@@ -73,14 +66,11 @@ func (s *Server) postgresApplyHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) signPostgresPlan(plan postgresoperator.Plan) string {
 	plan.Signature = ""
-	encoded, _ := json.Marshal(plan)
-	mac := hmac.New(sha256.New, []byte(s.token))
-	_, _ = mac.Write(encoded)
-	return fmt.Sprintf("%x", mac.Sum(nil))
+	return signPayload(s.token, "postgresql.plan.v1", plan)
 }
 
 func (s *Server) verifyPostgresPlan(plan postgresoperator.Plan) bool {
 	provided := plan.Signature
-	expected := s.signPostgresPlan(plan)
-	return len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+	plan.Signature = ""
+	return verifyPayload(s.token, "postgresql.plan.v1", plan, provided)
 }

@@ -1,21 +1,17 @@
 package certificates
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-
+	"sort"
 	"time"
 
-	"context"
 	"github.com/uptrace/bun"
 
-	"sort"
-
 	"github.com/nexa-panel/nexa-panel/internal/modules/domains"
-
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
-
-	"encoding/json"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
 

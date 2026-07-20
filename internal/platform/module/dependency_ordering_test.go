@@ -1,18 +1,11 @@
 package module
 
-import (
-	"net/http"
-	"testing"
-)
+import "testing"
 
 type testModule struct{ descriptor Descriptor }
 
 func (m testModule) Descriptor() Descriptor  { return m.descriptor }
 func (m testModule) Register(Registry) error { return nil }
-
-type testRegistry struct{}
-
-func (testRegistry) Handle(string, http.Handler) error { return nil }
 
 func TestValidateAndSort(t *testing.T) {
 	modules, err := ValidateAndSort([]Module{

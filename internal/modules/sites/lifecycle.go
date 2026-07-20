@@ -1,20 +1,15 @@
 package sites
 
 import (
-	"errors"
-
-	"strings"
-
+	"context"
 	"encoding/json"
-	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-
+	"errors"
 	"fmt"
-
 	"path/filepath"
-
+	"strings"
 	"time"
 
-	"context"
+	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
 

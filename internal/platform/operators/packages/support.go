@@ -1,12 +1,13 @@
 package packages
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 // outputLimit caps captured command output so a runaway apt log cannot bloat
@@ -29,13 +30,7 @@ func fingerprint(value any) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomID() string { return secureid.Hex(16) }
 
 func commandError(action string, output []byte, err error) error {
 	message := strings.TrimSpace(string(output))

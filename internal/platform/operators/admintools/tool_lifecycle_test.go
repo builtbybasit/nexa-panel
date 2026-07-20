@@ -65,6 +65,13 @@ func TestDeployRendersHardenedLocalhostQuadlet(t *testing.T) {
 			t.Errorf("quadlet missing %q:\n%s", wanted, text)
 		}
 	}
+	config, err := os.ReadFile(filepath.Join(operator.configRoot, "pgadmin", "config_local.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), "WEBSERVER_AUTO_CREATE_USER = False") || strings.Contains(string(config), "HTTP_X_FORWARDED_USER") || strings.Contains(string(config), "HTTP_X_NEXA_PGADMIN_DISABLED") {
+		t.Fatalf("deployed pgAdmin must fail closed until a session capability is installed:\n%s", config)
+	}
 }
 
 func TestPhpMyAdminQuadletGrantsPrivilegedPortBind(t *testing.T) {
@@ -116,5 +123,92 @@ func TestLaunchBindsCredentialAndCreatesServerSideSignonSession(t *testing.T) {
 	}
 	if !strings.Contains(string(encoded), secret) || !strings.Contains(string(encoded), "PMA_single_signon_only_db") {
 		t.Fatalf("session=%s", encoded)
+	}
+}
+
+func TestPGAdminLaunchRotatesSessionBoundRemoteUserHeader(t *testing.T) {
+	runner := &fakeRunner{active: map[string]bool{"nexa-pgadmin.service": true}}
+	configRoot := filepath.Join(t.TempDir(), "config")
+	operator, err := NewHostOperator(runner, HostConfig{QuadletRoot: filepath.Join(t.TempDir(), "quadlets"), ConfigRoot: configRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator.now = func() time.Time { return time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC) }
+	if err := operator.prepareToolConfig(PGAdmin); err != nil {
+		t.Fatal(err)
+	}
+	secret := "database-secret"
+	digest := sha256.Sum256([]byte(secret))
+	launch := func(sessionID string) string {
+		t.Helper()
+		change := Change{Action: ActionLaunch, Tool: Tool{Kind: PGAdmin}, Launch: &Launch{
+			SessionID: sessionID, PanelUser: "admin@nexa.example.com", DatabaseHost: "host.containers.internal",
+			DatabasePort: 5432, Database: "app_db", Username: "app_user", SecretSHA256: hex.EncodeToString(digest[:]),
+		}}
+		plan, planErr := operator.Plan(context.Background(), change)
+		if planErr != nil {
+			t.Fatal(planErr)
+		}
+		if _, applyErr := operator.Apply(context.Background(), Execution{Plan: plan, Secret: secret}); applyErr != nil {
+			t.Fatal(applyErr)
+		}
+		encoded, readErr := os.ReadFile(filepath.Join(configRoot, "pgadmin", "config_local.py"))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		return string(encoded)
+	}
+
+	firstSession := "firstSessionToken1234"
+	firstConfig := launch(firstSession)
+	firstVariable, err := pgAdminRemoteUserVariable(firstSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(firstConfig, "WEBSERVER_REMOTE_USER = '"+firstVariable+"'") || strings.Contains(firstConfig, firstSession) {
+		t.Fatalf("first pgAdmin config is not bound to a non-plaintext session capability:\n%s", firstConfig)
+	}
+
+	secondSession := "secondSessionToken5678"
+	secondConfig := launch(secondSession)
+	secondVariable, err := pgAdminRemoteUserVariable(secondSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(secondConfig, "WEBSERVER_REMOTE_USER = '"+secondVariable+"'") || strings.Contains(secondConfig, firstVariable) {
+		t.Fatalf("second launch did not revoke the previous trusted header:\n%s", secondConfig)
+	}
+}
+
+func TestSecureWriteDoesNotFollowPredictableTemporarySymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "servers.json")
+	victim := filepath.Join(root, "victim")
+	if err := os.WriteFile(victim, []byte("do not overwrite"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, target+".tmp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := secureWrite(target, []byte("managed"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "do not overwrite" {
+		t.Fatalf("victim contents = %q; secureWrite followed the temporary symlink", contents)
+	}
+}
+
+func TestPlanRejectsQuadletImageDirectiveInjection(t *testing.T) {
+	operator, err := NewHostOperator(&fakeRunner{active: map[string]bool{}}, HostConfig{QuadletRoot: filepath.Join(t.TempDir(), "quadlets"), ConfigRoot: filepath.Join(t.TempDir(), "config")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = operator.Plan(context.Background(), Change{Action: ActionDeploy, Tool: Tool{Kind: PGAdmin, Image: "docker.io/dpage/pgadmin4:9.16\nVolume=/etc:/host"}})
+	if err == nil || !strings.Contains(err.Error(), "image reference") {
+		t.Fatalf("Plan() error = %v, want an invalid image-reference error", err)
 	}
 }

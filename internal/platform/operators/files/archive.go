@@ -3,20 +3,15 @@ package files
 import (
 	"archive/tar"
 	"archive/zip"
-
 	"compress/gzip"
 	"context"
-
 	"errors"
 	"fmt"
-
 	"io"
 	"io/fs"
 	"math"
-
 	"os"
 	"path"
-
 	"sort"
 	"strings"
 

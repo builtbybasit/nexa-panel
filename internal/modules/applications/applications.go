@@ -7,9 +7,7 @@ package applications
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
@@ -18,6 +16,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 	"github.com/uptrace/bun"
 )
 
@@ -231,13 +230,7 @@ func (m *Module) fail(ctx context.Context, id string, failure error) {
 		Set("updated_at = ?", m.now().UTC()).Where("id = ?", id).Exec(ctx)
 }
 
-func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomID() string { return secureid.Hex(16) }
 
 func (m *Module) planJob(ctx context.Context, raw json.RawMessage, report func(int, string) error) (any, error) {
 	var request struct {

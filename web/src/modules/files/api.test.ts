@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  abortUpload,
   archiveEntries,
-  beginUpload,
-  commitUpload,
   copyEntry,
   deleteEntry,
   directorySize,
@@ -15,9 +12,6 @@ import {
   makeDirectory,
   moveEntry,
   readFileContent,
-  statFile,
-  UPLOAD_CHUNK_SIZE,
-  uploadChunk,
   uploadFile,
   writeFileContent,
 } from './api'
@@ -33,6 +27,7 @@ const entry = {
 }
 
 const getInit = { credentials: 'same-origin', headers: { Accept: 'application/json' } }
+const uploadChunkSize = 4 * 1024 * 1024
 
 function jsonInit(method: string, body: unknown) {
   return {
@@ -48,16 +43,14 @@ afterEach(() => {
 })
 
 describe('files API', () => {
-  it('lists, stats, and reads entries with the path pinned in the query string', async () => {
+  it('lists and reads entries with the path pinned in the query string', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(Response.json({ items: [entry], truncated: false }))
-      .mockResolvedValueOnce(Response.json(entry))
       .mockResolvedValueOnce(Response.json({ content: '<?php', etag: 'abc', size: 512, truncated: false, binary: false }))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(listFiles('site_1', 'public/app dir')).resolves.toEqual({ items: [entry], truncated: false })
-    await expect(statFile('site_1', 'public/index.php')).resolves.toEqual(entry)
     await expect(readFileContent('site_1', 'public/index.php')).resolves.toEqual({
       content: '<?php',
       etag: 'abc',
@@ -66,8 +59,7 @@ describe('files API', () => {
       binary: false,
     })
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/sites/site_1/files?path=public%2Fapp%20dir', getInit)
-    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/sites/site_1/files/stat?path=public%2Findex.php', getInit)
-    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/v1/sites/site_1/files/content?path=public%2Findex.php', getInit)
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/sites/site_1/files/content?path=public%2Findex.php', getInit)
   })
 
   it('saves content with the expected etag and surfaces 409 conflicts as typed errors', async () => {
@@ -122,46 +114,8 @@ describe('files API', () => {
     )
   })
 
-  it('drives the upload session endpoints', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(Response.json({ uploadId: 'up_1' }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(Response.json(entry))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    await expect(beginUpload('site_1', { path: 'public/upload.bin', size: 3, overwrite: true })).resolves.toEqual({ uploadId: 'up_1' })
-    const chunk = new Blob([new Uint8Array([1, 2, 3])])
-    await expect(uploadChunk('site_1', 'up_1', 0, chunk)).resolves.toBeUndefined()
-    await expect(commitUpload('site_1', 'up_1')).resolves.toEqual(entry)
-    await expect(abortUpload('site_1', 'up_1')).resolves.toBeUndefined()
-
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      '/api/v1/sites/site_1/files/uploads',
-      jsonInit('POST', { path: 'public/upload.bin', size: 3, overwrite: true }),
-    )
-    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/sites/site_1/files/uploads/up_1?offset=0', {
-      method: 'PUT',
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/octet-stream' },
-      body: chunk,
-    })
-    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/v1/sites/site_1/files/uploads/up_1/commit', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' },
-    })
-    expect(fetchMock).toHaveBeenNthCalledWith(4, '/api/v1/sites/site_1/files/uploads/up_1', {
-      method: 'DELETE',
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' },
-    })
-  })
-
   it('uploads a file in sequential 4 MiB chunks with progress callbacks', async () => {
-    const total = UPLOAD_CHUNK_SIZE + 1024
+    const total = uploadChunkSize + 1024
     const file = new File([new Uint8Array(total)], 'big.bin')
     const fetchMock = vi
       .fn()
@@ -176,13 +130,13 @@ describe('files API', () => {
 
     expect(progress).toEqual([
       [0, total],
-      [UPLOAD_CHUNK_SIZE, total],
+      [uploadChunkSize, total],
       [total, total],
     ])
     expect(fetchMock).toHaveBeenCalledTimes(4)
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/v1/sites/site_1/files/uploads/up_2?offset=0')
-    expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/v1/sites/site_1/files/uploads/up_2?offset=${UPLOAD_CHUNK_SIZE}`)
-    expect((fetchMock.mock.calls[1]?.[1]?.body as Blob).size).toBe(UPLOAD_CHUNK_SIZE)
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/v1/sites/site_1/files/uploads/up_2?offset=${uploadChunkSize}`)
+    expect((fetchMock.mock.calls[1]?.[1]?.body as Blob).size).toBe(uploadChunkSize)
     expect((fetchMock.mock.calls[2]?.[1]?.body as Blob).size).toBe(1024)
     expect(fetchMock.mock.calls[3]?.[0]).toBe('/api/v1/sites/site_1/files/uploads/up_2/commit')
   })

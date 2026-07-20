@@ -1,7 +1,6 @@
 import { apiRequest } from '@/shared/api/request'
 
-import type { Job, JobEvent } from '../jobs/api'
-import { subscribeToJob } from '../jobs/api'
+import type { Job } from '../jobs/api'
 
 export type AppAction = 'package.install' | 'package.remove'
 
@@ -48,8 +47,4 @@ export function getPlan(id: string) {
 
 export function applyPlan(id: string) {
   return request<Job>(`/api/v1/applications/${id}/apply`, { method: 'POST' })
-}
-
-export function watchApplicationJob(id: number, onEvent: (event: JobEvent) => void, onError?: () => void) {
-  return subscribeToJob(id, onEvent, onError)
 }

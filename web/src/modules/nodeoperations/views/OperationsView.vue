@@ -2,6 +2,7 @@
 import { useQuery } from '@tanstack/vue-query'
 import { computed, ref } from 'vue'
 
+import { useIdentityStore } from '@/modules/identity/store'
 import { formatTime } from '@/shared/formatters'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import {
@@ -30,13 +31,16 @@ const planError = ref('')
 const confirmRollbackOpen = ref(false)
 
 const runner = useJobRunner()
+const identity = useIdentityStore()
+const canPlan = computed(() => identity.can('operations.plan'))
+const canApply = computed(() => identity.can('operations.apply'))
 
 // Spread-bound so the optional props are omitted (not passed as undefined),
 // which exactOptionalPropertyTypes requires.
 const runnerJobLink = computed(() => (runner.jobId.value === undefined ? {} : { jobId: runner.jobId.value }))
 const runnerTiming = computed(() => (runner.startedAtMs.value === undefined ? {} : { startedAtMs: runner.startedAtMs.value }))
 
-const observationQuery = useQuery({ queryKey: ['node', 'probe'], queryFn: observeProbe, retry: false })
+const observationQuery = useQuery({ queryKey: ['node', 'probe'], queryFn: observeProbe, enabled: canPlan, retry: false })
 const current = computed(() => observationQuery.data.value)
 
 function capitalize(value: string): string {
@@ -75,6 +79,7 @@ const snapshotEntries = computed(() => {
 })
 
 async function createPlan() {
+  if (!canPlan.value) return
   planning.value = true
   planError.value = ''
   runner.error.value = ''
@@ -91,7 +96,7 @@ async function createPlan() {
 
 async function queueOperation(rollback: boolean) {
   const currentPlan = plan.value
-  if (!currentPlan) return
+  if (!currentPlan || !canApply.value) return
   await runner.run(async () => (rollback ? await rollbackPlan(currentPlan) : await applyPlan(currentPlan)).id, {
     onSettled: async (event) => {
       applied.value = event.state === 'succeeded' && !rollback
@@ -103,6 +108,7 @@ async function queueOperation(rollback: boolean) {
 }
 
 function confirmRollback() {
+  if (!canApply.value) return
   confirmRollbackOpen.value = false
   void queueOperation(true)
 }
@@ -121,8 +127,11 @@ function confirmRollback() {
     <AppAlert v-if="observationQuery.isError.value" tone="warning">
       The privileged agent is unavailable. Start <code class="font-mono">nexa agent</code> before planning an operation.
     </AppAlert>
+    <AppAlert v-if="!canPlan" tone="warning">
+      Your account does not have permission to prepare node operations.
+    </AppAlert>
 
-    <div class="grid gap-4 lg:grid-cols-2">
+    <div v-if="canPlan" class="grid gap-4 lg:grid-cols-2">
       <AppCard
         eyebrow="Desired state"
         title="Managed probe file"
@@ -188,10 +197,13 @@ function confirmRollback() {
             v-bind="runnerTiming"
           />
           <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="runnerJobLink" />
+          <AppAlert v-if="!canApply" tone="info">
+            You can prepare and review this plan, but only an administrator can apply it.
+          </AppAlert>
 
           <div class="flex flex-wrap gap-2">
             <AppButton
-              v-if="!applied"
+              v-if="!applied && canApply"
               variant="primary"
               :loading="runner.busy.value"
               :disabled="!plan.changed"
@@ -200,7 +212,7 @@ function confirmRollback() {
               Approve and apply
             </AppButton>
             <AppButton
-              v-else
+              v-else-if="applied && canApply"
               variant="danger"
               icon="rotate-ccw"
               :loading="runner.busy.value"
@@ -222,7 +234,7 @@ function confirmRollback() {
     </div>
 
     <AppConfirmDialog
-      :open="confirmRollbackOpen"
+      :open="canApply && confirmRollbackOpen"
       title="Roll back this plan"
       confirm-label="Roll back"
       :busy="runner.busy.value"

@@ -7,14 +7,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "deadcode": "knip && knip --production",
+    "openapi:lint": "redocly lint ../openapi/openapi.yaml --config ../redocly.yaml --max-problems 1000",
     "typecheck": "vue-tsc -b",
     "test": "vitest run"
   },
   "dependencies": {
-    "@iconify-json/lucide": "^1.2.117",
-    "@iconify/vue": "^5.0.1",
     "@tanstack/vue-query": "^5.83.0",
     "clsx": "^2.1.1",
+    "lucide-vue-next": "^1.0.0",
     "pinia": "^3.0.3",
     "qrcode.vue": "^3.10.0",
     "reka-ui": "^2.10.1",
@@ -23,9 +24,13 @@
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
+    "@redocly/cli": "2.39.0",
     "@tailwindcss/vite": "^4.3.2",
     "@types/node": "^22.15.30",
     "@vitejs/plugin-vue": "^6.0.0",
+    "@vue/test-utils": "^2.4.11",
+    "happy-dom": "^20.11.0",
+    "knip": "6.25.0",
     "tailwindcss": "^4.3.2",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.8.3",

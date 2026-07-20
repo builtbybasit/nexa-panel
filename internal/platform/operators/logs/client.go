@@ -1,21 +1,16 @@
 package logs
 
 import (
-	"bytes"
 	"context"
-
 	"encoding/json"
 	"errors"
 	"fmt"
-
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-
 	"time"
 
-	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
+	"github.com/nexa-panel/nexa-panel/internal/platform/agentclient"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
 
@@ -29,23 +24,18 @@ type ReadCall struct {
 }
 
 type UnixClient struct {
-	tokenPath string
-	json      *http.Client
-	stream    *http.Client
+	json   *agentclient.Client
+	stream *agentclient.Client
 }
 
 var _ Operator = (*UnixClient)(nil)
 
 func NewUnixClient(socketPath, tokenPath string) *UnixClient {
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
-	}}
 	return &UnixClient{
-		tokenPath: tokenPath,
-		json:      &http.Client{Transport: transport, Timeout: 2 * time.Minute},
+		json: agentclient.New(socketPath, tokenPath, "logs", "node agent rejected the log operation", 2*time.Minute, agentclient.WithResponseLimit(8*1024*1024)),
 		// Streaming downloads are bounded by the caller's context, not a
 		// wall-clock timeout that a large log would always exceed.
-		stream: &http.Client{Transport: transport},
+		stream: agentclient.New(socketPath, tokenPath, "logs", "node agent rejected the log operation", 0),
 	}
 }
 
@@ -63,11 +53,7 @@ func (c *UnixClient) Read(ctx context.Context, scope sitefs.Scope, request ReadR
 
 func (c *UnixClient) Download(ctx context.Context, scope sitefs.Scope, name string) (io.ReadCloser, Entry, error) {
 	values := url.Values{"name": []string{name}}
-	request, err := c.newRequest(ctx, http.MethodGet, "/v1/logs/download?"+scopeQuery(scope, values), nil)
-	if err != nil {
-		return nil, Entry{}, err
-	}
-	response, err := c.stream.Do(request)
+	response, err := c.stream.Do(ctx, http.MethodGet, "/v1/logs/download?"+scopeQuery(scope, values), nil, "")
 	if err != nil {
 		return nil, Entry{}, fmt.Errorf("call logs agent: %w", err)
 	}
@@ -83,41 +69,13 @@ func (c *UnixClient) Download(ctx context.Context, scope sitefs.Scope, name stri
 	return response.Body, entry, nil
 }
 
-func (c *UnixClient) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
-	request, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, body)
-	if err != nil {
-		return nil, err
-	}
-	token, err := agentauth.Read(c.tokenPath)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	return request, nil
-}
-
 func (c *UnixClient) call(ctx context.Context, path string, input, output any) error {
-	encoded, err := json.Marshal(input)
-	if err != nil {
-		return err
+	err := c.json.JSON(ctx, http.MethodPost, path, input, output)
+	var responseError *agentclient.ResponseError
+	if errors.As(err, &responseError) && responseError.Code != "" && StatusFor(responseError.Code) != http.StatusInternalServerError {
+		return &OperationError{Code: responseError.Code, Message: responseError.Message}
 	}
-	request, err := c.newRequest(ctx, http.MethodPost, path, bytes.NewReader(encoded))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := c.json.Do(request)
-	if err != nil {
-		return fmt.Errorf("call logs agent: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return decodeFailure(response)
-	}
-	if output == nil {
-		return nil
-	}
-	return json.NewDecoder(io.LimitReader(response.Body, 8*1024*1024)).Decode(output)
+	return err
 }
 
 func scopeQuery(scope sitefs.Scope, values url.Values) string {

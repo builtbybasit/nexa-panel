@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { useIdentityStore } from '@/modules/identity/store'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import {
   AppAlert,
@@ -22,6 +23,8 @@ import { createSite, listRuntimes, listSites, type Runtime, type Site } from '..
 
 const router = useRouter()
 const runner = useJobRunner()
+const identity = useIdentityStore()
+const canCreate = computed(() => identity.can('sites.write'))
 
 // ── Data ──────────────────────────────────────────────────────────────────
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
@@ -30,39 +33,20 @@ const sites = computed<Site[]>(() => sitesQuery.data.value ?? [])
 const runtimes = computed<Runtime[]>(() => runtimesQuery.data.value ?? [])
 
 // ── Wizard state ─────────────────────────────────────────────────────────
-type StepKey = 'template' | 'domain' | 'configuration' | 'done'
+type StepKey = 'domain' | 'configuration' | 'done'
 const steps: { key: StepKey; label: string }[] = [
-  { key: 'template', label: 'Template' },
   { key: 'domain', label: 'Domain' },
   { key: 'configuration', label: 'Configuration' },
   { key: 'done', label: 'Done' },
 ]
 const step = ref(0)
 
-const selectedTemplate = ref('')
 const displayName = ref('')
 const primaryDomain = ref('')
 const phpVersion = ref('')
 const nameError = ref('')
 const domainError = ref('')
 const createdSite = ref<Site>()
-
-// ── Templates ──────────────────────────────────────────────────────────────
-interface Template {
-  id: string
-  label: string
-  icon: string
-  desc: string
-  ready?: boolean
-  soon?: boolean
-}
-const templates: Template[] = [
-  { id: 'php', label: 'PHP', icon: 'file-code-2', desc: 'Managed PHP-FPM site behind Nginx', ready: true },
-  { id: 'static', label: 'Static site', icon: 'panels-top-left', desc: 'Plain HTML, CSS and JavaScript', soon: true },
-  { id: 'wordpress', label: 'WordPress', icon: 'globe', desc: 'WordPress CMS, installed for you', soon: true },
-  { id: 'nodejs', label: 'Node.js', icon: 'hexagon', desc: 'Run a Node.js application', soon: true },
-  { id: 'reverse-proxy', label: 'Reverse proxy', icon: 'network', desc: 'Proxy requests to an upstream', soon: true },
-]
 
 // ── Slug derivation (silent; kept unique against existing sites) ────────────
 function slugify(v: string): string {
@@ -96,7 +80,7 @@ const socketPath = computed(() => '/run/php/nexa-' + derivedSlug.value + '.sock'
 
 // ── Runtime handling ─────────────────────────────────────────────────────
 const runtimesEmpty = computed(() => runtimesQuery.isSuccess.value && runtimes.value.length === 0)
-const createDisabled = computed(() => runtimes.value.length === 0)
+const createDisabled = computed(() => !canCreate.value || runtimes.value.length === 0)
 
 // Preselect the first installed runtime once the list arrives.
 watch(
@@ -155,17 +139,12 @@ const progressExtras = computed(() => ({
 function cancel() {
   void router.push('/sites')
 }
-function selectTemplate(t: Template) {
-  if (!t.ready) return
-  selectedTemplate.value = t.id
-  step.value = 1
-}
 function continueFromDomain() {
-  if (validate()) step.value = 2
+  if (canCreate.value && validate()) step.value = 1
 }
 
 async function submit() {
-  if (runner.busy.value || !validate()) return
+  if (!canCreate.value || runner.busy.value || !validate()) return
   const slug = deriveSlug(displayName.value, primaryDomain.value, taken.value)
   await runner.run(
     async () => {
@@ -187,19 +166,19 @@ async function submit() {
         await sitesQuery.refetch()
         const updated = sitesQuery.data.value?.find((s) => s.id === createdSite.value?.id)
         if (updated) createdSite.value = updated
-        step.value = 3
+        step.value = 2
       },
     },
   )
 }
 
 function createAnother() {
+  if (!canCreate.value) return
   displayName.value = ''
   primaryDomain.value = ''
   phpVersion.value = runtimes.value[0]?.version ?? ''
   nameError.value = ''
   domainError.value = ''
-  selectedTemplate.value = ''
   createdSite.value = undefined
   runner.reset()
   step.value = 0
@@ -228,6 +207,11 @@ function labelClass(index: number): string {
       <AppButton variant="ghost" icon="arrow-left" @click="cancel">Cancel</AppButton>
     </PageHeader>
 
+    <AppAlert v-if="!canCreate" tone="warning">
+      Your account can view sites but does not have permission to create them.
+    </AppAlert>
+
+    <template v-else>
     <!-- Stepper -->
     <AppCard>
       <ol class="flex items-center justify-between gap-1 sm:gap-3">
@@ -252,53 +236,8 @@ function labelClass(index: number): string {
       </ol>
     </AppCard>
 
-    <!-- STEP 0 — Template -->
-    <div v-if="step === 0" class="mx-auto max-w-4xl space-y-4">
-      <div>
-        <p class="text-[11px] font-bold tracking-[0.12em] text-ink-muted uppercase">Choose template</p>
-        <h2 class="mt-1 text-[15px] font-semibold text-ink">What kind of site are you creating?</h2>
-        <p class="mt-1 text-[13px] text-ink-secondary">Pick a starting point. More templates are on the way.</p>
-      </div>
-      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <component
-          :is="t.ready ? 'button' : 'div'"
-          v-for="t in templates"
-          :key="t.id"
-          :type="t.ready ? 'button' : undefined"
-          :aria-disabled="t.ready ? undefined : 'true'"
-          :tabindex="t.ready ? undefined : -1"
-          class="group relative flex flex-col gap-3 rounded-2xl border border-outline bg-surface/80 p-5 text-left transition-colors"
-          :class="
-            t.ready
-              ? 'cursor-pointer hover:border-accent-400/40 hover:bg-white/[0.04] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400'
-              : 'cursor-default opacity-55'
-          "
-          @click="selectTemplate(t)"
-        >
-          <span
-            v-if="t.soon"
-            class="absolute right-3 top-3 rounded-full border border-outline bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-bold tracking-[0.08em] text-ink-muted uppercase"
-          >
-            Soon
-          </span>
-          <span v-else class="absolute right-3 top-3">
-            <StatusPill label="Ready" tone="success" />
-          </span>
-          <span
-            class="grid size-11 place-items-center rounded-xl border border-outline bg-white/[0.03] text-accent-300 transition-colors group-hover:border-accent-400/30 group-hover:text-accent-200"
-          >
-            <AppIcon :name="t.icon" :size="22" />
-          </span>
-          <span class="min-w-0">
-            <span class="block text-[15px] font-semibold text-ink">{{ t.label }}</span>
-            <span class="mt-1 block text-[13px] text-ink-secondary">{{ t.desc }}</span>
-          </span>
-        </component>
-      </div>
-    </div>
-
-    <!-- STEP 1 — Domain -->
-    <div v-else-if="step === 1" class="mx-auto max-w-3xl">
+    <!-- STEP 0 — Domain -->
+    <div v-if="step === 0" class="mx-auto max-w-3xl">
       <AppCard
         eyebrow="Domain"
         title="Name your site"
@@ -327,15 +266,14 @@ function labelClass(index: number): string {
           </FormField>
         </div>
 
-        <div class="mt-6 flex items-center justify-between gap-3">
-          <AppButton variant="secondary" icon="arrow-left" @click="step = 0">Previous step</AppButton>
+        <div class="mt-6 flex items-center justify-end gap-3">
           <AppButton variant="primary" icon="arrow-right" @click="continueFromDomain">Continue</AppButton>
         </div>
       </AppCard>
     </div>
 
-    <!-- STEP 2 — Configuration -->
-    <div v-else-if="step === 2" class="mx-auto max-w-3xl space-y-4">
+    <!-- STEP 1 — Configuration -->
+    <div v-else-if="step === 1" class="mx-auto max-w-3xl space-y-4">
       <div>
         <p class="text-[11px] font-bold tracking-[0.12em] text-ink-muted uppercase">Configuration</p>
         <h2 class="mt-1 text-[15px] font-semibold text-ink">Default settings have been set — they suit most cases.</h2>
@@ -453,28 +391,14 @@ function labelClass(index: number): string {
               </span>
               <span class="text-[13px] font-semibold text-ink">Backup copies</span>
             </div>
-            <StatusPill label="Soon" tone="neutral" />
+            <StatusPill label="Optional" tone="neutral" />
           </div>
-          <p class="mt-3 text-[12px] text-ink-muted">Scheduled backups arrive in a future release.</p>
-        </div>
-
-        <!-- FTP / SFTP -->
-        <div class="rounded-2xl border border-outline bg-surface/80 p-4">
-          <div class="flex items-start justify-between gap-3">
-            <div class="flex items-center gap-2.5">
-              <span class="grid size-9 place-items-center rounded-xl border border-outline bg-white/[0.03] text-accent-300">
-                <AppIcon name="key-round" :size="18" />
-              </span>
-              <span class="text-[13px] font-semibold text-ink">FTP / SFTP</span>
-            </div>
-            <StatusPill label="Soon" tone="neutral" />
-          </div>
-          <p class="mt-3 text-[12px] text-ink-muted">Managed file-transfer credentials are on the roadmap.</p>
+          <p class="mt-3 text-[12px] text-ink-muted">Add this site to a backup plan after creation.</p>
         </div>
       </div>
 
       <div class="flex items-center justify-between gap-3">
-        <AppButton variant="secondary" icon="arrow-left" :disabled="runner.busy.value" @click="step = 1">
+        <AppButton variant="secondary" icon="arrow-left" :disabled="runner.busy.value" @click="step = 0">
           Previous step
         </AppButton>
         <AppButton variant="primary" icon="check" :loading="runner.busy.value" :disabled="createDisabled" @click="submit">
@@ -486,8 +410,8 @@ function labelClass(index: number): string {
       <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="progressExtras" />
     </div>
 
-    <!-- STEP 3 — Done -->
-    <div v-else-if="step === 3 && createdSite" class="mx-auto max-w-4xl">
+    <!-- STEP 2 — Done -->
+    <div v-else-if="step === 2 && createdSite" class="mx-auto max-w-4xl">
       <AppCard>
         <div class="grid gap-8 lg:grid-cols-[1.1fr_1fr] lg:items-center">
           <div>
@@ -498,8 +422,8 @@ function labelClass(index: number): string {
               {{ createdSite.primaryDomain }} created!
             </h2>
             <p class="mt-2 max-w-md text-[13px] leading-relaxed text-ink-secondary">
-              Your site is configured and a plan is ready. Review it and activate to go live — nothing changes on the
-              server until you approve.
+              Your site is configured and a plan is ready. Review it before activation — nothing changes on the server
+              until an administrator approves it.
             </p>
             <div class="mt-3">
               <StatusPill :status="createdSite.status" />
@@ -507,7 +431,7 @@ function labelClass(index: number): string {
 
             <div class="mt-6 flex flex-wrap gap-2">
               <AppButton variant="primary" icon="arrow-right" @click="router.push('/sites/' + createdSite.id)">
-                Review &amp; activate
+                {{ identity.can('operations.apply') ? 'Review & activate' : 'Review plan' }}
               </AppButton>
               <AppButton variant="ghost" @click="createAnother">Create another site</AppButton>
             </div>
@@ -566,5 +490,6 @@ function labelClass(index: number): string {
         </div>
       </AppCard>
     </div>
+    </template>
   </section>
 </template>

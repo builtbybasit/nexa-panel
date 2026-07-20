@@ -1,17 +1,9 @@
 package agent
 
 import (
-	"encoding/json"
-
 	"net/http"
 
-	"crypto/hmac"
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
-
-	"crypto/sha256"
-	"crypto/subtle"
-
-	"fmt"
 )
 
 func WithAdminToolOperator(operator admintooloperator.Operator) Option {
@@ -62,14 +54,11 @@ func (s *Server) adminToolsApplyHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) signAdminToolPlan(plan admintooloperator.Plan) string {
 	plan.Signature = ""
-	encoded, _ := json.Marshal(plan)
-	mac := hmac.New(sha256.New, []byte(s.token))
-	_, _ = mac.Write(encoded)
-	return fmt.Sprintf("%x", mac.Sum(nil))
+	return signPayload(s.token, "admin-tool.plan.v1", plan)
 }
 
 func (s *Server) verifyAdminToolPlan(plan admintooloperator.Plan) bool {
 	provided := plan.Signature
-	expected := s.signAdminToolPlan(plan)
-	return len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+	plan.Signature = ""
+	return verifyPayload(s.token, "admin-tool.plan.v1", plan, provided)
 }

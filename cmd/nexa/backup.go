@@ -7,8 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
-	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 )
@@ -38,21 +39,37 @@ func runBackup(args []string, logger *slog.Logger) error {
 		return fmt.Errorf("open state database: %w", err)
 	}
 	defer store.Close()
-	auditLog, err := audit.New(ctx, store)
+	enqueuer, err := jobs.NewEnqueuer(ctx, store)
 	if err != nil {
-		return fmt.Errorf("initialize audit log: %w", err)
+		return fmt.Errorf("initialize job enqueuer: %w", err)
 	}
-	queue, err := jobs.New(ctx, store, auditLog, logger)
+	var planName, encodedSiteIDs, encodedDatabaseIDs string
+	err = store.QueryRowContext(
+		ctx,
+		"SELECT name, site_ids, database_ids FROM backup_plans WHERE id = ? AND enabled = 1", strings.TrimSpace(*planID),
+	).Scan(&planName, &encodedSiteIDs, &encodedDatabaseIDs)
 	if err != nil {
-		return fmt.Errorf("initialize job queue: %w", err)
+		return fmt.Errorf("load enabled backup plan: %w", err)
 	}
-	// Submit validates the kind against registered handlers. This process only
-	// enqueues; the running API worker owns the real handler and executes the
-	// job. Register a stub so the kind is accepted here.
-	queue.RegisterHandler("backup.run", func(context.Context, json.RawMessage, func(int, string) error) (any, error) {
-		return nil, nil
-	})
-	job, err := queue.SubmitTitled(ctx, "backup.run", "Scheduled backup", map[string]string{"planId": *planID}, nil)
+	siteIDs := make([]string, 0)
+	if err := json.Unmarshal([]byte(encodedSiteIDs), &siteIDs); err != nil {
+		return fmt.Errorf("decode backup plan site scope: %w", err)
+	}
+	var databaseIDs []string
+	if err := json.Unmarshal([]byte(encodedDatabaseIDs), &databaseIDs); err != nil {
+		return fmt.Errorf("decode backup plan database scope: %w", err)
+	}
+	if len(databaseIDs) != 0 {
+		siteIDs = nil
+	}
+	// Timer retries in the same minute collapse to one durable row. The running
+	// API owns execution and applies the handler's fail-on-interruption policy.
+	idempotencyKey := "scheduled-backup:" + strings.TrimSpace(*planID) + ":" + time.Now().UTC().Format("20060102T1504")
+	job, err := enqueuer.EnqueueTitled(ctx, "backup.run", "Back up "+planName,
+		map[string]string{"planId": strings.TrimSpace(*planID)}, jobs.EnqueueOptions{
+			SubmitOptions:  jobs.SubmitOptions{SiteIDs: siteIDs, IdempotencyKey: idempotencyKey},
+			RecoveryPolicy: jobs.RecoveryFail,
+		})
 	if err != nil {
 		return fmt.Errorf("enqueue backup: %w", err)
 	}

@@ -1,6 +1,7 @@
 node_probe_observe:
   get:
     operationId: observeManagedProbe
+    summary: Observe Managed Probe
     tags:
     - Node Operations
     x-permission: system.read
@@ -15,9 +16,12 @@ node_probe_observe:
               $ref: ../components/schemas/node.yaml#/NodeSnapshot
       '503':
         description: The privileged node agent is unavailable.
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 node_probe_plan:
   post:
     operationId: planManagedProbe
+    summary: Plan Managed Probe
     tags:
     - Node Operations
     x-permission: operations.plan
@@ -36,9 +40,12 @@ node_probe_plan:
           application/json:
             schema:
               $ref: ../components/schemas/node.yaml#/NodePlan
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 node_probe_apply:
   post:
     operationId: applyManagedProbePlan
+    summary: Apply Managed Probe Plan
     tags:
     - Node Operations
     x-permission: operations.apply
@@ -57,9 +64,12 @@ node_probe_apply:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 node_probe_rollback:
   post:
     operationId: rollbackManagedProbePlan
+    summary: Rollback Managed Probe Plan
     tags:
     - Node Operations
     x-permission: operations.apply
@@ -78,3 +88,6 @@ node_probe_rollback:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

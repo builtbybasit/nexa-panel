@@ -2,14 +2,12 @@ package domains
 
 import (
 	"context"
-	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
-
 	"errors"
 	"strings"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
 
 func (m *Module) Create(ctx context.Context, request CreateRequest, actor *string) (Domain, jobs.Job, error) {

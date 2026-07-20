@@ -1,6 +1,7 @@
 certificates:
   get:
     operationId: listCertificates
+    summary: List Certificates
     tags:
     - Certificates
     x-permission: certificates.read
@@ -23,8 +24,11 @@ certificates:
                   type: array
                   items:
                     $ref: ../components/schemas/certificates.yaml#/Certificate
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createCertificate
+    summary: Create Certificate
     tags:
     - Certificates
     x-permission: certificates.write
@@ -39,9 +43,12 @@ certificates:
     responses:
       '202':
         description: HTTP-01 issuance planning was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 certificates_id_plan:
   get:
     operationId: getCertificatePlan
+    summary: Get Certificate Plan
     tags:
     - Certificates
     x-permission: certificates.read
@@ -56,9 +63,12 @@ certificates_id_plan:
     responses:
       '200':
         description: Agent-signed certificate lifecycle plan
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 certificates_id_plans:
   post:
     operationId: prepareCertificateOperation
+    summary: Prepare Certificate Operation
     tags:
     - Certificates
     x-permission: certificates.write
@@ -92,9 +102,12 @@ certificates_id_plans:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 certificates_id_apply:
   post:
     operationId: applyCertificateOperation
+    summary: Apply Certificate Operation
     tags:
     - Certificates
     x-permission: operations.apply
@@ -113,3 +126,6 @@ certificates_id_apply:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

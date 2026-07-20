@@ -1,40 +1,29 @@
 package main
 
 import (
-	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
-	"log/slog"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
-	"os"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/agent"
-
-	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
-
-	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
-
-	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-	"github.com/nexa-panel/nexa-panel/internal/platform/version"
-
-	"flag"
-	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
-
 	"context"
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
 	"os/signal"
 	"syscall"
 
-	"fmt"
-
+	"github.com/nexa-panel/nexa-panel/internal/platform/agent"
+	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
-
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
-
-	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
-
+	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
+	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
+	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
+	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
+	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
+	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/version"
 )
 
 func runAgent(args []string, logger *slog.Logger) error {

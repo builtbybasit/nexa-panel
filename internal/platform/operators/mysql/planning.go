@@ -3,9 +3,7 @@ package mysql
 import (
 	"context"
 	"errors"
-
 	"path/filepath"
-
 	"strings"
 	"time"
 )
@@ -119,7 +117,7 @@ func planDescription(change Change) ([]string, []string, bool) {
 	case ActionCreateBackup:
 		return []string{"Create a consistent logical SQL backup.", "Hash the completed artifact."}, nil, false
 	case ActionRestoreBackup:
-		return []string{"Create an automatic rollback dump.", "Recreate and restore the selected database.", "Restore the rollback dump automatically if import fails."}, []string{"The database is unavailable during replacement."}, true
+		return []string{"Create an automatic rollback dump.", "Recreate and restore the selected database.", "Verify the restored database and roll back if import or verification fails."}, []string{"The database is unavailable during replacement."}, true
 	default:
 		return nil, nil, false
 	}

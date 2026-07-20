@@ -9,9 +9,8 @@ import (
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 )
 
-// errAccountInUse is returned when a delete is refused because a plan still
-// references the account. Plans arrive in Phase 2; until then this never fires,
-// but the guard is wired now so the delete contract does not change later.
+// errAccountInUse prevents storage credentials from disappearing while a plan
+// or stored copy still depends on them.
 var errAccountInUse = errors.New("this account is still used by one or more backup plans")
 
 // validationError carries a client-facing 400 message out of the business layer.

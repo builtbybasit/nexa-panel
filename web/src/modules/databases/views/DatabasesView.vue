@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { useCollection } from '@/shared/composables/useCollection'
 import { useJobRunner, type JobMessage } from '@/shared/composables/useJobRunner'
+import { usePlanReview, type PlanTarget } from '@/shared/composables/usePlanReview'
 import { formatDateTime, formatMeasuredBytes } from '@/shared/formatters'
 import {
   AppAlert,
@@ -35,12 +36,15 @@ import {
 } from '@/shared/ui'
 
 import { useToolLaunch } from '@/modules/admintools/composables/useToolLaunch'
+import { useIdentityStore } from '@/modules/identity/store'
 
 import {
+  applyPlan,
   createBackup,
   createDatabase,
   createInstance,
   createRole,
+  getPlan,
   listDatabases,
   listInstances,
   listRoles,
@@ -48,8 +52,9 @@ import {
   rotateRole,
   type DatabaseRole,
   type ManagedDatabase,
+  type PostgresPlan,
+  type ResourceType,
 } from '../api'
-import { usePlanReview, type PlanTarget } from '../composables/usePlanReview'
 
 const NAME_RULE = /^[a-z][a-z0-9_]+$/
 const NAME_HINT = 'Lowercase letters, numbers, and underscores; starts with a letter.'
@@ -57,6 +62,9 @@ const NAME_ERROR = 'Use lowercase letters, numbers, and underscores, starting wi
 
 const route = useRoute()
 const router = useRouter()
+const identity = useIdentityStore()
+const canWrite = computed(() => identity.can('databases.write'))
+const canApply = computed(() => identity.can('operations.apply'))
 
 const instancesQuery = useQuery({ queryKey: ['postgresql-instances'], queryFn: listInstances, retry: false })
 const rolesQuery = useQuery({ queryKey: ['postgresql-roles'], queryFn: listRoles, retry: false })
@@ -94,12 +102,20 @@ async function refreshAll() {
   await Promise.all([instancesQuery.refetch(), rolesQuery.refetch(), databasesQuery.refetch()])
 }
 
-const plans = usePlanReview(refreshAll)
+const plans = usePlanReview<ResourceType, PostgresPlan>({
+  loadPlan: getPlan,
+  applyPlan,
+  refresh: refreshAll,
+  canApply: () => identity.can('operations.apply'),
+  isDestructive: (target, plan) =>
+    target.type === 'restore-points' && (plan.operation.toLowerCase().includes('restore') || plan.agentPlan.interruption),
+})
 
 // One-click pgAdmin launch, logged in as the database's owner role.
 const toolLaunch = useToolLaunch()
 
 function openPgAdmin(database: ManagedDatabase) {
+  if (!identity.can('operations.apply')) return
   void toolLaunch.launch('pgadmin', 'postgresql', database.id)
 }
 
@@ -173,6 +189,7 @@ const ownerEmptyMessage = computed(() =>
 )
 
 function openInstanceDialog() {
+  if (!canWrite.value) return
   instanceAttempted.value = false
   instanceRunner.progress.value = undefined
   instanceRunner.error.value = ''
@@ -180,6 +197,7 @@ function openInstanceDialog() {
 }
 
 function openRoleDialog() {
+  if (!canWrite.value) return
   roleAttempted.value = false
   roleRunner.progress.value = undefined
   roleRunner.error.value = ''
@@ -187,6 +205,7 @@ function openRoleDialog() {
 }
 
 function openDatabaseDialog() {
+  if (!canWrite.value) return
   databaseAttempted.value = false
   databaseRunner.progress.value = undefined
   databaseRunner.error.value = ''
@@ -226,9 +245,10 @@ function resetDatabaseForm() {
 }
 
 async function submitInstance() {
+  if (!canWrite.value) return
   instanceAttempted.value = true
   if (clusterError.value || portError.value) return
-  let created: PlanTarget | undefined
+  let created: PlanTarget<ResourceType> | undefined
   await instanceRunner.run(
     async () => {
       const result = await createInstance({
@@ -252,9 +272,10 @@ async function submitInstance() {
 }
 
 async function submitRole() {
+  if (!canWrite.value) return
   roleAttempted.value = true
   if (roleInstanceError.value || roleNameError.value) return
-  let created: PlanTarget | undefined
+  let created: PlanTarget<ResourceType> | undefined
   await roleRunner.run(
     async () => {
       const result = await createRole(roleInstance.value, roleName.value)
@@ -274,9 +295,10 @@ async function submitRole() {
 }
 
 async function submitDatabase() {
+  if (!canWrite.value) return
   databaseAttempted.value = true
   if (databaseInstanceError.value || databaseNameError.value || ownerRoleError.value) return
-  let created: PlanTarget | undefined
+  let created: PlanTarget<ResourceType> | undefined
   await databaseRunner.run(
     async () => {
       const result = await createDatabase({
@@ -354,7 +376,7 @@ watch(backupRunner.busy, (busy) => {
 
 function confirmRotate() {
   const role = rotateTarget.value
-  if (!role) return
+  if (!role || !canWrite.value) return
   rotateTarget.value = undefined
   rotatePendingId.value = role.id
   clearCredential()
@@ -366,6 +388,7 @@ function confirmRotate() {
 }
 
 function backupDatabase(database: ManagedDatabase) {
+  if (!canWrite.value) return
   backupPendingId.value = database.id
   void backupRunner.run(async () => (await createBackup(database.id)).job.id, {
     onSettled: refreshAll,
@@ -384,6 +407,7 @@ const revealedRole = ref<DatabaseRole>()
 const credentialCardEl = ref<HTMLElement>()
 
 function askReveal(role: DatabaseRole) {
+  if (!canApply.value) return
   revealError.value = ''
   revealTarget.value = role
 }
@@ -395,7 +419,7 @@ function clearCredential() {
 
 async function confirmReveal() {
   const role = revealTarget.value
-  if (!role) return
+  if (!role || !canApply.value) return
   revealBusy.value = true
   revealError.value = ''
   try {
@@ -434,7 +458,9 @@ const revealFacts = computed<Fact[]>(() => {
 watch(
   () => route.query.create,
   (value) => {
-    if (value === '1') openDatabaseDialog()
+    if (value !== '1') return
+    if (canWrite.value) openDatabaseDialog()
+    else void closeDatabaseDialog()
   },
   { immediate: true },
 )
@@ -451,9 +477,11 @@ watch(databaseInstance, () => {
       title="PostgreSQL"
       description="Every change is planned first and runs only after you approve it. Passwords are shown exactly once after creation or rotation."
     >
-      <AppButton icon="plus" @click="openInstanceDialog">Provision instance</AppButton>
-      <AppButton variant="primary" icon="plus" @click="openDatabaseDialog">New database</AppButton>
+      <AppButton v-if="canWrite" icon="plus" @click="openInstanceDialog">Provision instance</AppButton>
+      <AppButton v-if="canWrite" variant="primary" icon="plus" @click="openDatabaseDialog">New database</AppButton>
     </PageHeader>
+
+    <AppAlert v-if="!canWrite" tone="info">Your account has read-only access to PostgreSQL resources.</AppAlert>
 
     <JobFailureNotice v-if="plans.applyRunner.error.value" v-bind="failureProps(plans.applyRunner)" />
     <JobProgress
@@ -488,7 +516,7 @@ watch(databaseInstance, () => {
       title="No instances yet"
       description="Create one to host roles and databases. Each instance gets its own port, data path, and systemd unit."
     >
-      <template #action>
+      <template v-if="canWrite" #action>
         <AppButton icon="plus" @click="openInstanceDialog">Provision instance</AppButton>
       </template>
     </EmptyState>
@@ -522,7 +550,7 @@ watch(databaseInstance, () => {
     <!-- Databases: the hero. -->
     <AppCard flush eyebrow="Owned resources" title="Databases">
       <template #actions>
-        <AppButton size="sm" icon="plus" @click="openDatabaseDialog">New database</AppButton>
+        <AppButton v-if="canWrite" size="sm" icon="plus" @click="openDatabaseDialog">New database</AppButton>
       </template>
       <div class="space-y-3 px-3 pb-3 sm:px-4 sm:pb-4">
         <div v-if="backupRunner.error.value || backupRunner.progress.value" class="space-y-2">
@@ -533,6 +561,12 @@ watch(databaseInstance, () => {
             v-bind="progressProps(backupRunner)"
           />
         </div>
+        <AppAlert v-if="toolLaunch.toolsQuery.isError.value" tone="danger">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="min-w-0 flex-1">The pgAdmin deployment status could not be loaded.</span>
+            <AppButton size="sm" @click="toolLaunch.toolsQuery.refetch()">Retry</AppButton>
+          </div>
+        </AppAlert>
         <AppAlert v-if="toolLaunch.error.value" tone="danger">{{ toolLaunch.error.value }}</AppAlert>
         <AppAlert v-if="toolLaunch.blocked.value" tone="info">
           <p>The browser blocked the pgAdmin tab.</p>
@@ -561,7 +595,7 @@ watch(databaseInstance, () => {
           title="No databases yet"
           description="Create a database on an active instance, owned by a role."
         >
-          <template #action>
+          <template v-if="canWrite" #action>
             <AppButton icon="plus" @click="openDatabaseDialog">New database</AppButton>
           </template>
         </EmptyState>
@@ -623,17 +657,21 @@ watch(databaseInstance, () => {
                     <td class="px-3 py-2.5 text-right">
                       <span class="flex items-center justify-end gap-1">
                         <AppButton
-                          v-if="item.status === 'active'"
+                          v-if="item.status === 'active' && canApply"
                           size="sm"
                           variant="ghost"
                           icon="external-link"
                           :loading="toolLaunch.launchingId.value === item.id"
-                          :disabled="!toolLaunch.isReady('pgadmin')"
+                          :disabled="toolLaunch.availability('pgadmin') !== 'ready'"
                           :aria-label="`Open pgAdmin for ${item.name}`"
                           :title="
-                            toolLaunch.isReady('pgadmin')
+                            toolLaunch.availability('pgadmin') === 'ready'
                               ? `Open pgAdmin for ${item.name}`
-                              : 'Install pgAdmin from the Applications page to enable this'
+                              : toolLaunch.availability('pgadmin') === 'loading'
+                                ? 'Checking pgAdmin status'
+                                : toolLaunch.availability('pgadmin') === 'error'
+                                  ? 'pgAdmin status is unavailable'
+                                  : 'Install pgAdmin from the Applications page to enable this'
                           "
                           @click="openPgAdmin(item)"
                         />
@@ -654,13 +692,15 @@ watch(databaseInstance, () => {
                               Review plan…
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                              v-if="item.status === 'active'"
+                              v-if="canWrite && item.status === 'active'"
                               :disabled="backupRunner.busy.value"
                               @select="backupDatabase(item)"
                             >
                               Back up now
                             </DropdownMenuItem>
-                            <DropdownMenuSeparator v-if="item.status === 'plan_ready' || item.status === 'active'" />
+                            <DropdownMenuSeparator
+                              v-if="item.status === 'plan_ready' || (canWrite && item.status === 'active')"
+                            />
                             <DropdownMenuItem as-child>
                               <RouterLink :to="detailLink(item)">Access and backups</RouterLink>
                             </DropdownMenuItem>
@@ -692,7 +732,7 @@ watch(databaseInstance, () => {
          first one. -->
     <AppCard flush eyebrow="Login identities" title="Roles">
       <template #actions>
-        <AppButton size="sm" icon="plus" @click="openRoleDialog">Create role</AppButton>
+        <AppButton v-if="canWrite" size="sm" icon="plus" @click="openRoleDialog">Create role</AppButton>
       </template>
       <div class="space-y-3 px-3 pb-3 sm:px-4 sm:pb-4">
         <div v-if="rotateRunner.error.value || rotateRunner.progress.value" class="space-y-2">
@@ -718,7 +758,7 @@ watch(databaseInstance, () => {
           title="No roles yet"
           description="Roles are the login identities that own and access databases. Create one on an active instance."
         >
-          <template #action>
+          <template v-if="canWrite" #action>
             <AppButton icon="plus" @click="openRoleDialog">Create role</AppButton>
           </template>
         </EmptyState>
@@ -753,11 +793,11 @@ watch(databaseInstance, () => {
                     >
                       Review
                     </AppButton>
-                    <AppButton v-if="role.credentialAvailable" size="sm" icon="key" @click="askReveal(role)">
+                    <AppButton v-if="role.credentialAvailable && canApply" size="sm" icon="key" @click="askReveal(role)">
                       Reveal once
                     </AppButton>
                     <AppButton
-                      v-if="role.status === 'active'"
+                      v-if="canWrite && role.status === 'active'"
                       size="sm"
                       variant="ghost"
                       icon="refresh-cw"
@@ -776,7 +816,7 @@ watch(databaseInstance, () => {
     </AppCard>
 
     <!-- Create dialogs -->
-    <AppDialog :open="showInstanceDialog" title="Provision instance" @close="showInstanceDialog = false">
+    <AppDialog :open="canWrite && showInstanceDialog" title="Provision instance" @close="showInstanceDialog = false">
       <form class="space-y-4" novalidate @submit.prevent="submitInstance">
         <FormField label="Version">
           <AppSelect v-model="version">
@@ -804,7 +844,7 @@ watch(databaseInstance, () => {
       </form>
     </AppDialog>
 
-    <AppDialog :open="showRoleDialog" title="Create role" @close="showRoleDialog = false">
+    <AppDialog :open="canWrite && showRoleDialog" title="Create role" @close="showRoleDialog = false">
       <form class="space-y-4" novalidate @submit.prevent="submitRole">
         <FormField label="Instance" :error="roleInstanceError">
           <AppSelect
@@ -834,7 +874,7 @@ watch(databaseInstance, () => {
       </form>
     </AppDialog>
 
-    <AppDialog :open="showDatabaseDialog" title="New database" @close="closeDatabaseDialog">
+    <AppDialog :open="canWrite && showDatabaseDialog" title="New database" @close="closeDatabaseDialog">
       <form class="space-y-4" novalidate @submit.prevent="submitDatabase">
         <FormField label="Instance" :error="databaseInstanceError">
           <AppSelect
@@ -876,6 +916,7 @@ watch(databaseInstance, () => {
       :facts="planFacts"
       :warnings="plans.warnings.value"
       :busy="plans.busy.value || plans.applyRunner.busy.value"
+      :can-approve="canApply"
       approve-label="Approve and execute"
       v-bind="plans.dialogProps.value"
       @approve="plans.apply()"
@@ -884,7 +925,7 @@ watch(databaseInstance, () => {
     />
 
     <AppConfirmDialog
-      :open="!!rotateTarget"
+      :open="canWrite && !!rotateTarget"
       :title="rotateTarget ? `Rotate credential for ${rotateTarget.name}?` : 'Rotate credential?'"
       confirm-label="Rotate credential"
       @confirm="confirmRotate"
@@ -895,7 +936,7 @@ watch(databaseInstance, () => {
     </AppConfirmDialog>
 
     <AppConfirmDialog
-      :open="!!revealTarget"
+      :open="canApply && !!revealTarget"
       :title="revealTarget ? `Reveal credential for ${revealTarget.name}?` : 'Reveal credential?'"
       confirm-label="Reveal now"
       tone="accent"

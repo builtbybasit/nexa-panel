@@ -2,11 +2,10 @@ package admintools
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
@@ -30,6 +29,7 @@ func (m *Module) registerHTTP(registry module.Registry) error {
 	}
 	return registry.HandleAuthenticated("/tools/{kind}/{path...}", http.HandlerFunc(m.proxyHTTP))
 }
+
 func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 	items, err := m.Sync(r.Context())
 	if err != nil {
@@ -38,6 +38,7 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
 }
+
 func (m *Module) changeHTTP(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Action admintooloperator.Action `json:"action"`
@@ -58,6 +59,7 @@ func (m *Module) changeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, map[string]any{"tool": tool, "job": job})
 }
+
 func (m *Module) planHTTP(w http.ResponseWriter, r *http.Request) {
 	plan, err := m.StoredPlan(r.Context(), admintooloperator.Kind(r.PathValue("kind")))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -70,6 +72,7 @@ func (m *Module) planHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"plan": plan})
 }
+
 func (m *Module) applyHTTP(w http.ResponseWriter, r *http.Request) {
 	actor, ok := actorID(r)
 	if !ok {
@@ -83,6 +86,7 @@ func (m *Module) applyHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 202, job)
 }
+
 func actorID(r *http.Request) (*string, bool) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
@@ -90,23 +94,9 @@ func actorID(r *http.Request) (*string, bool) {
 	}
 	return &user.ID, true
 }
-func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("one object required")
-	}
-	return nil
-}
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"code": code, "message": message})
-}
+
+var (
+	decodeJSON = httpapi.DecodeJSON
+	writeJSON  = httpapi.WriteJSON
+	writeError = httpapi.WriteError
+)

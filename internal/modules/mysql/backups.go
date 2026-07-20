@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 )
 

@@ -3,9 +3,7 @@ package logs
 import (
 	"context"
 	"io"
-
 	"net/http"
-
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"

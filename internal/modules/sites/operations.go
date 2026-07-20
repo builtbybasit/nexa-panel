@@ -1,12 +1,11 @@
 package sites
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-
 	"time"
 
-	"context"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 	"github.com/uptrace/bun"
 )

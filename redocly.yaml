@@ -1,0 +1,6 @@
+extends:
+- recommended
+rules:
+  # Licensing is a repository-level concern for this private application, not
+  # part of the HTTP interoperability contract.
+  info-license: off

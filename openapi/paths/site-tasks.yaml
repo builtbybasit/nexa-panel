@@ -1,6 +1,7 @@
 sites_id_tasks:
   get:
     operationId: listScheduledTasks
+    summary: List Scheduled Tasks
     tags:
     - Scheduled Tasks
     x-permission: schedules.read
@@ -36,6 +37,7 @@ sites_id_tasks:
               $ref: ../components/schemas/common.yaml#/Error
   post:
     operationId: createScheduledTask
+    summary: Create Scheduled Task
     tags:
     - Scheduled Tasks
     x-permission: schedules.write
@@ -89,6 +91,7 @@ sites_id_tasks:
 sites_id_tasks_taskId:
   get:
     operationId: getScheduledTask
+    summary: Get Scheduled Task
     tags:
     - Scheduled Tasks
     x-permission: schedules.read
@@ -128,6 +131,7 @@ sites_id_tasks_taskId:
               $ref: ../components/schemas/common.yaml#/Error
   put:
     operationId: updateScheduledTask
+    summary: Update Scheduled Task
     tags:
     - Scheduled Tasks
     x-permission: schedules.write
@@ -181,6 +185,7 @@ sites_id_tasks_taskId:
               $ref: ../components/schemas/common.yaml#/Error
   delete:
     operationId: deleteScheduledTask
+    summary: Delete Scheduled Task
     tags:
     - Scheduled Tasks
     x-permission: schedules.write
@@ -223,9 +228,10 @@ sites_id_tasks_taskId:
 sites_id_tasks_taskId_apply:
   post:
     operationId: applyScheduledTaskPlan
+    summary: Apply Scheduled Task Plan
     tags:
     - Scheduled Tasks
-    x-permission: schedules.write
+    x-permission: operations.apply
     security:
     - sessionCookie: []
     parameters:
@@ -257,9 +263,10 @@ sites_id_tasks_taskId_apply:
 sites_id_tasks_taskId_rollback:
   post:
     operationId: rollbackScheduledTaskPlan
+    summary: Rollback Scheduled Task Plan
     tags:
     - Scheduled Tasks
-    x-permission: schedules.write
+    x-permission: operations.apply
     security:
     - sessionCookie: []
     parameters:
@@ -291,9 +298,10 @@ sites_id_tasks_taskId_rollback:
 sites_id_tasks_taskId_run:
   post:
     operationId: runScheduledTask
+    summary: Run Scheduled Task
     tags:
     - Scheduled Tasks
-    x-permission: schedules.write
+    x-permission: operations.apply
     security:
     - sessionCookie: []
     parameters:
@@ -325,6 +333,7 @@ sites_id_tasks_taskId_run:
 sites_id_tasks_taskId_runs:
   get:
     operationId: listScheduledTaskRuns
+    summary: List Scheduled Task Runs
     tags:
     - Scheduled Tasks
     x-permission: schedules.read

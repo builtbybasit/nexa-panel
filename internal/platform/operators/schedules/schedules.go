@@ -2,12 +2,9 @@ package schedules
 
 import (
 	"context"
-
 	"net/http"
-
 	"os"
 	"os/user"
-
 	"regexp"
 	"strconv"
 	"strings"
@@ -145,13 +142,6 @@ func (HostOwnership) Chown(path, owner, group string) error {
 	}
 	return os.Chown(path, uid, gid)
 }
-
-// NopOwnership keeps operator tests hermetic on hosts without site accounts.
-func NopOwnership() Ownership { return nopOwnership{} }
-
-type nopOwnership struct{}
-
-func (nopOwnership) Chown(string, string, string) error { return nil }
 
 // Error codes cross the agent boundary so handlers on both sides map the
 // same failure to the same HTTP status and envelope code.

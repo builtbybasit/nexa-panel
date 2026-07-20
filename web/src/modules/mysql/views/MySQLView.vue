@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { useCollection } from '@/shared/composables/useCollection'
 import { useJobRunner, type JobMessage } from '@/shared/composables/useJobRunner'
+import { usePlanReview, type PlanTarget } from '@/shared/composables/usePlanReview'
 import { formatDateTime, formatMeasuredBytes, humanize } from '@/shared/formatters'
 import {
   AppAlert,
@@ -35,11 +36,14 @@ import {
 } from '@/shared/ui'
 
 import { useToolLaunch } from '@/modules/admintools/composables/useToolLaunch'
+import { useIdentityStore } from '@/modules/identity/store'
 
 import {
+  applyPlan,
   createAccount,
   createBackup,
   createDatabase,
+  getPlan,
   listAccounts,
   listDatabases,
   listEngines,
@@ -48,8 +52,9 @@ import {
   type Account,
   type Database,
   type Engine,
+  type Plan,
+  type ResourceType,
 } from '../api'
-import { usePlanReview, type PlanTarget } from '../composables/usePlanReview'
 
 const NAME_RULE = /^[a-z][a-z0-9_]+$/
 const NAME_HINT = 'Lowercase letters, numbers, and underscores; starts with a letter.'
@@ -60,6 +65,9 @@ const ENGINE_NAMES: Record<Engine['kind'], string> = { mysql: 'MySQL', mariadb: 
 
 const route = useRoute()
 const router = useRouter()
+const identity = useIdentityStore()
+const canWrite = computed(() => identity.can('databases.write'))
+const canApply = computed(() => identity.can('operations.apply'))
 
 const enginesQuery = useQuery({ queryKey: ['mysql-engines'], queryFn: listEngines, retry: false })
 const accountsQuery = useQuery({ queryKey: ['mysql-accounts'], queryFn: listAccounts, retry: false })
@@ -101,12 +109,20 @@ async function refreshAll() {
   await Promise.all([enginesQuery.refetch(), accountsQuery.refetch(), databasesQuery.refetch()])
 }
 
-const plans = usePlanReview(refreshAll)
+const plans = usePlanReview<ResourceType, Plan>({
+  loadPlan: getPlan,
+  applyPlan,
+  refresh: refreshAll,
+  canApply: () => identity.can('operations.apply'),
+  isDestructive: (target, plan) =>
+    target.type === 'restore-points' && (plan.operation.toLowerCase().includes('restore') || plan.agentPlan.interruption),
+})
 
 // One-click phpMyAdmin launch, logged in as the database's owner account.
 const toolLaunch = useToolLaunch()
 
 function openPhpMyAdmin(database: Database) {
+  if (!identity.can('operations.apply')) return
   void toolLaunch.launch('phpmyadmin', 'mysql', database.id)
 }
 
@@ -170,6 +186,7 @@ const ownerAccountError = computed(() =>
 const ownerOptions = computed(() => activeAccounts.value.filter((item) => item.engineId === engine.value?.id))
 
 function openAccountDialog() {
+  if (!canWrite.value) return
   accountAttempted.value = false
   accountRunner.progress.value = undefined
   accountRunner.error.value = ''
@@ -177,6 +194,7 @@ function openAccountDialog() {
 }
 
 function openDatabaseDialog() {
+  if (!canWrite.value) return
   databaseAttempted.value = false
   databaseRunner.progress.value = undefined
   databaseRunner.error.value = ''
@@ -208,11 +226,12 @@ function resetDatabaseForm() {
 }
 
 async function submitAccount() {
+  if (!canWrite.value) return
   accountAttempted.value = true
   if (accountNameError.value || accountHostError.value) return
   const activeEngine = engine.value
   if (!activeEngine) return
-  let created: PlanTarget | undefined
+  let created: PlanTarget<ResourceType> | undefined
   await accountRunner.run(
     async () => {
       const result = await createAccount({
@@ -236,11 +255,12 @@ async function submitAccount() {
 }
 
 async function submitDatabase() {
+  if (!canWrite.value) return
   databaseAttempted.value = true
   if (databaseNameError.value || ownerAccountError.value) return
   const activeEngine = engine.value
   if (!activeEngine) return
-  let created: PlanTarget | undefined
+  let created: PlanTarget<ResourceType> | undefined
   await databaseRunner.run(
     async () => {
       const result = await createDatabase({
@@ -314,7 +334,7 @@ watch(backupRunner.busy, (busy) => {
 
 function confirmRotate() {
   const account = rotateTarget.value
-  if (!account) return
+  if (!account || !canWrite.value) return
   rotateTarget.value = undefined
   rotatePendingId.value = account.id
   clearCredential()
@@ -327,6 +347,7 @@ function confirmRotate() {
 }
 
 function backupDatabase(database: Database) {
+  if (!canWrite.value) return
   backupPendingId.value = database.id
   void backupRunner.run(async () => (await createBackup(database.id)).job.id, {
     onSettled: refreshAll,
@@ -345,6 +366,7 @@ const revealedAccount = ref<Account>()
 const credentialCardEl = ref<HTMLElement>()
 
 function askReveal(account: Account) {
+  if (!canApply.value) return
   revealError.value = ''
   revealTarget.value = account
 }
@@ -356,7 +378,7 @@ function clearCredential() {
 
 async function confirmReveal() {
   const account = revealTarget.value
-  if (!account) return
+  if (!account || !canApply.value) return
   revealBusy.value = true
   revealError.value = ''
   try {
@@ -395,7 +417,9 @@ const revealFacts = computed<Fact[]>(() => {
 watch(
   () => route.query.create,
   (value) => {
-    if (value === '1') openDatabaseDialog()
+    if (value !== '1') return
+    if (canWrite.value) openDatabaseDialog()
+    else void closeDatabaseDialog()
   },
   { immediate: true },
 )
@@ -412,10 +436,14 @@ watch(engine, () => {
     <PageHeader
       eyebrow="Managed data layer"
       title="MySQL & MariaDB"
-      description="Nexa manages the one native MySQL or MariaDB server on this host. Every change is planned first and runs only after you approve it. Passwords are shown exactly once after creation or rotation."
+      description="Nexa manages the one native MySQL or MariaDB server on this host. Every change is planned first and runs only after administrator approval. Passwords are shown exactly once after creation or rotation."
     >
-      <AppButton variant="primary" icon="plus" :disabled="!engine" @click="openDatabaseDialog">New database</AppButton>
+      <AppButton v-if="canWrite" variant="primary" icon="plus" :disabled="!engine" @click="openDatabaseDialog">
+        New database
+      </AppButton>
     </PageHeader>
+
+    <AppAlert v-if="!canWrite" tone="info">Your account has read-only access to MySQL and MariaDB resources.</AppAlert>
 
     <JobFailureNotice v-if="plans.applyRunner.error.value" v-bind="failureProps(plans.applyRunner)" />
     <JobProgress
@@ -475,7 +503,9 @@ watch(engine, () => {
     <!-- Databases: the hero. -->
     <AppCard flush eyebrow="Owned resources" title="Databases">
       <template #actions>
-        <AppButton size="sm" icon="plus" :disabled="!engine" @click="openDatabaseDialog">New database</AppButton>
+        <AppButton v-if="canWrite" size="sm" icon="plus" :disabled="!engine" @click="openDatabaseDialog">
+          New database
+        </AppButton>
       </template>
       <div class="space-y-3 px-3 pb-3 sm:px-4 sm:pb-4">
         <div v-if="backupRunner.error.value || backupRunner.progress.value" class="space-y-2">
@@ -486,6 +516,12 @@ watch(engine, () => {
             v-bind="progressProps(backupRunner)"
           />
         </div>
+        <AppAlert v-if="toolLaunch.toolsQuery.isError.value" tone="danger">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="min-w-0 flex-1">The phpMyAdmin deployment status could not be loaded.</span>
+            <AppButton size="sm" @click="toolLaunch.toolsQuery.refetch()">Retry</AppButton>
+          </div>
+        </AppAlert>
         <AppAlert v-if="toolLaunch.error.value" tone="danger">{{ toolLaunch.error.value }}</AppAlert>
         <AppAlert v-if="toolLaunch.blocked.value" tone="info">
           <p>The browser blocked the phpMyAdmin tab.</p>
@@ -515,7 +551,9 @@ watch(engine, () => {
           description="Each database is owned by one account. Create an account first, then create the database it owns."
         >
           <template #action>
-            <AppButton icon="plus" :disabled="!engine" @click="openDatabaseDialog">New database</AppButton>
+            <AppButton v-if="canWrite" icon="plus" :disabled="!engine" @click="openDatabaseDialog">
+              New database
+            </AppButton>
           </template>
         </EmptyState>
         <template v-else>
@@ -572,17 +610,21 @@ watch(engine, () => {
                     <td class="px-3 py-2.5 text-right">
                       <span class="flex items-center justify-end gap-1">
                         <AppButton
-                          v-if="item.status === 'active'"
+                          v-if="item.status === 'active' && canApply"
                           size="sm"
                           variant="ghost"
                           icon="external-link"
                           :loading="toolLaunch.launchingId.value === item.id"
-                          :disabled="!toolLaunch.isReady('phpmyadmin')"
+                          :disabled="toolLaunch.availability('phpmyadmin') !== 'ready'"
                           :aria-label="`Open phpMyAdmin for ${item.name}`"
                           :title="
-                            toolLaunch.isReady('phpmyadmin')
+                            toolLaunch.availability('phpmyadmin') === 'ready'
                               ? `Open phpMyAdmin for ${item.name}`
-                              : 'Install phpMyAdmin from the Applications page to enable this'
+                              : toolLaunch.availability('phpmyadmin') === 'loading'
+                                ? 'Checking phpMyAdmin status'
+                                : toolLaunch.availability('phpmyadmin') === 'error'
+                                  ? 'phpMyAdmin status is unavailable'
+                                  : 'Install phpMyAdmin from the Applications page to enable this'
                           "
                           @click="openPhpMyAdmin(item)"
                         />
@@ -603,13 +645,15 @@ watch(engine, () => {
                             Review plan…
                           </DropdownMenuItem>
                           <DropdownMenuItem
-                            v-if="item.status === 'active'"
+                            v-if="canWrite && item.status === 'active'"
                             :disabled="backupRunner.busy.value"
                             @select="backupDatabase(item)"
                           >
                             Back up now
                           </DropdownMenuItem>
-                          <DropdownMenuSeparator v-if="item.status === 'plan_ready' || item.status === 'active'" />
+                          <DropdownMenuSeparator
+                            v-if="item.status === 'plan_ready' || (canWrite && item.status === 'active')"
+                          />
                           <DropdownMenuItem as-child>
                             <RouterLink :to="detailLink(item)">Access and backups</RouterLink>
                           </DropdownMenuItem>
@@ -641,7 +685,9 @@ watch(engine, () => {
          very first one. -->
     <AppCard flush eyebrow="Login identities" title="Accounts">
       <template #actions>
-        <AppButton size="sm" icon="plus" :disabled="!engine" @click="openAccountDialog">Create account</AppButton>
+        <AppButton v-if="canWrite" size="sm" icon="plus" :disabled="!engine" @click="openAccountDialog">
+          Create account
+        </AppButton>
       </template>
       <div class="space-y-3 px-3 pb-3 sm:px-4 sm:pb-4">
         <div v-if="rotateRunner.error.value || rotateRunner.progress.value" class="space-y-2">
@@ -668,7 +714,9 @@ watch(engine, () => {
           description="Accounts are the logins apps use to connect. Create one, then create the database it owns."
         >
           <template #action>
-            <AppButton icon="plus" :disabled="!engine" @click="openAccountDialog">Create account</AppButton>
+            <AppButton v-if="canWrite" icon="plus" :disabled="!engine" @click="openAccountDialog">
+              Create account
+            </AppButton>
           </template>
         </EmptyState>
         <div v-else class="overflow-x-auto">
@@ -705,7 +753,7 @@ watch(engine, () => {
                       Review
                     </AppButton>
                     <AppButton
-                      v-if="account.credentialAvailable"
+                      v-if="account.credentialAvailable && canApply"
                       size="sm"
                       icon="key"
                       :disabled="revealBusy"
@@ -714,7 +762,7 @@ watch(engine, () => {
                       Reveal once
                     </AppButton>
                     <AppButton
-                      v-if="account.status === 'active'"
+                      v-if="canWrite && account.status === 'active'"
                       size="sm"
                       variant="ghost"
                       icon="refresh-cw"
@@ -733,7 +781,7 @@ watch(engine, () => {
     </AppCard>
 
     <!-- Create dialogs -->
-    <AppDialog :open="showAccountDialog" title="Create account" @close="showAccountDialog = false">
+    <AppDialog :open="canWrite && showAccountDialog" title="Create account" @close="showAccountDialog = false">
       <form class="space-y-4" novalidate @submit.prevent="submitAccount">
         <FormField label="Account name" :hint="NAME_HINT" :error="accountNameError">
           <AppInput v-model="accountName" autocomplete="off" spellcheck="false" :invalid="!!accountNameError" />
@@ -760,7 +808,7 @@ watch(engine, () => {
       </form>
     </AppDialog>
 
-    <AppDialog :open="showDatabaseDialog" title="New database" @close="closeDatabaseDialog">
+    <AppDialog :open="canWrite && showDatabaseDialog" title="New database" @close="closeDatabaseDialog">
       <form class="space-y-4" novalidate @submit.prevent="submitDatabase">
         <FormField label="Database name" :hint="NAME_HINT" :error="databaseNameError">
           <AppInput v-model="databaseName" autocomplete="off" spellcheck="false" :invalid="!!databaseNameError" />
@@ -800,6 +848,7 @@ watch(engine, () => {
       :facts="planFacts"
       :warnings="plans.warnings.value"
       :busy="plans.busy.value || plans.applyRunner.busy.value"
+      :can-approve="canApply"
       approve-label="Approve and execute"
       v-bind="plans.dialogProps.value"
       @approve="plans.apply()"
@@ -808,7 +857,7 @@ watch(engine, () => {
     />
 
     <AppConfirmDialog
-      :open="!!rotateTarget"
+      :open="canWrite && !!rotateTarget"
       :title="rotateTarget ? `Rotate credential for ${rotateTarget.name}@${rotateTarget.host}?` : 'Rotate credential?'"
       confirm-label="Rotate credential"
       @confirm="confirmRotate"
@@ -819,7 +868,7 @@ watch(engine, () => {
     </AppConfirmDialog>
 
     <AppConfirmDialog
-      :open="!!revealTarget"
+      :open="canApply && !!revealTarget"
       :title="revealTarget ? `Reveal credential for ${revealTarget.name}@${revealTarget.host}?` : 'Reveal credential?'"
       confirm-label="Reveal now"
       tone="accent"

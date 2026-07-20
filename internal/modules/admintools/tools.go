@@ -2,10 +2,9 @@ package admintools
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
@@ -14,17 +13,19 @@ import (
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 	"github.com/uptrace/bun"
 )
 
 type Module struct {
-	database *bun.DB
-	jobs     *jobs.Module
-	operator admintooloperator.Operator
-	now      func() time.Time
-	cipher   secrets.Cipher
-	resolver CredentialResolver
-	audit    audit.Recorder
+	database        *bun.DB
+	jobs            *jobs.Module
+	operator        admintooloperator.Operator
+	now             func() time.Time
+	cipher          secrets.Cipher
+	resolver        CredentialResolver
+	audit           audit.Recorder
+	pgAdminLaunchMu sync.Mutex
 }
 
 type Credential struct {
@@ -34,8 +35,10 @@ type Credential struct {
 	Username string
 	Secret   []byte
 }
-type CredentialResolver func(context.Context, string, string, string) (Credential, error)
-type Option func(*Module)
+type (
+	CredentialResolver func(context.Context, string, string, string) (Credential, error)
+	Option             func(*Module)
+)
 
 func WithLaunchGateway(cipher secrets.Cipher, resolver CredentialResolver, recorder audit.Recorder) Option {
 	return func(module *Module) { module.cipher = cipher; module.resolver = resolver; module.audit = recorder }
@@ -60,6 +63,7 @@ func New(ctx context.Context, database *bun.DB, queue *jobs.Module, operator adm
 	}
 	return m, nil
 }
+
 func (m *Module) Descriptor() module.Descriptor {
 	return module.Descriptor{ID: "admin-tools", Name: "Database Admin Tools", Version: "0.1.0", Description: "Podman-isolated phpMyAdmin and pgAdmin with explicit resource ceilings.", Dependencies: []string{"audit", "identity", "jobs"}, RequiredCapabilities: []string{"podman", "quadlet"}, EstimatedIdleBytes: 512 * 1024}
 }
@@ -85,6 +89,7 @@ func (m *Module) Sync(ctx context.Context) ([]Tool, error) {
 	}
 	return m.List(ctx)
 }
+
 func (m *Module) List(ctx context.Context) ([]Tool, error) {
 	models := []toolModel{}
 	if err := m.database.NewSelect().Model(&models).OrderExpr("kind ASC").Scan(ctx); err != nil {
@@ -96,6 +101,7 @@ func (m *Module) List(ctx context.Context) ([]Tool, error) {
 	}
 	return items, nil
 }
+
 func (m *Module) RequestChange(ctx context.Context, kind admintooloperator.Kind, action admintooloperator.Action, actor *string) (Tool, jobs.Job, error) {
 	if kind != admintooloperator.PHPMyAdmin && kind != admintooloperator.PGAdmin {
 		return Tool{}, jobs.Job{}, errors.New("admin tool is unsupported")
@@ -126,6 +132,7 @@ func (m *Module) RequestChange(ctx context.Context, kind admintooloperator.Kind,
 	model.LastJobID = &job.ID
 	return model.toTool(), job, err
 }
+
 func (m *Module) StoredPlan(ctx context.Context, kind admintooloperator.Kind) (StoredPlan, error) {
 	model := new(planModel)
 	if err := m.database.NewSelect().Model(model).Where("tool_kind = ?", kind).OrderExpr("created_at DESC").Limit(1).Scan(ctx); err != nil {
@@ -133,6 +140,7 @@ func (m *Module) StoredPlan(ctx context.Context, kind admintooloperator.Kind) (S
 	}
 	return model.toStoredPlan()
 }
+
 func (m *Module) ApplyPlan(ctx context.Context, kind admintooloperator.Kind, actor *string) (jobs.Job, error) {
 	plan, err := m.StoredPlan(ctx, kind)
 	if err != nil {
@@ -152,6 +160,7 @@ func (m *Module) ApplyPlan(ctx context.Context, kind admintooloperator.Kind, act
 	_, err = m.database.NewUpdate().Model((*toolModel)(nil)).Set("status = ?", StatusApplying).Set("last_job_id = ?", job.ID).Set("updated_at = ?", m.now().UTC()).Where("kind = ?", kind).Exec(ctx)
 	return job, err
 }
+
 func (m *Module) planJob(ctx context.Context, raw json.RawMessage, report func(int, string) error) (any, error) {
 	var request struct {
 		Kind   string `json:"kind"`
@@ -182,6 +191,7 @@ func (m *Module) planJob(ctx context.Context, raw json.RawMessage, report func(i
 	_ = report(95, "Admin tool plan is ready for approval.")
 	return stored.toStoredPlan()
 }
+
 func (m *Module) applyJob(ctx context.Context, raw json.RawMessage, report func(int, string) error) (any, error) {
 	var request struct {
 		PlanID string `json:"planId"`
@@ -196,6 +206,14 @@ func (m *Module) applyJob(ctx context.Context, raw json.RawMessage, report func(
 	stored, err := model.toStoredPlan()
 	if err != nil {
 		return nil, err
+	}
+	if stored.Operation == admintooloperator.ActionDeploy || stored.Operation == admintooloperator.ActionStop {
+		// A lifecycle boundary invalidates every proxy capability before the
+		// external service changes. A later start cannot resurrect a cookie from
+		// the previous process/configuration.
+		if err := m.expireLaunches(ctx, admintooloperator.Kind(model.ToolKind)); err != nil {
+			return nil, err
+		}
 	}
 	_ = report(25, "Applying the signed Podman tool plan.")
 	observation, err := m.operator.Apply(ctx, admintooloperator.Execution{Plan: stored.AgentPlan})
@@ -214,11 +232,13 @@ func (m *Module) applyJob(ctx context.Context, raw json.RawMessage, report func(
 	_ = report(95, "Admin tool service state is verified.")
 	return observation, nil
 }
+
 func (m *Module) get(ctx context.Context, kind admintooloperator.Kind) (toolModel, error) {
 	var model toolModel
 	err := m.database.NewSelect().Model(&model).Where("kind = ?", kind).Scan(ctx)
 	return model, err
 }
+
 func (m *Module) fail(ctx context.Context, kind string, failure error) {
 	message := failure.Error()
 	if len(message) > 300 {
@@ -226,10 +246,4 @@ func (m *Module) fail(ctx context.Context, kind string, failure error) {
 	}
 	_, _ = m.database.NewUpdate().Model((*toolModel)(nil)).Set("status = ?", StatusFailed).Set("failure = ?", message).Set("updated_at = ?", m.now().UTC()).Where("kind = ?", kind).Exec(ctx)
 }
-func randomID() string {
-	value := make([]byte, 16)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomID() string { return secureid.Hex(16) }

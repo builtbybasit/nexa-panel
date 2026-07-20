@@ -1,6 +1,7 @@
 package module
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,6 +27,15 @@ type Registry interface {
 type Module interface {
 	Descriptor() Descriptor
 	Register(registry Registry) error
+}
+
+// Background is implemented by modules that own workers or reconciliation
+// loops. The control plane starts them only after the complete dependency graph
+// and route registry have validated, then closes them in reverse dependency
+// order during shutdown.
+type Background interface {
+	Start(context.Context)
+	Close()
 }
 
 func ValidateAndSort(modules []Module) ([]Module, error) {

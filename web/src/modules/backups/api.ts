@@ -63,6 +63,9 @@ export interface BackupPlan {
   databaseIds: string[]
   schedule: string
   enabled: boolean
+  scheduleState: 'pending' | 'installed' | 'disabled' | 'error'
+  scheduleError?: string
+  scheduleSyncedAt?: string
   createdAt: string
   updatedAt: string
 }
@@ -103,9 +106,10 @@ export function runBackupPlan(id: string) {
 
 // --- copies ----------------------------------------------------------------
 
-export interface BackupCopyEntry {
+interface BackupCopyEntry {
   name: string
   sizeBytes: number
+  sha256: string
 }
 
 export interface BackupCopy {
@@ -117,6 +121,12 @@ export interface BackupCopy {
   sizeBytes: number
   entries: BackupCopyEntry[]
   status: string
+  integrityState: 'unverified' | 'passed' | 'failed'
+  integrityCheckedAt?: string
+  restoreTestState: 'not_tested' | 'passed' | 'failed'
+  restoreTestedAt?: string
+  healthy: boolean
+  healthError?: string
   createdAt: string
 }
 
@@ -127,6 +137,7 @@ export async function listBackupCopies(planId: string) {
 export interface BackupRestoreRequest {
   sites: { entry: string; siteId: string; clear: boolean }[]
   databases: { entry: string; databaseRef: string; clear: boolean }[]
+  allowUnverified: boolean
 }
 
 export function restoreBackupCopy(copyId: string, body: BackupRestoreRequest) {

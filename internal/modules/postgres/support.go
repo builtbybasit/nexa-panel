@@ -1,23 +1,15 @@
 package postgres
 
 import (
-	"encoding/hex"
-
 	"errors"
-
-	"crypto/rand"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 func randomResourceID(prefix string) string { return prefix + "_" + randomToken(12) }
 
-func randomToken(size int) string {
-	value := make([]byte, size)
-	if _, err := rand.Read(value); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(value)
-}
+func randomToken(size int) string { return secureid.Hex(size) }
 
 func friendlyUnique(err error, message string) error {
 	if strings.Contains(strings.ToLower(err.Error()), "unique") {

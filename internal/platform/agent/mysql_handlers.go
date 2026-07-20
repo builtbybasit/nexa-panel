@@ -1,17 +1,9 @@
 package agent
 
 import (
-	"crypto/sha256"
-
-	"fmt"
-
-	"encoding/json"
-	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-
-	"crypto/hmac"
 	"net/http"
 
-	"crypto/subtle"
+	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 )
 
 func WithMySQLOperator(operator mysqloperator.Operator) Option {
@@ -73,14 +65,11 @@ func (s *Server) mysqlApplyHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) signMySQLPlan(plan mysqloperator.Plan) string {
 	plan.Signature = ""
-	encoded, _ := json.Marshal(plan)
-	mac := hmac.New(sha256.New, []byte(s.token))
-	_, _ = mac.Write(encoded)
-	return fmt.Sprintf("%x", mac.Sum(nil))
+	return signPayload(s.token, "mysql-family.plan.v1", plan)
 }
 
 func (s *Server) verifyMySQLPlan(plan mysqloperator.Plan) bool {
 	provided := plan.Signature
-	expected := s.signMySQLPlan(plan)
-	return len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+	plan.Signature = ""
+	return verifyPayload(s.token, "mysql-family.plan.v1", plan, provided)
 }

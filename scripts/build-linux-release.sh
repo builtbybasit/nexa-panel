@@ -3,8 +3,17 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARCH="${1:-arm64}"
-VERSION="${VERSION:-0.1.0-dev}"
-COMMIT="${COMMIT:-unknown}"
+if [[ -z "${VERSION:-}" ]]; then
+  VERSION="$(git -C "$ROOT_DIR" describe --tags --exact-match 2>/dev/null || true)"
+  VERSION="${VERSION:-0.1.0-dev}"
+fi
+if [[ -z "${COMMIT:-}" ]]; then
+  COMMIT="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || true)"
+  if [[ -n "$COMMIT" ]] && [[ -n "$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null)" ]]; then
+    COMMIT="${COMMIT}-dirty"
+  fi
+  COMMIT="${COMMIT:-unknown}"
+fi
 BUILT_AT="${BUILT_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 OUTPUT="${ROOT_DIR}/dist/nexa-linux-${ARCH}"
 export GOCACHE="${GOCACHE:-${TMPDIR:-/tmp}/nexa-panel-go-cache}"
@@ -17,14 +26,9 @@ case "${ARCH}" in
     ;;
 esac
 
-cd "${ROOT_DIR}/web"
-bun install --frozen-lockfile
-bun run typecheck
-bun run test
-bun run build
+make -C "${ROOT_DIR}" check
 
 cd "${ROOT_DIR}"
-go test ./...
 mkdir -p dist
 CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" go build \
   -tags embed \

@@ -2,10 +2,8 @@ package sites
 
 import (
 	"bytes"
-	"strings"
-
 	"fmt"
-
+	"strings"
 	"text/template"
 )
 

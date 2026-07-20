@@ -13,12 +13,13 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
+	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 )
 
 // copiesSchema is migration #3 for the "backups" module. A copy row records one
-// successfully written backup so the UI can list, restore, and prune history;
-// failed runs leave no row (the job carries the failure).
+// uploaded backup so the UI can distinguish transport success from verified
+// health; failed uploads leave no row (the job carries the failure).
 const copiesSchema = `
 	CREATE TABLE backup_copies (
 		id TEXT PRIMARY KEY,
@@ -34,30 +35,58 @@ const copiesSchema = `
 	CREATE INDEX idx_backup_copies_plan ON backup_copies(plan_id);
 `
 
+const copyHealthSchema = `
+	ALTER TABLE backup_copies ADD COLUMN integrity_state TEXT NOT NULL DEFAULT 'unverified';
+	ALTER TABLE backup_copies ADD COLUMN integrity_checked_at TIMESTAMP;
+	ALTER TABLE backup_copies ADD COLUMN restore_test_state TEXT NOT NULL DEFAULT 'not_tested';
+	ALTER TABLE backup_copies ADD COLUMN restore_tested_at TIMESTAMP;
+	ALTER TABLE backup_copies ADD COLUMN health_error TEXT;
+`
+
+const (
+	copyStatusUploaded   = "uploaded"
+	integrityUnverified  = "unverified"
+	integrityPassed      = "passed"
+	restoreTestNotTested = "not_tested"
+	restoreTestPassed    = "passed"
+	restoreTestFailed    = "failed"
+)
+
 // Copy is the JSON-facing view of a stored backup copy.
 type Copy struct {
-	ID         string                     `json:"id"`
-	PlanID     string                     `json:"planId"`
-	AccountID  string                     `json:"accountId"`
-	CopyName   string                     `json:"copyName"`
-	RemotePath string                     `json:"remotePath"`
-	SizeBytes  int64                      `json:"sizeBytes"`
-	Entries    []backupoperator.CopyEntry `json:"entries"`
-	Status     string                     `json:"status"`
-	CreatedAt  time.Time                  `json:"createdAt"`
+	ID                 string                     `json:"id"`
+	PlanID             string                     `json:"planId"`
+	AccountID          string                     `json:"accountId"`
+	CopyName           string                     `json:"copyName"`
+	RemotePath         string                     `json:"remotePath"`
+	SizeBytes          int64                      `json:"sizeBytes"`
+	Entries            []backupoperator.CopyEntry `json:"entries"`
+	Status             string                     `json:"status"`
+	IntegrityState     string                     `json:"integrityState"`
+	IntegrityCheckedAt *time.Time                 `json:"integrityCheckedAt,omitempty"`
+	RestoreTestState   string                     `json:"restoreTestState"`
+	RestoreTestedAt    *time.Time                 `json:"restoreTestedAt,omitempty"`
+	Healthy            bool                       `json:"healthy"`
+	HealthError        string                     `json:"healthError,omitempty"`
+	CreatedAt          time.Time                  `json:"createdAt"`
 }
 
 type copyModel struct {
-	bun.BaseModel `bun:"table:backup_copies,alias:backup_copy"`
-	ID            string `bun:",pk"`
-	PlanID        string
-	AccountID     string
-	CopyName      string
-	RemotePath    string
-	SizeBytes     int64
-	EntriesJSON   string `bun:"entries"`
-	Status        string
-	CreatedAt     time.Time
+	bun.BaseModel      `bun:"table:backup_copies,alias:backup_copy"`
+	ID                 string `bun:",pk"`
+	PlanID             string
+	AccountID          string
+	CopyName           string
+	RemotePath         string
+	SizeBytes          int64
+	EntriesJSON        string `bun:"entries"`
+	Status             string
+	IntegrityState     string
+	IntegrityCheckedAt *time.Time
+	RestoreTestState   string
+	RestoreTestedAt    *time.Time
+	HealthError        *string
+	CreatedAt          time.Time
 }
 
 func (model copyModel) toCopy() Copy {
@@ -65,14 +94,29 @@ func (model copyModel) toCopy() Copy {
 	if model.EntriesJSON != "" {
 		_ = json.Unmarshal([]byte(model.EntriesJSON), &entries)
 	}
-	return Copy{
+	result := Copy{
 		ID: model.ID, PlanID: model.PlanID, AccountID: model.AccountID, CopyName: model.CopyName,
-		RemotePath: model.RemotePath, SizeBytes: model.SizeBytes, Entries: entries, Status: model.Status, CreatedAt: model.CreatedAt,
+		RemotePath: model.RemotePath, SizeBytes: model.SizeBytes, Entries: entries, Status: model.Status,
+		IntegrityState: model.IntegrityState, IntegrityCheckedAt: model.IntegrityCheckedAt,
+		RestoreTestState: model.RestoreTestState, RestoreTestedAt: model.RestoreTestedAt,
+		Healthy:   model.IntegrityState == integrityPassed && model.RestoreTestState == restoreTestPassed,
+		CreatedAt: model.CreatedAt,
 	}
+	if model.HealthError != nil {
+		result.HealthError = *model.HealthError
+	}
+	return result
 }
 
 type runPayload struct {
 	PlanID string `json:"planId"`
+}
+
+func jobSiteScope(plan *planModel) []string {
+	if len(decodeStringSlice(plan.DatabaseIDsJSON)) != 0 {
+		return nil
+	}
+	return decodeStringSlice(plan.SiteIDsJSON)
 }
 
 // runJob executes a plan: resolve its account and targets, ask the agent to
@@ -106,14 +150,17 @@ func (m *Module) runJob(ctx context.Context, request json.RawMessage, report fun
 		return nil, err
 	}
 
-	copyName := m.now().UTC().Format("2006-01-02_150405")
+	copyName := m.now().UTC().Format("2006-01-02_150405000000000Z") + "_" + randomToken()[:8]
 	_ = report(25, "Backing up "+plan.Name)
 	manifest, err := m.operator.Run(ctx, backupoperator.RunRequest{
 		Account: account, PlanID: plan.ID, CopyName: copyName, Limit: plan.CopiesLimit,
-		Sites: sites, Databases: databases, StagingRoot: m.stagingRoot,
+		Sites: sites, Databases: databases,
 	})
 	if err != nil {
 		return nil, err
+	}
+	if !manifest.IntegrityChecked {
+		return nil, errors.New("backup operator returned an upload without an integrity check")
 	}
 
 	_ = report(90, "Recording copy")
@@ -188,17 +235,20 @@ func (m *Module) recordCopy(ctx context.Context, plan *planModel, manifest backu
 	if err != nil {
 		return err
 	}
+	now := m.now().UTC()
 	model := &copyModel{
 		ID: "bkcopy_" + randomToken(), PlanID: plan.ID, AccountID: plan.AccountID,
 		CopyName: manifest.CopyName, RemotePath: manifest.RemotePath, SizeBytes: manifest.SizeBytes,
-		EntriesJSON: string(entries), Status: "succeeded", CreatedAt: m.now().UTC(),
+		EntriesJSON: string(entries), Status: copyStatusUploaded,
+		IntegrityState: integrityPassed, IntegrityCheckedAt: &now,
+		RestoreTestState: restoreTestNotTested, CreatedAt: now,
 	}
 	if _, err := m.database.NewInsert().Model(model).Exec(ctx); err != nil {
 		return err
 	}
 	if len(manifest.Pruned) > 0 {
 		_, _ = m.database.NewDelete().Model((*copyModel)(nil)).
-			Where("plan_id = ?", plan.ID).Where("copy_name IN (?)", bun.In(manifest.Pruned)).Exec(ctx)
+			Where("plan_id = ?", plan.ID).Where("copy_name IN (?)", bun.List(manifest.Pruned)).Exec(ctx)
 	}
 	return nil
 }
@@ -218,8 +268,16 @@ func (m *Module) runPlanHTTP(w http.ResponseWriter, r *http.Request) {
 	if user, ok := identity.UserFromContext(r.Context()); ok {
 		actor = &user.ID
 	}
-	job, err := m.jobs.SubmitTitled(r.Context(), "backup.run", "Back up "+plan.Name, runPayload{PlanID: plan.ID}, actor)
+	job, err := m.jobs.SubmitTitledWithOptions(r.Context(), "backup.run", "Back up "+plan.Name,
+		runPayload{PlanID: plan.ID}, jobs.SubmitOptions{
+			ActorUserID: actor, SiteIDs: jobSiteScope(plan),
+			IdempotencyKey: r.Header.Get("Idempotency-Key"),
+		})
 	if err != nil {
+		if errors.Is(err, jobs.ErrIdempotencyConflict) {
+			writeError(w, http.StatusConflict, "backup_run_idempotency_conflict", "The idempotency key was already used for a different backup request.")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "backup_run_failed", "The backup could not be queued.")
 		return
 	}
@@ -228,6 +286,18 @@ func (m *Module) runPlanHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) listCopiesHTTP(w http.ResponseWriter, r *http.Request) {
+	user, ok := identity.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		return
+	}
+	if _, err := m.getPlanForUser(r.Context(), user, r.PathValue("id")); errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "backup_plan_unavailable", "The backup plan could not be loaded.")
+		return
+	}
 	var models []copyModel
 	if err := m.database.NewSelect().Model(&models).Where("plan_id = ?", r.PathValue("id")).Order("copy_name DESC").Scan(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "backup_copies_unavailable", "The backup copies could not be loaded.")

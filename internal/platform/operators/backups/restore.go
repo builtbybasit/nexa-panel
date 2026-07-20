@@ -2,26 +2,41 @@ package backups
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"time"
 )
+
+const restoreRecoveryTimeout = 30 * time.Minute
+
+type restoreActivation struct {
+	description string
+	commit      func(context.Context) error
+	rollback    func(context.Context) error
+}
 
 // SiteRestoreTarget restores one site archive from a copy into a destination
 // document root. Clear wipes the destination's current contents first.
 type SiteRestoreTarget struct {
 	Entry  string     `json:"entry"`
+	SHA256 string     `json:"sha256"`
 	Target SiteTarget `json:"target"`
 	Clear  bool       `json:"clear"`
 }
 
 // DatabaseRestoreTarget restores one database dump from a copy into a
-// destination database. Clear drops the destination's objects first (PostgreSQL
-// only; a mysqldump already recreates its tables).
+// destination database. Every engine creates a rollback point before mutation;
+// PostgreSQL uses an isolated database-name swap, while Clear requests an exact
+// MySQL-family reset before replaying the dump.
 type DatabaseRestoreTarget struct {
 	Entry  string         `json:"entry"`
+	SHA256 string         `json:"sha256"`
 	Target DatabaseTarget `json:"target"`
 	Clear  bool           `json:"clear"`
 }
@@ -46,111 +61,198 @@ type DeleteRequest struct {
 // database artifacts into their chosen destinations. The command construction
 // mirrors the PostgreSQL/MySQL operators' restore paths.
 func (h *HostOperator) Restore(ctx context.Context, request RestoreRequest) error {
+	siteRoot := h.siteRoot
+	if siteRoot == "" {
+		siteRoot = defaultSiteRoot
+	}
+	if err := validateRestoreRequest(request, siteRoot); err != nil {
+		return err
+	}
 	base, env, err := rcloneRemote(request.Account)
 	if err != nil {
 		return err
 	}
-	if request.CopyName == "" || strings.ContainsAny(request.CopyName, "/\\") {
-		return fmt.Errorf("invalid copy name %q", request.CopyName)
-	}
-	stagingRoot := request.StagingRoot
+	stagingRoot := h.stagingRoot
 	if stagingRoot == "" {
 		stagingRoot = defaultStagingRoot
 	}
 	staging := filepath.Join(stagingRoot, "restore", request.PlanID, request.CopyName)
-	if err := os.MkdirAll(staging, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(staging), 0o700); err != nil {
 		return fmt.Errorf("prepare restore directory: %w", err)
 	}
-	defer os.RemoveAll(filepath.Join(stagingRoot, "restore", request.PlanID))
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		return fmt.Errorf("prepare restore directory: %w", err)
+	}
+	defer os.RemoveAll(staging)
 
 	copyDir := joinRemote(joinRemote(base, request.PlanID), request.CopyName)
 	if _, err := h.runner.Run(ctx, h.binary, []string{"copy", copyDir, staging}, env); err != nil {
 		return fmt.Errorf("download backup copy: %w", err)
 	}
-
+	// Verify every requested artifact before touching a live destination. New
+	// copies carry a trusted SHA-256 recorded immediately after creation;
+	// checksum-less legacy copies are still confined to regular files and can
+	// only reach this boundary after explicit control-plane confirmation.
 	for _, site := range request.Sites {
-		if err := h.restoreSite(ctx, staging, site); err != nil {
-			return err
+		if err := verifyStagedEntry(staging, site.Entry, site.SHA256); err != nil {
+			return fmt.Errorf("verify site artifact %s: %w", site.Entry, err)
 		}
 	}
 	for _, database := range request.Databases {
-		if err := h.restoreDatabase(ctx, staging, database); err != nil {
-			return err
+		if err := verifyStagedEntry(staging, database.Entry, database.SHA256); err != nil {
+			return fmt.Errorf("verify database artifact %s: %w", database.Entry, err)
 		}
 	}
-	return nil
+
+	activations := make([]restoreActivation, 0, len(request.Sites)+len(request.Databases))
+	for _, site := range request.Sites {
+		activation, err := h.restoreSite(ctx, staging, site)
+		if err != nil {
+			return rollbackRestoreActivations(ctx, activations, err)
+		}
+		activations = append(activations, activation)
+	}
+	for _, database := range request.Databases {
+		activation, err := h.restoreDatabase(ctx, staging, database)
+		if err != nil {
+			return rollbackRestoreActivations(ctx, activations, err)
+		}
+		activations = append(activations, activation)
+	}
+	return commitRestoreActivations(ctx, activations)
 }
 
-func (h *HostOperator) restoreSite(ctx context.Context, staging string, site SiteRestoreTarget) error {
+func (h *HostOperator) restoreSite(ctx context.Context, staging string, site SiteRestoreTarget) (restoreActivation, error) {
 	archive, err := safeEntry(staging, site.Entry)
 	if err != nil {
-		return err
+		return restoreActivation{}, err
 	}
 	if site.Target.RootPath == "" {
-		return fmt.Errorf("restore destination for %s is missing a document root", site.Entry)
+		return restoreActivation{}, fmt.Errorf("restore destination for %s is missing a document root", site.Entry)
 	}
-	if site.Clear {
-		// Empty the destination without removing the root itself (which is a
-		// managed mount point with its own ownership).
-		if _, err := h.runner.Run(ctx, "find", []string{site.Target.RootPath, "-mindepth", "1", "-delete"}, nil); err != nil {
-			return fmt.Errorf("clear %s: %w", site.Target.RootPath, err)
+	targetInfo, err := os.Lstat(site.Target.RootPath)
+	if err != nil {
+		return restoreActivation{}, fmt.Errorf("inspect site restore destination: %w", err)
+	}
+	if !targetInfo.IsDir() || targetInfo.Mode()&os.ModeSymlink != 0 {
+		return restoreActivation{}, fmt.Errorf("site restore destination %s is not a real directory", site.Target.RootPath)
+	}
+	parent := filepath.Dir(site.Target.RootPath)
+	token, err := restoreRandomToken()
+	if err != nil {
+		return restoreActivation{}, err
+	}
+	prepared := filepath.Join(parent, ".nexa-restore-"+site.Target.Slug+"-"+token)
+	previous := filepath.Join(parent, ".nexa-previous-"+site.Target.Slug+"-"+token)
+	if err := os.Mkdir(prepared, 0o700); err != nil {
+		return restoreActivation{}, fmt.Errorf("prepare atomic site restore: %w", err)
+	}
+	preparedExists := true
+	defer func() {
+		if preparedExists {
+			_ = os.RemoveAll(prepared)
+		}
+	}()
+	if !site.Clear {
+		if _, err := h.runner.Run(ctx, "cp", []string{"-a", "--", site.Target.RootPath + "/.", prepared}, nil); err != nil {
+			return restoreActivation{}, fmt.Errorf("stage current site contents: %w", err)
 		}
 	}
-	if _, err := h.runner.Run(ctx, "tar", []string{"-xzf", archive, "-C", site.Target.RootPath}, nil); err != nil {
-		return fmt.Errorf("extract %s: %w", site.Entry, err)
+	if err := extractSiteArchive(archive, prepared); err != nil {
+		return restoreActivation{}, fmt.Errorf("extract %s safely: %w", site.Entry, err)
+	}
+	if err := validateStagedSiteTree(prepared); err != nil {
+		return restoreActivation{}, fmt.Errorf("validate restored site tree: %w", err)
+	}
+	if err := os.Chmod(prepared, targetInfo.Mode().Perm()); err != nil {
+		return restoreActivation{}, fmt.Errorf("preserve site root permissions: %w", err)
 	}
 	if site.Target.UnixUser != "" {
-		if _, err := h.runner.Run(ctx, "chown", []string{"-R", site.Target.UnixUser + ":" + site.Target.UnixUser, site.Target.RootPath}, nil); err != nil {
-			return fmt.Errorf("restore ownership of %s: %w", site.Target.RootPath, err)
+		if _, err := h.runner.Run(ctx, "chown", []string{"-R", "--", site.Target.UnixUser + ":" + site.Target.UnixUser, prepared}, nil); err != nil {
+			return restoreActivation{}, fmt.Errorf("prepare restored ownership of %s: %w", site.Target.RootPath, err)
 		}
 	}
-	return nil
+
+	// Publish by directory rename. The original tree remains at a unique
+	// recovery path until the replacement is active and the parent directory is
+	// durable, so a failed second rename can be rolled back without data loss.
+	if err := os.Rename(site.Target.RootPath, previous); err != nil {
+		return restoreActivation{}, fmt.Errorf("retain current site for atomic restore: %w", err)
+	}
+	if err := syncParentDirectory(parent); err != nil {
+		rollbackErr := os.Rename(previous, site.Target.RootPath)
+		return restoreActivation{}, errors.Join(fmt.Errorf("persist site restore preparation: %w", err), rollbackErr)
+	}
+	if err := os.Rename(prepared, site.Target.RootPath); err != nil {
+		rollbackErr := os.Rename(previous, site.Target.RootPath)
+		if rollbackErr == nil {
+			rollbackErr = syncParentDirectory(parent)
+		}
+		return restoreActivation{}, errors.Join(fmt.Errorf("activate restored site: %w", err), rollbackErr)
+	}
+	preparedExists = false
+	if err := syncParentDirectory(parent); err != nil {
+		activation := siteRestoreActivation(site.Target.RootPath, previous, parent)
+		return restoreActivation{}, errors.Join(
+			fmt.Errorf("persist activated site restore: %w", err),
+			activation.rollback(context.WithoutCancel(ctx)),
+		)
+	}
+	return siteRestoreActivation(site.Target.RootPath, previous, parent), nil
 }
 
-func (h *HostOperator) restoreDatabase(ctx context.Context, staging string, database DatabaseRestoreTarget) error {
+func siteRestoreActivation(target, previous, parent string) restoreActivation {
+	return restoreActivation{
+		description: "site " + filepath.Base(target),
+		commit: func(context.Context) error {
+			if err := os.RemoveAll(previous); err != nil {
+				return fmt.Errorf("remove site recovery tree %s: %w", previous, err)
+			}
+			return syncParentDirectory(parent)
+		},
+		rollback: func(context.Context) error {
+			failed := previous + "-failed-new"
+			if err := os.Rename(target, failed); err != nil {
+				return fmt.Errorf("retain failed restored site: %w", err)
+			}
+			if err := os.Rename(previous, target); err != nil {
+				repairErr := os.Rename(failed, target)
+				return errors.Join(fmt.Errorf("restore original site tree: %w", err), repairErr)
+			}
+			if err := syncParentDirectory(parent); err != nil {
+				return err
+			}
+			if err := os.RemoveAll(failed); err != nil {
+				return fmt.Errorf("remove failed restored site tree: %w", err)
+			}
+			return syncParentDirectory(parent)
+		},
+	}
+}
+
+func (h *HostOperator) restoreDatabase(ctx context.Context, staging string, database DatabaseRestoreTarget) (restoreActivation, error) {
 	dump, err := safeEntry(staging, database.Entry)
 	if err != nil {
-		return err
+		return restoreActivation{}, err
 	}
 	switch database.Target.Engine {
 	case "postgres":
-		program := filepath.Join("/usr/lib/postgresql", database.Target.Version, "bin", "pg_restore")
-		args := []string{"-u", "postgres", "--", program, "--host", database.Target.Socket, "--port", strconv.Itoa(database.Target.Port),
-			"--username", "postgres", "--dbname", database.Target.Name, "--no-owner", "--no-privileges"}
-		if database.Clear {
-			args = append(args, "--clean", "--if-exists")
-		}
-		args = append(args, dump)
-		if _, err := h.runner.Run(ctx, "runuser", args, nil); err != nil {
-			return fmt.Errorf("restore PostgreSQL database %s: %w", database.Target.Name, err)
-		}
-		return nil
+		return h.preparePostgresRestore(ctx, database.Target, dump)
 	case "mysql", "mariadb":
-		// The mysqldump was taken with --databases, so it carries its own
-		// CREATE DATABASE / USE and (by default) DROP TABLE statements; the
-		// client just replays the script from stdin.
-		client := "mysql"
-		if database.Target.Engine == "mariadb" {
-			client = "mariadb"
-		}
-		args := []string{"--protocol=socket", "--socket=" + database.Target.Socket, "--user=root"}
-		if err := h.runner.RunFromFile(ctx, client, args, []string{"MYSQL_HISTFILE=/dev/null"}, dump); err != nil {
-			return fmt.Errorf("restore %s database %s: %w", database.Target.Engine, database.Target.Name, err)
-		}
-		return nil
+		return h.prepareMySQLRestore(ctx, staging, database, dump)
 	default:
-		return fmt.Errorf("unsupported database engine %q", database.Target.Engine)
+		return restoreActivation{}, fmt.Errorf("unsupported database engine %q", database.Target.Engine)
 	}
 }
 
 // DeleteCopy purges one copy directory from its account.
 func (h *HostOperator) DeleteCopy(ctx context.Context, request DeleteRequest) error {
+	if err := ValidateDeleteRequest(request); err != nil {
+		return err
+	}
 	base, env, err := rcloneRemote(request.Account)
 	if err != nil {
 		return err
-	}
-	if request.CopyName == "" || strings.ContainsAny(request.CopyName, "/\\") {
-		return fmt.Errorf("invalid copy name %q", request.CopyName)
 	}
 	copyDir := joinRemote(joinRemote(base, request.PlanID), request.CopyName)
 	if _, err := h.runner.Run(ctx, h.binary, []string{"purge", copyDir}, env); err != nil {
@@ -167,4 +269,35 @@ func safeEntry(staging, entry string) (string, error) {
 		return "", fmt.Errorf("invalid copy entry %q", entry)
 	}
 	return filepath.Join(staging, entry), nil
+}
+
+func verifyStagedEntry(staging, entry, expectedSHA256 string) error {
+	path, err := safeEntry(staging, entry)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("downloaded artifact is not a regular file")
+	}
+	if expectedSHA256 == "" {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return err
+	}
+	actual := hex.EncodeToString(digest.Sum(nil))
+	if actual != strings.ToLower(expectedSHA256) {
+		return fmt.Errorf("SHA-256 mismatch")
+	}
+	return nil
 }

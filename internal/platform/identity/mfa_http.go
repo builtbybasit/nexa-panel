@@ -143,6 +143,10 @@ func (m *Module) mfaDisableHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
+	if person.Role == "admin" {
+		writeError(w, http.StatusForbidden, "administrator_mfa_required", "Administrator MFA can only be replaced through the account recovery procedure.")
+		return
+	}
 	var input mfaDisableRequest
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())

@@ -6,8 +6,7 @@ import {
   type CheckboxRootProps,
   useForwardPropsEmits,
 } from 'reka-ui'
-import { reactiveOmit } from '@vueuse/core'
-import { type HTMLAttributes } from 'vue'
+import { computed, type HTMLAttributes } from 'vue'
 
 import { cn } from '@/shared/lib/utils'
 
@@ -16,7 +15,10 @@ import AppIcon from '../AppIcon.vue'
 const props = defineProps<CheckboxRootProps & { class?: HTMLAttributes['class'] }>()
 const emits = defineEmits<CheckboxRootEmits>()
 
-const delegated = reactiveOmit(props, 'class')
+const delegated = computed(() => {
+  const { class: _class, ...rootProps } = props
+  return rootProps
+})
 const forwarded = useForwardPropsEmits(delegated, emits)
 </script>
 

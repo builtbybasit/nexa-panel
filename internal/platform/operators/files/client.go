@@ -1,22 +1,17 @@
 package files
 
 import (
-	"bytes"
 	"context"
-
 	"encoding/json"
 	"errors"
 	"fmt"
-
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-
 	"strconv"
 	"time"
 
-	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
+	"github.com/nexa-panel/nexa-panel/internal/platform/agentclient"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
 
@@ -75,23 +70,18 @@ type ExtractRequest struct {
 }
 
 type UnixClient struct {
-	tokenPath string
-	json      *http.Client
-	stream    *http.Client
+	json   *agentclient.Client
+	stream *agentclient.Client
 }
 
 var _ Operator = (*UnixClient)(nil)
 
 func NewUnixClient(socketPath, tokenPath string) *UnixClient {
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
-	}}
 	return &UnixClient{
-		tokenPath: tokenPath,
-		json:      &http.Client{Transport: transport, Timeout: 2 * time.Minute},
+		json: agentclient.New(socketPath, tokenPath, "files", "node agent rejected the file operation", 2*time.Minute, agentclient.WithResponseLimit(8*1024*1024)),
 		// Streaming transfers are bounded by the caller's context, not a
 		// wall-clock timeout that a large file would always exceed.
-		stream: &http.Client{Transport: transport},
+		stream: agentclient.New(socketPath, tokenPath, "files", "node agent rejected the file operation", 0),
 	}
 }
 
@@ -149,11 +139,7 @@ func (c *UnixClient) UploadBegin(ctx context.Context, scope sitefs.Scope, path s
 
 func (c *UnixClient) UploadChunk(ctx context.Context, scope sitefs.Scope, uploadID string, offset int64, body io.Reader) error {
 	values := url.Values{"offset": []string{strconv.FormatInt(offset, 10)}}
-	request, err := c.newRequest(ctx, http.MethodPut, "/v1/files/uploads/"+url.PathEscape(uploadID)+"?"+scopeQuery(scope, values), body)
-	if err != nil {
-		return err
-	}
-	response, err := c.stream.Do(request)
+	response, err := c.stream.Do(ctx, http.MethodPut, "/v1/files/uploads/"+url.PathEscape(uploadID)+"?"+scopeQuery(scope, values), body, "application/octet-stream")
 	if err != nil {
 		return fmt.Errorf("call files agent: %w", err)
 	}
@@ -171,11 +157,7 @@ func (c *UnixClient) UploadCommit(ctx context.Context, scope sitefs.Scope, uploa
 }
 
 func (c *UnixClient) UploadAbort(ctx context.Context, scope sitefs.Scope, uploadID string) error {
-	request, err := c.newRequest(ctx, http.MethodDelete, "/v1/files/uploads/"+url.PathEscape(uploadID)+"?"+scopeQuery(scope, nil), nil)
-	if err != nil {
-		return err
-	}
-	response, err := c.json.Do(request)
+	response, err := c.json.Do(ctx, http.MethodDelete, "/v1/files/uploads/"+url.PathEscape(uploadID)+"?"+scopeQuery(scope, nil), nil, "")
 	if err != nil {
 		return fmt.Errorf("call files agent: %w", err)
 	}
@@ -188,11 +170,7 @@ func (c *UnixClient) UploadAbort(ctx context.Context, scope sitefs.Scope, upload
 
 func (c *UnixClient) Download(ctx context.Context, scope sitefs.Scope, path string) (io.ReadCloser, Entry, error) {
 	values := url.Values{"path": []string{path}}
-	request, err := c.newRequest(ctx, http.MethodGet, "/v1/files/download?"+scopeQuery(scope, values), nil)
-	if err != nil {
-		return nil, Entry{}, err
-	}
-	response, err := c.stream.Do(request)
+	response, err := c.stream.Do(ctx, http.MethodGet, "/v1/files/download?"+scopeQuery(scope, values), nil, "")
 	if err != nil {
 		return nil, Entry{}, fmt.Errorf("call files agent: %w", err)
 	}
@@ -226,41 +204,13 @@ func (c *UnixClient) DirectorySize(ctx context.Context, scope sitefs.Scope, path
 	return result, err
 }
 
-func (c *UnixClient) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
-	request, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, body)
-	if err != nil {
-		return nil, err
-	}
-	token, err := agentauth.Read(c.tokenPath)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	return request, nil
-}
-
 func (c *UnixClient) call(ctx context.Context, path string, input, output any) error {
-	encoded, err := json.Marshal(input)
-	if err != nil {
-		return err
+	err := c.json.JSON(ctx, http.MethodPost, path, input, output)
+	var responseError *agentclient.ResponseError
+	if errors.As(err, &responseError) && responseError.Code != "" && StatusFor(responseError.Code) != http.StatusInternalServerError {
+		return &OperationError{Code: responseError.Code, Message: responseError.Message}
 	}
-	request, err := c.newRequest(ctx, http.MethodPost, path, bytes.NewReader(encoded))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := c.json.Do(request)
-	if err != nil {
-		return fmt.Errorf("call files agent: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return decodeFailure(response)
-	}
-	if output == nil {
-		return nil
-	}
-	return json.NewDecoder(io.LimitReader(response.Body, 8*1024*1024)).Decode(output)
+	return err
 }
 
 func scopeQuery(scope sitefs.Scope, values url.Values) string {

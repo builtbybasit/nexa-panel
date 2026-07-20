@@ -1,81 +1,61 @@
 package main
 
 import (
-	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-
+	"context"
+	"errors"
 	"flag"
-	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
-	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
-
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
-
-	"github.com/nexa-panel/nexa-panel/internal/modules/postgres"
-
-	"github.com/nexa-panel/nexa-panel/internal/modules/runtimes"
-	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-
-	"context"
-	"github.com/nexa-panel/nexa-panel/internal/platform/capacity"
-
-	"fmt"
-
-	"net/http"
-
-	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
-
-	"github.com/nexa-panel/nexa-panel/internal/modules/certificates"
-	"github.com/nexa-panel/nexa-panel/internal/platform/nodeoperations"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
-	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
-	"log/slog"
-
-	"github.com/nexa-panel/nexa-panel/internal/modules/mysql"
-
-	"github.com/nexa-panel/nexa-panel/internal/modules/system"
-	"os"
-
-	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
-
-	"errors"
-	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
+	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/adapters/podman"
 	"github.com/nexa-panel/nexa-panel/internal/modules/admintools"
 	"github.com/nexa-panel/nexa-panel/internal/modules/applications"
 	"github.com/nexa-panel/nexa-panel/internal/modules/backups"
-	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
-	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
-
-	"github.com/nexa-panel/nexa-panel/internal/modules/files"
-	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
-
-	"github.com/nexa-panel/nexa-panel/internal/modules/logs"
-	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
-
-	"github.com/nexa-panel/nexa-panel/internal/modules/schedules"
-	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
-
+	"github.com/nexa-panel/nexa-panel/internal/modules/certificates"
 	"github.com/nexa-panel/nexa-panel/internal/modules/domains"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/authorization"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/controlplane"
-	"github.com/nexa-panel/nexa-panel/internal/platform/version"
-	"time"
-
+	"github.com/nexa-panel/nexa-panel/internal/modules/files"
+	"github.com/nexa-panel/nexa-panel/internal/modules/logs"
+	"github.com/nexa-panel/nexa-panel/internal/modules/mysql"
+	"github.com/nexa-panel/nexa-panel/internal/modules/postgres"
+	"github.com/nexa-panel/nexa-panel/internal/modules/runtimes"
+	"github.com/nexa-panel/nexa-panel/internal/modules/schedules"
+	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
+	"github.com/nexa-panel/nexa-panel/internal/modules/system"
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
-
+	"github.com/nexa-panel/nexa-panel/internal/platform/authorization"
+	"github.com/nexa-panel/nexa-panel/internal/platform/capacity"
+	"github.com/nexa-panel/nexa-panel/internal/platform/controlplane"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
+	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+	"github.com/nexa-panel/nexa-panel/internal/platform/nodeoperations"
+	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
+	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
+	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
+	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
+	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
+	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
+	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
+	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
+	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
+	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
+	"github.com/nexa-panel/nexa-panel/internal/platform/version"
 )
 
 func runAPI(args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet("api", flag.ContinueOnError)
 	address := flags.String("address", envOrDefault("NEXA_API_ADDRESS", "127.0.0.1:8080"), "HTTP listen address")
+	unixSocket := flags.String("unix-socket", envOrDefault("NEXA_API_UNIX_SOCKET", ""), "Unix socket for a trusted local reverse proxy (disables TCP listener)")
 	state := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/tmp/nexa-panel/control.db"), "SQLite control-plane state path")
 	masterKey := flags.String("master-key", envOrDefault("NEXA_MASTER_KEY", "/tmp/nexa-panel/master.key"), "AES master key path")
 	agentSocket := flags.String("agent-socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
@@ -108,6 +88,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize jobs module: %w", err)
 	}
+	jobsModule.SetSiteAccessPolicy(identityModule)
 	nodeOperationsModule, err := nodeoperations.New(nodeoperator.NewUnixClient(*agentSocket, *agentToken), jobsModule)
 	if err != nil {
 		return fmt.Errorf("initialize node operations module: %w", err)
@@ -173,19 +154,17 @@ func runAPI(args []string, logger *slog.Logger) error {
 	}
 	backupsModule, err := backups.New(setupCtx, backups.Dependencies{
 		Database: database, Jobs: jobsModule, Cipher: secretBox,
-		Operator:    backupoperator.NewUnixClient(*agentSocket, *agentToken),
-		Sites:       siteBackupResolver{sites: sitesModule},
-		Postgres:    postgresBackupResolver{postgres: postgresDatabasesModule},
-		Mysql:       mysqlBackupResolver{mysql: mysqlDatabasesModule},
-		StateDBPath: *state,
-		Logger:      logger,
+		Operator:     backupoperator.NewUnixClient(*agentSocket, *agentToken),
+		Sites:        siteBackupResolver{sites: sitesModule},
+		Postgres:     postgresBackupResolver{postgres: postgresDatabasesModule},
+		Mysql:        mysqlBackupResolver{mysql: mysqlDatabasesModule},
+		StateDBPath:  *state,
+		Logger:       logger,
+		AccessPolicy: identityModule,
 	})
 	if err != nil {
 		return fmt.Errorf("initialize backups module: %w", err)
 	}
-
-	jobsModule.Start(context.Background())
-	defer jobsModule.Close()
 
 	modules := []module.Module{
 		auditModule,
@@ -207,11 +186,21 @@ func runAPI(args []string, logger *slog.Logger) error {
 		system.New(capacity.NewProcReader(), podman.NewInspector()),
 	}
 
-	app, err := controlplane.New(version.Version, modules, logger,
-		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(authorization.New()))
+	app, err := controlplane.New(
+		version.Version, modules, logger,
+		controlplane.WithAuthentication(identityModule),
+		controlplane.WithAuthorization(authorization.New()),
+		controlplane.WithReadiness(apiReadiness(database, *agentSocket)),
+	)
 	if err != nil {
 		return fmt.Errorf("create control plane: %w", err)
 	}
+
+	// Start background execution only after the complete module graph and every
+	// route have validated successfully. Constructors may prepare durable state,
+	// but an invalid composition must never begin privileged work.
+	app.Start(context.Background())
+	defer app.Close()
 
 	server := &http.Server{
 		Addr:              *address,
@@ -222,17 +211,42 @@ func runAPI(args []string, logger *slog.Logger) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	if *unixSocket != "" {
+		listener, cleanup, err := openAPIUnixSocket(*unixSocket)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		return serveHTTPListener(server, listener, logger)
+	}
 	return serveHTTP(server, logger)
 }
 
 func serveHTTP(server *http.Server, logger *slog.Logger) error {
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return err
+	}
+	return serveHTTPListener(server, listener, logger)
+}
+
+func serveHTTPListener(server *http.Server, listener net.Listener, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if listener.Addr().Network() == "unix" {
+		parentConnContext := server.ConnContext
+		server.ConnContext = func(ctx context.Context, connection net.Conn) context.Context {
+			if parentConnContext != nil {
+				ctx = parentConnContext(ctx, connection)
+			}
+			return httpapi.WithTrustedProxy(ctx)
+		}
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("api listening", "address", server.Addr)
-		errCh <- server.ListenAndServe()
+		logger.Info("api listening", "network", listener.Addr().Network(), "address", listener.Addr().String())
+		errCh <- server.Serve(listener)
 	}()
 
 	select {
@@ -246,39 +260,4 @@ func serveHTTP(server *http.Server, logger *slog.Logger) error {
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
 	}
-}
-
-// --- backups resolver adapters ---------------------------------------------
-// The backups module reads site and database details through narrow interfaces
-// so it need not import those modules. These composition-root adapters bridge
-// each module's own getter to the operator's target types.
-
-type siteBackupResolver struct{ sites *sites.Module }
-
-func (r siteBackupResolver) BackupSite(ctx context.Context, id string) (backupoperator.SiteTarget, error) {
-	site, err := r.sites.Get(ctx, id)
-	if err != nil {
-		return backupoperator.SiteTarget{}, err
-	}
-	return backupoperator.SiteTarget{Slug: site.Slug, RootPath: site.RootPath, UnixUser: site.UnixUser}, nil
-}
-
-type postgresBackupResolver struct{ postgres *postgres.Module }
-
-func (r postgresBackupResolver) BackupDatabase(ctx context.Context, id string) (backupoperator.DatabaseTarget, error) {
-	name, version, port, socket, err := r.postgres.BackupTarget(ctx, id)
-	if err != nil {
-		return backupoperator.DatabaseTarget{}, err
-	}
-	return backupoperator.DatabaseTarget{Engine: "postgres", Name: name, Version: version, Port: port, Socket: socket}, nil
-}
-
-type mysqlBackupResolver struct{ mysql *mysql.Module }
-
-func (r mysqlBackupResolver) BackupDatabase(ctx context.Context, id string) (backupoperator.DatabaseTarget, error) {
-	name, kind, socket, err := r.mysql.BackupTarget(ctx, id)
-	if err != nil {
-		return backupoperator.DatabaseTarget{}, err
-	}
-	return backupoperator.DatabaseTarget{Engine: kind, Name: name, Socket: socket}, nil
 }

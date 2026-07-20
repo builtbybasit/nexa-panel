@@ -1,6 +1,7 @@
 sites:
   get:
     operationId: listSites
+    summary: List Sites
     tags:
     - Sites
     x-permission: sites.read
@@ -20,8 +21,11 @@ sites:
                   type: array
                   items:
                     $ref: ../components/schemas/sites.yaml#/Site
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
   post:
     operationId: createSite
+    summary: Create Site
     tags:
     - Sites
     x-permission: sites.write
@@ -53,6 +57,7 @@ sites:
 sites_id:
   get:
     operationId: getSite
+    summary: Get Site
     tags:
     - Sites
     x-permission: sites.read
@@ -76,6 +81,7 @@ sites_id:
 sites_id_plan:
   get:
     operationId: getSitePlan
+    summary: Get Site Plan
     tags:
     - Sites
     x-permission: sites.read
@@ -107,6 +113,7 @@ sites_id_plan:
         description: A plan is not ready for this site.
   post:
     operationId: refreshSitePlan
+    summary: Refresh Site Plan
     tags:
     - Sites
     x-permission: sites.write
@@ -125,9 +132,12 @@ sites_id_plan:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 sites_id_activate:
   post:
     operationId: activateSite
+    summary: Activate Site
     tags:
     - Sites
     x-permission: operations.apply
@@ -146,9 +156,12 @@ sites_id_activate:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
 sites_id_rollback:
   post:
     operationId: rollbackSite
+    summary: Rollback Site
     tags:
     - Sites
     x-permission: operations.apply
@@ -167,3 +180,6 @@ sites_id_rollback:
           application/json:
             schema:
               $ref: ../components/schemas/jobs.yaml#/Job
+
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

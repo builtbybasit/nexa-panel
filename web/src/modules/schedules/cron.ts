@@ -4,7 +4,7 @@
 // and case-insensitive month/day names. The server stays the validation
 // authority when a task is planned.
 
-export interface CronField {
+interface CronField {
   /** Expanded values, sorted and de-duplicated (day-of-week normalized to 0-6). */
   values: number[]
   /** True when the raw field was exactly `*`. */
@@ -13,7 +13,7 @@ export interface CronField {
   step?: number
 }
 
-export interface CronSchedule {
+interface CronSchedule {
   minute: CronField
   hour: CronField
   dayOfMonth: CronField
@@ -122,7 +122,7 @@ function parseField(raw: string, spec: FieldSpec): CronField {
 }
 
 /** Parses a 5-field expression into expanded fields; throws a precise Error otherwise. */
-export function parse(expression: string): CronSchedule {
+function parse(expression: string): CronSchedule {
   const trimmed = expression.trim()
   if (!trimmed) throw new Error('the expression is empty')
   const fields = trimmed.split(/\s+/)

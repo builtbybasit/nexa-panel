@@ -4,7 +4,7 @@ export const sitesModule: FeatureModule = {
   id: 'sites',
   name: 'Sites',
   description: 'Managed PHP sites, routing identity, and runtime configuration.',
-  navigation: { label: 'Sites', to: '/sites', icon: 'layers', group: 'Web hosting', order: 10 },
+  navigation: { label: 'Sites', to: '/sites', icon: 'layers', group: 'Web hosting', order: 10, permission: 'sites.read' },
   routes: [
     {
       path: '/sites',

@@ -2,14 +2,11 @@ package postgres
 
 import (
 	"context"
-	"os/exec"
-
+	"encoding/json"
 	"errors"
 	"fmt"
-
+	"os/exec"
 	"path/filepath"
-
-	"encoding/json"
 	"sort"
 )
 

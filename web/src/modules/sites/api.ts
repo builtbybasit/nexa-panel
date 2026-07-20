@@ -1,4 +1,6 @@
-import { subscribeToJob, type Job, type JobEvent } from '../jobs/api'
+import { apiRequest } from '@/shared/api/request'
+
+import type { Job } from '../jobs/api'
 
 export type SiteStatus = 'draft' | 'planning' | 'plan_ready' | 'activating' | 'active' | 'rolling_back' | 'rolled_back' | 'failed'
 
@@ -33,7 +35,7 @@ export interface CreateSiteRequest {
   phpVersion: string
 }
 
-export interface SiteArtifact {
+interface SiteArtifact {
   kind: 'site-root' | 'php-fpm-pool' | 'nginx-site'
   path: string
   mode: number
@@ -46,17 +48,8 @@ export interface SitePlan {
   warnings: string[]
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    credentials: 'same-origin',
-    headers: { Accept: 'application/json', ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers },
-  })
-  if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as { message?: string } | null
-    throw new Error(error?.message ?? `Sites request failed with status ${response.status}`)
-  }
-  return (await response.json()) as T
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return apiRequest<T>(path, init, 'Sites request')
 }
 
 export async function listSites(): Promise<Site[]> {
@@ -84,8 +77,4 @@ export function rollbackSite(siteId: string): Promise<Job> {
 }
 export function prepareSitePlan(siteId: string): Promise<Job> {
   return request(`/api/v1/sites/${encodeURIComponent(siteId)}/plan`, { method: 'POST' })
-}
-
-export function watchSiteJob(jobId: number, onEvent: (event: JobEvent) => void, onError?: () => void): () => void {
-  return subscribeToJob(jobId, onEvent, onError)
 }

@@ -2,9 +2,14 @@ package sites
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/user"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,6 +37,101 @@ func newVerifySystem(t *testing.T, timeout time.Duration, handler http.HandlerFu
 		}}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		verifyTimeout:  timeout,
 		verifyInterval: 5 * time.Millisecond,
+	}
+}
+
+func TestPrepareSiteRejectsManagedDirectorySymlink(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "site")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.Mkdir(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(root, "logs")); err != nil {
+		t.Fatal(err)
+	}
+
+	system := NewHostSystem()
+	system.lookupUser = func(string) (*user.User, error) {
+		return &user.User{Uid: strconv.Itoa(os.Getuid())}, nil
+	}
+	system.lookupGroup = func(string) (*user.Group, error) {
+		return &user.Group{Gid: strconv.Itoa(os.Getgid())}, nil
+	}
+
+	err := system.PrepareSite(context.Background(), Site{UnixUser: "nexa_demo", RootPath: root})
+	if err == nil {
+		t.Fatal("PrepareSite() = nil, want a managed-directory symlink to be rejected")
+	}
+	info, statErr := os.Stat(victim)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("victim mode = %o, want 755; PrepareSite followed the symlink", got)
+	}
+}
+
+func TestPrepareSiteDoesNotCreateUserAfterLookupInfrastructureFailure(t *testing.T) {
+	system := NewHostSystem()
+	system.lookupUser = func(string) (*user.User, error) {
+		return nil, errors.New("directory service unavailable")
+	}
+	called := false
+	system.command = func(context.Context, string, ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	}
+	err := system.PrepareSite(context.Background(), Site{UnixUser: "nexa_demo", RootPath: filepath.Join(t.TempDir(), "site")})
+	if err == nil || !strings.Contains(err.Error(), "look up site account") {
+		t.Fatalf("PrepareSite() error = %v, want the lookup infrastructure failure", err)
+	}
+	if called {
+		t.Fatal("PrepareSite invoked useradd after an inconclusive account lookup")
+	}
+}
+
+func TestSecureArtifactsRejectsSymlinkWithoutChangingTarget(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "site")
+	public := filepath.Join(root, "public")
+	if err := os.MkdirAll(public, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("do not touch"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(public, "index.php")
+	if err := os.Symlink(victim, artifactPath); err != nil {
+		t.Fatal(err)
+	}
+
+	system := NewHostSystem()
+	system.lookupUser = func(string) (*user.User, error) {
+		return &user.User{Uid: strconv.Itoa(os.Getuid())}, nil
+	}
+	system.lookupGroup = func(string) (*user.Group, error) {
+		return &user.Group{Gid: strconv.Itoa(os.Getgid())}, nil
+	}
+	err := system.SecureArtifacts(context.Background(), Site{UnixUser: "nexa_demo", RootPath: root}, []Artifact{{Kind: "site-root", Path: artifactPath, Mode: 0o640, Content: "managed"}})
+	if err == nil {
+		t.Fatal("SecureArtifacts() = nil, want a managed-artifact symlink to be rejected")
+	}
+	content, readErr := os.ReadFile(victim)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(content) != "do not touch" {
+		t.Fatalf("victim contents = %q; SecureArtifacts followed the symlink", content)
+	}
+	info, statErr := os.Stat(victim)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("victim mode = %o, want 600", got)
 	}
 }
 

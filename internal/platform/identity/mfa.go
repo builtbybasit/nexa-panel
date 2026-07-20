@@ -26,9 +26,7 @@ var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 func generateTOTPSecret() (string, error) {
 	secret := make([]byte, sha1.Size)
-	if _, err := rand.Read(secret); err != nil {
-		return "", fmt.Errorf("generate TOTP secret: %w", err)
-	}
+	rand.Read(secret)
 	return base32Encoding.EncodeToString(secret), nil
 }
 
@@ -96,9 +94,7 @@ func generateRecoveryCodes(count int) ([]string, []string, error) {
 	hashes := make([]string, 0, count)
 	for range count {
 		raw := make([]byte, 8)
-		if _, err := rand.Read(raw); err != nil {
-			return nil, nil, fmt.Errorf("generate recovery code: %w", err)
-		}
+		rand.Read(raw)
 		encoded := strings.ToUpper(hex.EncodeToString(raw))
 		code := strings.Join([]string{encoded[0:4], encoded[4:8], encoded[8:12], encoded[12:16]}, "-")
 		codes = append(codes, code)

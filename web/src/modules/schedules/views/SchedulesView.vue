@@ -4,6 +4,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { useCollection } from '@/shared/composables/useCollection'
+import { useIdentityStore } from '@/modules/identity/store'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { formatDateTime } from '@/shared/formatters'
 import {
@@ -46,6 +47,8 @@ import TaskFormDialog from './TaskFormDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
+const identity = useIdentityStore()
+const canWrite = computed(() => identity.can('schedules.write'))
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
 const activeSites = computed(() => (sitesQuery.data.value ?? []).filter((site) => site.status === 'active'))
@@ -100,8 +103,9 @@ const runnerJobLink = computed(() => (runner.jobId.value === undefined ? {} : { 
 const runnerElapsed = computed(() => (runner.startedAtMs.value === undefined ? {} : { startedAtMs: runner.startedAtMs.value }))
 
 const inFlightStatuses = new Set(['planning', 'activating'])
-const canMutate = (task: ScheduledTask) => !task.pendingRemoval && !inFlightStatuses.has(task.status)
-const canRun = (task: ScheduledTask) => task.status === 'active' && task.enabled && !task.pendingRemoval
+const canMutate = (task: ScheduledTask) => canWrite.value && !task.pendingRemoval && !inFlightStatuses.has(task.status)
+const canRun = (task: ScheduledTask) =>
+  identity.can('operations.apply') && task.status === 'active' && task.enabled && !task.pendingRemoval
 const canReview = (task: ScheduledTask) => task.status === 'plan_ready' || task.status === 'failed'
 
 /** The expression as a plain sentence; unknown shapes fall back to the raw text. */
@@ -118,6 +122,7 @@ function scheduleSentence(task: ScheduledTask): string {
 const form = ref<{ task?: ScheduledTask }>()
 
 function onTaskQueued(task: ScheduledTask, job: Job) {
+  if (!canWrite.value) return
   form.value = undefined
   void tasksQuery.refetch()
   void runner.run(async () => job.id, {
@@ -190,6 +195,7 @@ const planFailureLink = computed(() => {
 })
 
 function applyPlan() {
+  if (!identity.can('operations.apply')) return
   const dialog = planDialog.value
   if (!dialog?.plan) return
   const task = dialog.task
@@ -213,6 +219,7 @@ function applyPlan() {
 
 /** Queues a fresh plan for the reviewed task: a replan for edits, a new removal plan for deletes. */
 function regeneratePlan() {
+  if (!canWrite.value) return
   const dialog = planDialog.value
   if (!dialog) return
   const task = dialog.task
@@ -240,6 +247,7 @@ function regeneratePlan() {
 }
 
 function rollbackPlan() {
+  if (!identity.can('operations.apply')) return
   const dialog = planDialog.value
   if (!dialog) return
   const task = dialog.task
@@ -258,6 +266,7 @@ function rollbackPlan() {
 const runResult = ref<{ task: ScheduledTask; result: TaskRunResult }>()
 
 function runNow(task: ScheduledTask) {
+  if (!identity.can('operations.apply')) return
   runResult.value = undefined
   void runner.run(async () => (await runTask(siteId.value, task.id)).job.id, {
     onSuccess: async (event) => {
@@ -341,6 +350,7 @@ const deleteBusy = ref(false)
 const deleteError = ref('')
 
 function openDelete(task: ScheduledTask) {
+  if (!canMutate(task)) return
   deleteTarget.value = task
   deleteError.value = ''
 }
@@ -352,7 +362,7 @@ function closeDelete() {
 
 async function confirmDelete() {
   const task = deleteTarget.value
-  if (!task) return
+  if (!task || !canWrite.value) return
   deleteBusy.value = true
   deleteError.value = ''
   try {
@@ -407,7 +417,7 @@ watch(
       title="Scheduled tasks"
       description="Run commands on a schedule as each site's Unix user. Every change is planned first so you can review it before it reaches the host."
     >
-      <AppButton variant="primary" icon="plus" :disabled="!selectedSite" @click="form = {}">New task</AppButton>
+      <AppButton v-if="canWrite" variant="primary" icon="plus" :disabled="!selectedSite" @click="form = {}">New task</AppButton>
     </PageHeader>
 
     <div v-if="sitesQuery.isPending.value" class="space-y-1">
@@ -506,7 +516,7 @@ watch(
             description="Tasks run commands on a schedule as the site's Unix user. Create the first one to review its cron plan."
           >
             <template #action>
-              <AppButton variant="primary" icon="plus" @click="form = {}">New task</AppButton>
+              <AppButton v-if="canWrite" variant="primary" icon="plus" @click="form = {}">New task</AppButton>
             </template>
           </EmptyState>
           <template v-else>
@@ -689,7 +699,7 @@ watch(
     </template>
 
     <!-- Create / edit dialog -->
-    <TaskFormDialog v-if="form && selectedSite" :site-id="siteId" :task="form.task" @close="form = undefined" @queued="onTaskQueued" />
+    <TaskFormDialog v-if="form && selectedSite && canWrite" :site-id="siteId" :task="form.task" @close="form = undefined" @queued="onTaskQueued" />
 
     <!-- Failure review: the apply failed on the host; offer the rollback -->
     <AppDialog v-if="planDialog && planFailed" :open="true" title="Review failure" @close="closePlan">
@@ -712,7 +722,7 @@ watch(
       </div>
       <template #footer>
         <AppButton :disabled="runner.busy.value" @click="closePlan">Close</AppButton>
-        <AppButton variant="danger" icon="rotate-ccw" :loading="runner.busy.value" @click="rollbackPlan">Roll back</AppButton>
+        <AppButton v-if="identity.can('operations.apply')" variant="danger" icon="rotate-ccw" :loading="runner.busy.value" @click="rollbackPlan">Roll back</AppButton>
       </template>
     </AppDialog>
 
@@ -725,6 +735,8 @@ watch(
       :warnings="planWarnings"
       v-bind="planExpiry"
       :busy="runner.busy.value || planDialog.loading"
+      :can-approve="identity.can('operations.apply')"
+      :can-regenerate="canWrite"
       :approve-label="planDialog.task.pendingRemoval ? 'Apply removal' : 'Apply plan'"
       @approve="applyPlan"
       @regenerate="regeneratePlan"
@@ -767,7 +779,7 @@ watch(
 
     <!-- Delete confirmation -->
     <AppConfirmDialog
-      :open="Boolean(deleteTarget)"
+      :open="canWrite && Boolean(deleteTarget)"
       title="Delete scheduled task"
       confirm-label="Prepare removal plan"
       tone="danger"

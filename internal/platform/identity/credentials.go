@@ -2,9 +2,9 @@ package identity
 
 import (
 	"crypto/sha256"
-	"golang.org/x/crypto/argon2"
-
 	"errors"
+
+	"golang.org/x/crypto/argon2"
 )
 
 func validateCredentials(input credentials) error {

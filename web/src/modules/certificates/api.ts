@@ -1,9 +1,8 @@
 import { apiRequest } from '@/shared/api/request'
 
-import type { Job, JobEvent } from '../jobs/api'
-import { subscribeToJob } from '../jobs/api'
+import type { Job } from '../jobs/api'
 
-export type CertificateStatus =
+type CertificateStatus =
   | 'planning'
   | 'plan_ready'
   | 'issuing'
@@ -70,8 +69,4 @@ export function prepareCertificate(id: string, operation: CertificateOperation):
 
 export function applyCertificate(id: string): Promise<Job> {
   return request(`/api/v1/certificates/${encodeURIComponent(id)}/apply`, { method: 'POST' })
-}
-
-export function watchCertificateJob(id: number, onEvent: (event: JobEvent) => void, onError?: () => void) {
-  return subscribeToJob(id, onEvent, onError)
 }

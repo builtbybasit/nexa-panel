@@ -3,17 +3,13 @@ package schedules
 import (
 	"context"
 	"errors"
-
 	"net/http"
-
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 
@@ -168,9 +164,9 @@ func (m *Module) Register(registry module.Registry) error {
 		{"GET /api/v1/sites/{id}/tasks/{taskId}", "schedules.read", http.HandlerFunc(m.getHTTP)},
 		{"PUT /api/v1/sites/{id}/tasks/{taskId}", "schedules.write", http.HandlerFunc(m.updateHTTP)},
 		{"DELETE /api/v1/sites/{id}/tasks/{taskId}", "schedules.write", http.HandlerFunc(m.deleteHTTP)},
-		{"POST /api/v1/sites/{id}/tasks/{taskId}/apply", "schedules.write", http.HandlerFunc(m.applyHTTP)},
-		{"POST /api/v1/sites/{id}/tasks/{taskId}/rollback", "schedules.write", http.HandlerFunc(m.rollbackHTTP)},
-		{"POST /api/v1/sites/{id}/tasks/{taskId}/run", "schedules.write", http.HandlerFunc(m.runHTTP)},
+		{"POST /api/v1/sites/{id}/tasks/{taskId}/apply", "operations.apply", http.HandlerFunc(m.applyHTTP)},
+		{"POST /api/v1/sites/{id}/tasks/{taskId}/rollback", "operations.apply", http.HandlerFunc(m.rollbackHTTP)},
+		{"POST /api/v1/sites/{id}/tasks/{taskId}/run", "operations.apply", http.HandlerFunc(m.runHTTP)},
 		{"GET /api/v1/sites/{id}/tasks/{taskId}/runs", "schedules.read", http.HandlerFunc(m.runsHTTP)},
 	}
 	for _, route := range routes {

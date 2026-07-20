@@ -28,10 +28,14 @@ import {
   type ToolAction,
   type ToolKind,
 } from '@/modules/admintools/api'
+import { useIdentityStore } from '@/modules/identity/store'
 
 import { applyPlan, getPlan, listApplications, prepareChange, type Application, type ApplicationPlan, type AppAction } from '../api'
 
 const appsQuery = useQuery({ queryKey: ['applications'], queryFn: listApplications, retry: false })
+const identity = useIdentityStore()
+const canWriteApplications = computed(() => identity.can('applications.write'))
+const canWriteDatabases = computed(() => identity.can('databases.write'))
 const applications = computed(() => appsQuery.data.value ?? [])
 
 const collection = useCollection<Application>(() => applications.value, {
@@ -79,10 +83,10 @@ const reviewFacts = computed<Fact[]>(() => {
 const approveLabel = computed(() => (selectedPlan.value?.operation === 'package.remove' ? 'Uninstall' : 'Install'))
 
 function canInstall(app: Application) {
-  return app.managed && (app.status === 'available' || app.status === 'failed')
+  return canWriteApplications.value && app.managed && (app.status === 'available' || app.status === 'failed')
 }
 function canUninstall(app: Application) {
-  return app.managed && app.status === 'installed'
+  return canWriteApplications.value && app.managed && app.status === 'installed'
 }
 function canReview(app: Application) {
   return app.managed && app.status === 'plan_ready'
@@ -100,6 +104,7 @@ async function loadPlan(app: Application) {
 }
 
 async function prepare(app: Application, action: AppAction) {
+  if (!canWriteApplications.value) return
   pendingId.value = app.id
   await runner.run(async () => (await prepareChange(app.id, action)).job.id, {
     onSettled: async () => {
@@ -118,13 +123,14 @@ function startInstall(app: Application) {
 }
 
 function requestUninstall(app: Application) {
+  if (!canWriteApplications.value) return
   confirmApp.value = app
 }
 
 function confirmUninstall() {
   const app = confirmApp.value
   confirmApp.value = undefined
-  if (app) void prepare(app, 'package.remove')
+  if (app && canWriteApplications.value) void prepare(app, 'package.remove')
 }
 
 function closeReview() {
@@ -133,6 +139,7 @@ function closeReview() {
 }
 
 function regenerate() {
+  if (!canWriteApplications.value) return
   const app = selected.value
   const operation = selectedPlan.value?.operation
   if (!app || !operation) return
@@ -141,6 +148,7 @@ function regenerate() {
 }
 
 async function approve() {
+  if (!identity.can('operations.apply')) return
   const app = selected.value
   if (!app) return
   const removing = selectedPlan.value?.operation === 'package.remove'
@@ -168,10 +176,10 @@ function isWebClient(app: Application) {
   return app.category === 'web-client'
 }
 function canDeployTool(app: Application) {
-  return isWebClient(app) && (app.status === 'stopped' || app.status === 'inactive' || app.status === 'failed')
+  return canWriteDatabases.value && isWebClient(app) && (app.status === 'stopped' || app.status === 'inactive' || app.status === 'failed')
 }
 function canStopTool(app: Application) {
-  return isWebClient(app) && app.status === 'active'
+  return canWriteDatabases.value && isWebClient(app) && app.status === 'active'
 }
 function canReviewTool(app: Application) {
   return isWebClient(app) && app.status === 'plan_ready'
@@ -201,6 +209,7 @@ async function loadToolPlan(app: Application) {
 }
 
 async function prepareTool(app: Application, action: ToolAction) {
+  if (!canWriteDatabases.value) return
   toolPendingId.value = app.id
   await runner.run(async () => (await prepareToolChange(app.app as ToolKind, action)).job.id, {
     onSettled: async () => {
@@ -220,6 +229,7 @@ function closeToolReview() {
 }
 
 function regenerateTool() {
+  if (!canWriteDatabases.value) return
   const app = toolSelected.value
   const operation = toolPlan.value?.operation
   if (!app || !operation) return
@@ -228,6 +238,7 @@ function regenerateTool() {
 }
 
 async function approveTool() {
+  if (!identity.can('operations.apply')) return
   const app = toolSelected.value
   if (!app) return
   const stopping = toolPlan.value?.operation === 'tool.stop'
@@ -364,6 +375,8 @@ async function approveTool() {
       :warnings="selectedPlan?.agentPlan.warnings ?? []"
       :expires-at="selectedPlan?.agentPlan.expiresAt"
       :busy="applyRunner.busy.value"
+      :can-approve="identity.can('operations.apply')"
+      :can-regenerate="canWriteApplications"
       :approve-label="approveLabel"
       @approve="approve"
       @regenerate="regenerate"
@@ -378,6 +391,8 @@ async function approveTool() {
       :warnings="toolPlan?.agentPlan.warnings ?? []"
       :expires-at="toolPlan?.agentPlan.expiresAt"
       :busy="applyRunner.busy.value"
+      :can-approve="identity.can('operations.apply')"
+      :can-regenerate="canWriteDatabases"
       :approve-label="toolApproveLabel"
       @approve="approveTool"
       @regenerate="regenerateTool"
@@ -385,7 +400,7 @@ async function approveTool() {
     />
 
     <AppConfirmDialog
-      :open="!!confirmApp"
+      :open="canWriteApplications && !!confirmApp"
       title="Uninstall application"
       :confirm-label="`Uninstall ${confirmApp?.label ?? ''}`"
       tone="danger"

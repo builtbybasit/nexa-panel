@@ -1,23 +1,17 @@
 package logs
 
 import (
-	"encoding/json"
 	"errors"
-
 	"net/http"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 )
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]string{"code": code, "message": message})
-}
+var (
+	writeJSON  = httpapi.WriteJSON
+	writeError = httpapi.WriteError
+)
 
 // writeOperatorError relays the operator's typed failure with its HTTP
 // status; anything else is an agent transport problem and stays generic.

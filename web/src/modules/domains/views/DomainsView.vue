@@ -4,6 +4,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { listSites } from '@/modules/sites/api'
+import { useIdentityStore } from '@/modules/identity/store'
 import { useCollection } from '@/shared/composables/useCollection'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { formatDateTime } from '@/shared/formatters'
@@ -40,6 +41,8 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const identity = useIdentityStore()
+const canWrite = computed(() => identity.can('domains.write'))
 const runner = useJobRunner()
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites })
@@ -66,7 +69,7 @@ const planError = ref('')
 
 // The create dialog is URL-driven (?create=1) so deep links, the header
 // button, and history navigation all agree on whether it is open.
-const createOpen = computed(() => route.query.create === '1')
+const createOpen = computed(() => canWrite.value && route.query.create === '1')
 const createSiteId = ref('')
 const hostname = ref('')
 const kind = ref<Exclude<DomainKind, 'primary'>>('subdomain')
@@ -145,6 +148,7 @@ onMounted(() => {
 })
 
 function openCreate() {
+	if (!canWrite.value) return
   if (!createOpen.value) void router.replace({ query: { ...route.query, create: '1' } })
 }
 
@@ -177,6 +181,7 @@ async function openPlan(domain: Domain) {
 }
 
 async function submitCreate() {
+	if (!canWrite.value) return
   if (hostnameError.value || !createSiteId.value) return
   let createdId = ''
   await runner.run(
@@ -204,6 +209,7 @@ async function submitCreate() {
 }
 
 async function approvePlan() {
+  if (!identity.can('operations.apply')) return
   const domain = selected.value
   if (!domain) return
   planOpen.value = false
@@ -279,7 +285,7 @@ const planDnsRows = computed(() =>
       title="Domains"
       description="Point extra hostnames at your sites. Every change is validated as one atomic Nginx update before it goes live."
     >
-      <AppButton variant="primary" icon="plus" @click="openCreate">Add domain</AppButton>
+      <AppButton v-if="canWrite" variant="primary" icon="plus" @click="openCreate">Add domain</AppButton>
     </PageHeader>
 
     <AppCard flush>
@@ -307,7 +313,7 @@ const planDnsRows = computed(() =>
           description="Point a subdomain, alias, or redirect at one of your sites."
         >
           <template #action>
-            <AppButton variant="primary" icon="plus" @click="openCreate">Add domain</AppButton>
+            <AppButton v-if="canWrite" variant="primary" icon="plus" @click="openCreate">Add domain</AppButton>
           </template>
         </EmptyState>
         <EmptyState
@@ -389,7 +395,7 @@ const planDnsRows = computed(() =>
             class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent-400/25 bg-accent-400/[0.06] px-4 py-3"
           >
             <p class="text-[13px] text-ink-secondary">{{ selected.hostname }} is live. Serve it over HTTPS next.</p>
-            <AppButton variant="primary" size="sm" @click="router.push(`/certificates?site=${selected.siteId}&create=1`)">
+            <AppButton v-if="identity.can('certificates.write')" variant="primary" size="sm" @click="router.push(`/certificates?site=${selected.siteId}&create=1`)">
               Enable HTTPS →
             </AppButton>
           </div>
@@ -447,6 +453,7 @@ const planDnsRows = computed(() =>
       :warnings="planWarnings"
       :expires-at="planExpiresAt"
       :busy="planLoading || runner.busy.value"
+      :can-approve="identity.can('operations.apply')"
       approve-label="Activate domain"
       :can-regenerate="false"
       @approve="approvePlan"

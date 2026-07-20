@@ -45,9 +45,10 @@ const roleOptions: { value: ManagedRole; label: string }[] = [
 const roleTones = { admin: 'accent', operator: 'info', developer: 'warning', viewer: 'neutral' } as const
 
 const identity = useIdentityStore()
+const canManage = computed(() => identity.can('users.manage'))
 const queryClient = useQueryClient()
 
-const usersQuery = useQuery({ queryKey: ['users'], queryFn: listUsers, retry: false })
+const usersQuery = useQuery({ queryKey: ['users'], queryFn: listUsers, enabled: canManage, retry: false })
 const users = computed(() => usersQuery.data.value ?? [])
 
 const usersErrorMessage = computed(() => {
@@ -97,7 +98,7 @@ const sitesQuery = useQuery({
   queryKey: ['sites'],
   queryFn: listSites,
   retry: false,
-  enabled: computed(() => scopingRole.value === 'developer' || listNeedsSiteNames.value),
+  enabled: computed(() => canManage.value && (scopingRole.value === 'developer' || listNeedsSiteNames.value)),
 })
 const sites = computed(() => sitesQuery.data.value ?? [])
 const siteSlugById = computed(() => new Map(sites.value.map((site) => [site.id, site.slug])))
@@ -124,6 +125,7 @@ function siteAccess(user: ManagedUser): { label: string; title?: string } {
 }
 
 function openCreate() {
+  if (!canManage.value) return
   createUsername.value = ''
   createPassword.value = ''
   createRole.value = 'viewer'
@@ -134,6 +136,7 @@ function openCreate() {
 }
 
 function openEdit(user: ManagedUser) {
+  if (!canManage.value) return
   target.value = user
   editRole.value = user.role
   editPassword.value = ''
@@ -144,6 +147,7 @@ function openEdit(user: ManagedUser) {
 }
 
 function openDelete(user: ManagedUser) {
+  if (!canManage.value) return
   target.value = user
   dialogError.value = ''
   dialog.value = 'delete'
@@ -156,16 +160,19 @@ function close() {
 }
 
 function toggleSite(id: string) {
+  if (!canManage.value) return
   draftSiteIds.value = draftSiteIds.value.includes(id)
     ? draftSiteIds.value.filter((siteId) => siteId !== id)
     : [...draftSiteIds.value, id]
 }
 
 function selectFilteredSites() {
+  if (!canManage.value) return
   draftSiteIds.value = [...new Set([...draftSiteIds.value, ...filteredSites.value.map((site) => site.id)])]
 }
 
 function clearSelectedSites() {
+  if (!canManage.value) return
   draftSiteIds.value = []
 }
 
@@ -176,6 +183,7 @@ function sitesChanged(user: ManagedUser): boolean {
 }
 
 async function run(action: () => Promise<void>) {
+  if (!canManage.value) return
   busy.value = true
   dialogError.value = ''
   try {
@@ -231,11 +239,15 @@ const submitDelete = () =>
       title="Users"
       description="Panel accounts with role-scoped permissions. Developers only reach the sites granted to them; every account enrolls MFA on first sign-in."
     >
-      <AppButton icon="refresh-cw" :loading="usersQuery.isFetching.value" @click="usersQuery.refetch()">Refresh</AppButton>
-      <AppButton variant="primary" icon="users" @click="openCreate">Create user</AppButton>
+      <AppButton v-if="canManage" icon="refresh-cw" :loading="usersQuery.isFetching.value" @click="usersQuery.refetch()">
+        Refresh
+      </AppButton>
+      <AppButton v-if="canManage" variant="primary" icon="users" @click="openCreate">Create user</AppButton>
     </PageHeader>
 
-    <AppCard v-if="usersQuery.isPending.value" flush>
+    <AppAlert v-if="!canManage" tone="warning">Your account does not have permission to manage users.</AppAlert>
+
+    <AppCard v-else-if="usersQuery.isPending.value" flush>
       <div class="space-y-1 p-3">
         <SkeletonRow v-for="n in 3" :key="n" />
       </div>
@@ -298,8 +310,13 @@ const submitDelete = () =>
                 </td>
                 <td class="px-3 py-3">
                   <div class="flex justify-end gap-2">
-                    <AppButton size="sm" @click="openEdit(user)">Edit</AppButton>
-                    <AppButton v-if="identity.user?.id !== user.id" size="sm" variant="danger" @click="openDelete(user)">
+                    <AppButton v-if="canManage" size="sm" @click="openEdit(user)">Edit</AppButton>
+                    <AppButton
+                      v-if="canManage && identity.user?.id !== user.id"
+                      size="sm"
+                      variant="danger"
+                      @click="openDelete(user)"
+                    >
                       Delete
                     </AppButton>
                   </div>
@@ -330,7 +347,7 @@ const submitDelete = () =>
       </AppCard>
     </template>
 
-    <AppDialog :open="dialog === 'create'" title="Create user" @close="close">
+    <AppDialog :open="canManage && dialog === 'create'" title="Create user" @close="close">
       <form class="space-y-4" @submit.prevent="submitCreate">
         <FormField label="Username" hint="3–64 characters: letters, digits, dots, hyphens, and underscores.">
           <AppInput
@@ -391,7 +408,11 @@ const submitDelete = () =>
       </form>
     </AppDialog>
 
-    <AppDialog :open="dialog === 'edit' && !!target" :title="target ? `Edit ${target.username}` : 'Edit user'" @close="close">
+    <AppDialog
+      :open="canManage && dialog === 'edit' && !!target"
+      :title="target ? `Edit ${target.username}` : 'Edit user'"
+      @close="close"
+    >
       <form v-if="target" class="space-y-4" @submit.prevent="submitEdit">
         <FormField label="Role" hint="Changing the role revokes the user's active sessions.">
           <AppSelect v-model="editRole">
@@ -445,7 +466,7 @@ const submitDelete = () =>
     </AppDialog>
 
     <AppConfirmDialog
-      :open="dialog === 'delete' && !!target"
+      :open="canManage && dialog === 'delete' && !!target"
       title="Delete user"
       confirm-label="Delete user"
       :type-to-confirm="target?.username ?? ''"

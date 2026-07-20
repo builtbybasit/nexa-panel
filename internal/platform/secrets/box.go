@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 )
@@ -62,9 +61,7 @@ func (b *Box) Encrypt(label string, plaintext []byte) (string, error) {
 		return "", errors.New("secret label is required")
 	}
 	nonce := make([]byte, b.aead.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", fmt.Errorf("generate encryption nonce: %w", err)
-	}
+	rand.Read(nonce)
 	ciphertext := b.aead.Seal(nil, nonce, plaintext, []byte(label))
 	payload := append(nonce, ciphertext...)
 	return base64.RawURLEncoding.EncodeToString(payload), nil
@@ -88,18 +85,8 @@ func (b *Box) Decrypt(label, encoded string) ([]byte, error) {
 }
 
 func readOrCreateKey(path string) ([]byte, error) {
-	key, err := os.ReadFile(path)
+	key, err := readKey(path)
 	if err == nil {
-		info, statErr := os.Stat(path)
-		if statErr != nil {
-			return nil, fmt.Errorf("inspect master key: %w", statErr)
-		}
-		if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-			return nil, errors.New("master key must be a regular file accessible only by its owner")
-		}
-		if len(key) != keySize {
-			return nil, fmt.Errorf("master key must contain %d bytes", keySize)
-		}
 		return key, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -107,15 +94,16 @@ func readOrCreateKey(path string) ([]byte, error) {
 	}
 
 	key = make([]byte, keySize)
-	if _, err := io.ReadFull(rand.Reader, key); err != nil {
-		return nil, fmt.Errorf("generate master key: %w", err)
-	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		return readOrCreateKey(path)
-	}
+	rand.Read(key)
+	file, err := os.CreateTemp(filepath.Dir(path), ".master-key-*.partial")
 	if err != nil {
-		return nil, fmt.Errorf("create master key: %w", err)
+		return nil, fmt.Errorf("create temporary master key: %w", err)
+	}
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("secure temporary master key: %w", err)
 	}
 	if _, err := file.Write(key); err != nil {
 		_ = file.Close()
@@ -128,5 +116,41 @@ func readOrCreateKey(path string) ([]byte, error) {
 	if err := file.Close(); err != nil {
 		return nil, fmt.Errorf("close master key: %w", err)
 	}
+	if err := os.Link(temporary, path); errors.Is(err, os.ErrExist) {
+		return readKey(path)
+	} else if err != nil {
+		return nil, fmt.Errorf("publish master key without replacing an existing key: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("persist master key directory entry: %w", err)
+	}
 	return key, nil
+}
+
+func readKey(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("master key must be a regular file accessible only by its owner")
+	}
+	key, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read master key: %w", err)
+	}
+	if len(key) != keySize {
+		return nil, fmt.Errorf("master key must contain %d bytes", keySize)
+	}
+	return key, nil
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }

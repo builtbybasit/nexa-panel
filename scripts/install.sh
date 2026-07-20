@@ -19,6 +19,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BINARY=""
 START=1
+PANEL_HOSTNAME=""
+TLS_EMAIL=""
 
 usage() {
   cat <<'EOF'
@@ -28,6 +30,11 @@ Usage: install.sh [options]
                   /usr/bin/nexa is left alone (the test image bind-mounts one).
   --no-start      Configure and enable the services but do not start them.
                   Implied when systemd is not running, e.g. in an image build.
+  --panel-hostname HOST
+                  Publish the panel through Nginx for this DNS hostname.
+                  Without it, Nginx exposes a local bootstrap listener only.
+  --tls-email EMAIL
+                  Obtain and renew a Let's Encrypt certificate for --panel-hostname.
   -h, --help      Show this message.
 EOF
 }
@@ -36,6 +43,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --binary) BINARY="${2:-}"; [[ -n "$BINARY" ]] || { echo "error: --binary needs a path" >&2; exit 2; }; shift 2 ;;
     --no-start) START=0; shift ;;
+    --panel-hostname) PANEL_HOSTNAME="${2:-}"; [[ -n "$PANEL_HOSTNAME" ]] || { echo "error: --panel-hostname needs a host" >&2; exit 2; }; shift 2 ;;
+    --tls-email) TLS_EMAIL="${2:-}"; [[ -n "$TLS_EMAIL" ]] || { echo "error: --tls-email needs an address" >&2; exit 2; }; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -45,13 +54,31 @@ log()  { echo "==> $*"; }
 warn() { echo "warning: $*" >&2; }
 die()  { echo "error: $*" >&2; exit 1; }
 
+valid_hostname() {
+  local hostname="$1" label
+  local -a labels
+  (( ${#hostname} <= 253 )) || return 1
+  [[ "$hostname" != .* && "$hostname" != *. && "$hostname" != *..* ]] || return 1
+  IFS='.' read -r -a labels <<< "$hostname"
+  (( ${#labels[@]} > 0 )) || return 1
+  for label in "${labels[@]}"; do
+    (( ${#label} >= 1 && ${#label} <= 63 )) || return 1
+    [[ "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || return 1
+  done
+}
+
 # --- host checks ------------------------------------------------------------
-[[ "${EUID:-$(id -u)}" -eq 0 ]] || die "this installer must run as root (try: sudo $0 $*)"
+[[ "${EUID:-$(id -u)}" -eq 0 ]] || die "this installer must run as root (try: sudo ./scripts/install.sh ...)"
 [[ -r /etc/os-release ]] || die "cannot identify this host: /etc/os-release is missing"
 # shellcheck disable=SC1091
 . /etc/os-release
 [[ "${ID:-}" == "ubuntu" ]] || die "unsupported distribution '${ID:-unknown}': Nexa Panel targets Ubuntu (the PHP repository it manages publishes for Ubuntu only)"
+[[ "${VERSION_ID:-}" == "24.04" ]] || die "unsupported Ubuntu release '${VERSION_ID:-unknown}': Nexa Panel currently supports Ubuntu 24.04 LTS only"
 [[ -n "${VERSION_CODENAME:-}" ]] || die "this Ubuntu release reports no VERSION_CODENAME, which the package repositories need"
+if [[ -n "$PANEL_HOSTNAME" ]] && ! valid_hostname "$PANEL_HOSTNAME"; then
+  die "--panel-hostname must be a valid DNS hostname"
+fi
+[[ -z "$TLS_EMAIL" || -n "$PANEL_HOSTNAME" ]] || die "--tls-email requires --panel-hostname"
 
 export DEBIAN_FRONTEND=noninteractive
 log "Installing Nexa Panel on Ubuntu ${VERSION_ID:-?} (${VERSION_CODENAME}), $(dpkg --print-architecture)"
@@ -66,7 +93,7 @@ apt-get update -qq
 log "Installing host prerequisites"
 apt-get install -y --no-install-recommends \
   systemd systemd-sysv dbus \
-  nginx cron certbot \
+  nginx cron certbot python3-certbot-nginx \
   postgresql-common libjson-perl \
   passwd util-linux \
   rclone \
@@ -75,11 +102,15 @@ apt-get install -y --no-install-recommends \
 
 # The database web clients (phpMyAdmin, pgAdmin) deploy as Podman Quadlet units:
 # a `.container` file the systemd generator turns into a `.service` on reload.
-# That generator ships with Podman >= 4.4. Without it, deploying a web client
-# fails with a bare "Unit not found"; warn now so the cause is obvious. The rest
-# of the panel does not depend on it, so this is a warning, not a hard failure.
-if [[ ! -x /usr/lib/systemd/system-generators/podman-system-generator ]]; then
-  warn "Podman Quadlet generator not found (podman $(podman --version 2>/dev/null | awk '{print $3}')); the phpMyAdmin/pgAdmin database web clients will not deploy. Upgrade to podman >= 4.4 (Ubuntu 24.04+ ships it)."
+# That generator ships with Podman >= 4.4, while the generated definitions also
+# use PodmanArgs support available from 4.5. Without either, deploying a web
+# client fails with a bare "Unit not found"; warn now so the cause is obvious.
+# The rest of the panel does not depend on it, so this is a warning, not a hard
+# failure.
+PODMAN_VERSION="$(podman --version 2>/dev/null | awk '{print $3}' || true)"
+if [[ ! -x /usr/lib/systemd/system-generators/podman-system-generator ]] ||
+   [[ -z "$PODMAN_VERSION" ]] || ! dpkg --compare-versions "$PODMAN_VERSION" ge 4.5; then
+  warn "Podman 4.5+ with Quadlet is required for the phpMyAdmin/pgAdmin database web clients (found ${PODMAN_VERSION:-unknown}). Ubuntu 24.04 ships a compatible version."
 fi
 
 # Podman storage driver. On a normal host the kernel's native overlay driver
@@ -130,10 +161,16 @@ apt-get update -qq
 # --- binary -----------------------------------------------------------------
 if [[ -n "$BINARY" ]]; then
   [[ -f "$BINARY" ]] || die "no binary at $BINARY"
-  log "Installing $BINARY as /usr/bin/nexa"
-  install -m 0755 "$BINARY" /usr/bin/nexa
+  log "Validating and installing $BINARY as /usr/bin/nexa"
+  install -m 0755 "$BINARY" /usr/bin/nexa.new
+  if ! /usr/bin/nexa.new version >/dev/null 2>&1; then
+    rm -f /usr/bin/nexa.new
+    die "$BINARY is not an executable Nexa Panel binary for this node"
+  fi
+  mv -f /usr/bin/nexa.new /usr/bin/nexa
 elif [[ ! -x /usr/bin/nexa ]]; then
-  warn "no nexa binary at /usr/bin/nexa — pass --binary PATH, or put one there before starting the services"
+  [[ "$START" -eq 0 || ! -d /run/systemd/system ]] || die "no Nexa Panel binary to start; pass --binary PATH"
+  warn "no nexa binary at /usr/bin/nexa — install one before starting the enabled services"
 fi
 
 # --- packaged units and configuration ---------------------------------------
@@ -149,6 +186,25 @@ install -m 0644 "$ROOT_DIR/packaging/tmpfiles/nexa-panel.conf" /usr/lib/tmpfiles
 systemd-sysusers
 systemd-tmpfiles --create
 
+# Nginx is the only process allowed to reach the control-plane socket. Site PHP
+# accounts are not members of the nexa group, so they cannot bypass proxy
+# authentication or forge trusted forwarding headers.
+usermod -a -G nexa www-data
+
+log "Configuring the panel reverse proxy"
+install -d -m 0755 /etc/nginx/sites-available /etc/nginx/sites-enabled
+if [[ -n "$PANEL_HOSTNAME" ]]; then
+  PANEL_LISTEN="80"
+  PANEL_SERVER_NAME="$PANEL_HOSTNAME"
+else
+  PANEL_LISTEN="127.0.0.1:8080"
+  PANEL_SERVER_NAME="localhost"
+fi
+sed -e "s/__LISTEN__/$PANEL_LISTEN/g" -e "s/__SERVER_NAME__/$PANEL_SERVER_NAME/g" \
+  "$ROOT_DIR/packaging/nginx/nexa-panel.conf.template" > /etc/nginx/sites-available/nexa-panel.conf
+ln -sfn /etc/nginx/sites-available/nexa-panel.conf /etc/nginx/sites-enabled/nexa-panel.conf
+nginx -t
+
 # --- services ---------------------------------------------------------------
 log "Enabling services"
 systemctl enable nexa-agent.service nexa-api.service nginx.service cron.service
@@ -162,6 +218,14 @@ elif [[ ! -d /run/systemd/system ]]; then
 else
   log "Starting services"
   systemctl daemon-reload
-  systemctl restart nexa-agent.service nexa-api.service
-  log "Nexa Panel is running. The API listens on 127.0.0.1:8080."
+  systemctl restart nexa-agent.service nexa-api.service nginx.service
+  if [[ -n "$TLS_EMAIL" ]]; then
+    log "Obtaining a TLS certificate for $PANEL_HOSTNAME"
+    certbot --nginx --non-interactive --agree-tos --redirect --email "$TLS_EMAIL" -d "$PANEL_HOSTNAME"
+  fi
+  if [[ -n "$PANEL_HOSTNAME" ]]; then
+    log "Nexa Panel is available at http${TLS_EMAIL:+s}://$PANEL_HOSTNAME/"
+  else
+    log "Nexa Panel bootstrap listener is available locally at http://127.0.0.1:8080/. Re-run with --panel-hostname to publish it."
+  fi
 fi

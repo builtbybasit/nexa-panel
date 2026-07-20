@@ -1,11 +1,6 @@
 package agent
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/json"
-	"fmt"
 	"net/http"
 
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
@@ -72,14 +67,11 @@ func (s *Server) packagesApplyHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) signPackagePlan(plan packagesoperator.Plan) string {
 	plan.Signature = ""
-	encoded, _ := json.Marshal(plan)
-	mac := hmac.New(sha256.New, []byte(s.token))
-	_, _ = mac.Write(encoded)
-	return fmt.Sprintf("%x", mac.Sum(nil))
+	return signPayload(s.token, "package.plan.v1", plan)
 }
 
 func (s *Server) verifyPackagePlan(plan packagesoperator.Plan) bool {
 	provided := plan.Signature
-	expected := s.signPackagePlan(plan)
-	return len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+	plan.Signature = ""
+	return verifyPayload(s.token, "package.plan.v1", plan, provided)
 }

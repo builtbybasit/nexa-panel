@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 )
@@ -32,6 +33,13 @@ type LaunchRequest struct {
 }
 
 func (m *Module) CreateLaunch(ctx context.Context, kind admintooloperator.Kind, request LaunchRequest, user identity.User, remoteAddress string) (string, string, error) {
+	if kind == admintooloperator.PGAdmin {
+		// pgAdmin has one process-wide server catalog and passfile. Serialize its
+		// rotation so exactly one Nexa session matches the active capability
+		// header and catalog at a time.
+		m.pgAdminLaunchMu.Lock()
+		defer m.pgAdminLaunchMu.Unlock()
+	}
 	if m.cipher == nil || m.resolver == nil || m.audit == nil {
 		return "", "", errors.New("admin tool launch gateway is unavailable")
 	}
@@ -81,6 +89,14 @@ func (m *Module) CreateLaunch(ctx context.Context, kind admintooloperator.Kind, 
 		return "", "", err
 	}
 	now := m.now().UTC()
+	if kind == admintooloperator.PGAdmin {
+		// Rotating the global pgAdmin catalog/passfile makes every previous
+		// launch unsafe. Expire both unused launch tokens and established proxy
+		// sessions before publishing the replacement session.
+		if err := m.expireLaunchesAt(ctx, admintooloperator.PGAdmin, now); err != nil {
+			return "", "", err
+		}
+	}
 	var upstream *string
 	if observation.UpstreamCookieName != "" {
 		value := observation.UpstreamCookieName
@@ -98,6 +114,18 @@ func (m *Module) CreateLaunch(ctx context.Context, kind admintooloperator.Kind, 
 	return launchToken, "/tools/" + string(kind) + "/", nil
 }
 
+func (m *Module) expireLaunches(ctx context.Context, kind admintooloperator.Kind) error {
+	return m.expireLaunchesAt(ctx, kind, m.now().UTC())
+}
+
+func (m *Module) expireLaunchesAt(ctx context.Context, kind admintooloperator.Kind, at time.Time) error {
+	_, err := m.database.NewUpdate().Model((*launchModel)(nil)).
+		Set("expires_at = ?", at).
+		Set("session_expires_at = ?", at).
+		Where("tool_kind = ?", string(kind)).Exec(ctx)
+	return err
+}
+
 func (m *Module) launchHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
@@ -110,12 +138,12 @@ func (m *Module) launchHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := admintooloperator.Kind(r.PathValue("kind"))
-	token, path, err := m.CreateLaunch(r.Context(), kind, request, user, r.RemoteAddr)
+	token, path, err := m.CreateLaunch(r.Context(), kind, request, user, httpapi.RemoteAddress(r))
 	if err != nil {
 		writeError(w, 409, "admin_tool_launch_failed", err.Error())
 		return
 	}
-	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	secure := httpapi.IsHTTPS(r)
 	http.SetCookie(w, &http.Cookie{Name: launchCookieName, Value: token, Path: path, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: 60})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 201, map[string]string{"url": path})
@@ -140,6 +168,12 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	if exchanged {
 		m.setProxySession(w, r, kind, sessionToken)
 	}
+	if kind == admintooloperator.PGAdmin {
+		if _, err := admintooloperator.PGAdminSessionHeader(sessionToken); err != nil {
+			writeError(w, 401, "admin_tool_session_invalid", "Admin tool session is invalid.")
+			return
+		}
+	}
 	tool, err := m.get(r.Context(), kind)
 	if err != nil || tool.Status != string(StatusActive) {
 		writeError(w, 503, "admin_tool_unavailable", "Admin tool is not active.")
@@ -159,48 +193,137 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	original := proxy.Director
 	prefix := "/tools/" + string(kind)
+	secure := httpapi.IsHTTPS(r)
 	proxy.Director = func(request *http.Request) {
 		original(request)
+		request.Host = target.Host
 		request.URL.Path = strings.TrimPrefix(request.URL.Path, prefix)
 		if request.URL.Path == "" {
 			request.URL.Path = "/"
 		}
-		request.Header.Del("X-Forwarded-User")
-		request.Header.Del("Remote-User")
+		sanitizeAdminToolProxyRequest(request, kind, model.UpstreamCookieName)
 		if kind == admintooloperator.PGAdmin {
-			request.Header.Set("X-Forwarded-User", model.PanelUser)
+			_, _ = setPGAdminSessionIdentity(request, sessionToken, model.PanelUser)
 		}
 		if kind == admintooloperator.PHPMyAdmin && model.UpstreamCookieName != nil {
 			request.AddCookie(&http.Cookie{Name: *model.UpstreamCookieName, Value: sessionToken})
 		}
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
-		if location := response.Header.Get("Location"); location != "" {
-			if parsed, parseErr := url.Parse(location); parseErr == nil {
-				if parsed.IsAbs() {
-					parsed.Scheme = ""
-					parsed.Host = ""
-				}
-				if !strings.HasPrefix(parsed.Path, prefix) {
-					parsed.Path = prefix + "/" + strings.TrimPrefix(parsed.Path, "/")
-				}
-				response.Header.Set("Location", parsed.String())
-			}
-		}
-		cookies := response.Cookies()
-		if len(cookies) > 0 {
-			response.Header.Del("Set-Cookie")
-			for _, cookie := range cookies {
-				cookie.Path = prefix + "/"
-				response.Header.Add("Set-Cookie", cookie.String())
-			}
-		}
+		rewriteAdminToolProxyResponse(response, kind, prefix, secure)
 		return nil
 	}
 	proxy.ErrorHandler = func(writer http.ResponseWriter, _ *http.Request, _ error) {
 		writeError(writer, 502, "admin_tool_upstream_failed", "Admin tool did not respond.")
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// sanitizeAdminToolProxyRequest keeps panel credentials and proxy identity
+// metadata out of third-party tool containers while preserving tool-owned
+// cookies. The phpMyAdmin sign-on cookie is always replaced by the server-side
+// capability after this function returns.
+func sanitizeAdminToolProxyRequest(request *http.Request, kind admintooloperator.Kind, upstreamCookieName *string) {
+	for _, name := range []string{
+		"Authorization", "Proxy-Authorization", "Forwarded", "X-Forwarded-For",
+		"X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-User", "X-Real-IP",
+		"Remote-User", "X-Original-URL", "X-Rewrite-URL",
+	} {
+		request.Header.Del(name)
+	}
+	// ReverseProxy treats a present nil slice as an explicit request not to add
+	// its automatic X-Forwarded-For value after Director returns.
+	request.Header["X-Forwarded-For"] = nil
+	for name := range request.Header {
+		if strings.HasPrefix(strings.ToLower(name), "x-nexa-") {
+			request.Header.Del(name)
+		}
+	}
+	upstreamName := ""
+	if upstreamCookieName != nil {
+		upstreamName = *upstreamCookieName
+	}
+	cookies := request.Cookies()
+	request.Header.Del("Cookie")
+	request.Header.Del("Cookie2")
+	for _, cookie := range cookies {
+		if (upstreamName != "" && cookie.Name == upstreamName) || !allowedToolCookie(kind, cookie.Name) {
+			continue
+		}
+		request.AddCookie(cookie)
+	}
+}
+
+// rewriteAdminToolProxyResponse confines redirects and cookies to the tool
+// prefix. It also removes response controls that an upstream could otherwise
+// ask the outer Nginx proxy to interpret.
+func rewriteAdminToolProxyResponse(response *http.Response, kind admintooloperator.Kind, prefix string, secure bool) {
+	for _, name := range []string{"X-Accel-Redirect", "X-Accel-Expires", "X-Accel-Limit-Rate", "X-Sendfile"} {
+		response.Header.Del(name)
+	}
+	for name := range response.Header {
+		if strings.HasPrefix(strings.ToLower(name), "access-control-") {
+			response.Header.Del(name)
+		}
+	}
+	response.Header.Set("Cache-Control", "no-store")
+	response.Header.Set("Pragma", "no-cache")
+	if location := response.Header.Get("Location"); location != "" {
+		path, rawQuery, fragment := "/", "", ""
+		if parsed, err := url.Parse(location); err == nil {
+			path = parsed.Path
+			rawQuery = parsed.RawQuery
+			fragment = parsed.Fragment
+		}
+		if !strings.HasPrefix(path, prefix+"/") && path != prefix {
+			path = prefix + "/" + strings.TrimPrefix(path, "/")
+		}
+		response.Header.Set("Location", (&url.URL{Path: path, RawQuery: rawQuery, Fragment: fragment}).String())
+	}
+	cookies := response.Cookies()
+	response.Header.Del("Set-Cookie")
+	for _, cookie := range cookies {
+		if !allowedToolCookie(kind, cookie.Name) {
+			continue
+		}
+		cookie.Path = prefix + "/"
+		cookie.Domain = ""
+		cookie.HttpOnly = true
+		cookie.Secure = secure
+		cookie.SameSite = http.SameSiteStrictMode
+		response.Header.Add("Set-Cookie", cookie.String())
+	}
+}
+
+func allowedToolCookie(kind admintooloperator.Kind, name string) bool {
+	lower := strings.ToLower(name)
+	switch kind {
+	case admintooloperator.PHPMyAdmin:
+		return lower == "phpmyadmin" || strings.HasPrefix(lower, "pma")
+	case admintooloperator.PGAdmin:
+		return lower == "pga4_session"
+	default:
+		return false
+	}
+}
+
+// setPGAdminSessionIdentity removes every browser-supplied capability-shaped
+// header, then adds the single server-derived header name trusted by this
+// pgAdmin launch. The raw session token remains server-side and never appears
+// in a URL, header value, or access-log request line.
+func setPGAdminSessionIdentity(request *http.Request, sessionToken, panelUser string) (string, error) {
+	prefix := strings.ToLower(admintooloperator.PGAdminSessionHeaderPrefix)
+	for name := range request.Header {
+		if strings.HasPrefix(strings.ToLower(name), prefix) {
+			request.Header.Del(name)
+		}
+	}
+	header, err := admintooloperator.PGAdminSessionHeader(sessionToken)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set(header, panelUser)
+	return header, nil
 }
 
 func (m *Module) authorizeProxy(ctx context.Context, kind admintooloperator.Kind, userID string, r *http.Request) (launchModel, string, bool, error) {
@@ -239,7 +362,7 @@ func (m *Module) authorizeProxy(ctx context.Context, kind admintooloperator.Kind
 
 // setProxySession writes the exchange cookies after authorizeProxy has consumed a launch.
 func (m *Module) setProxySession(w http.ResponseWriter, r *http.Request, kind admintooloperator.Kind, sessionToken string) {
-	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	secure := httpapi.IsHTTPS(r)
 	path := "/tools/" + string(kind) + "/"
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: sessionToken, Path: path, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: 900})
 	http.SetCookie(w, &http.Cookie{Name: launchCookieName, Value: "", Path: path, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
@@ -281,11 +404,10 @@ func waitForUpstreamReady(ctx context.Context, port int, timeout time.Duration) 
 
 func secureToken() (string, error) {
 	value := make([]byte, 32)
-	if _, err := rand.Read(value); err != nil {
-		return "", err
-	}
+	rand.Read(value)
 	return base64.RawURLEncoding.EncodeToString(value), nil
 }
+
 func tokenHash(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])

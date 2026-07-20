@@ -2,14 +2,10 @@ package postgres
 
 import (
 	"context"
-
 	"crypto/sha256"
-
-	"errors"
-
 	"encoding/hex"
+	"errors"
 	"strconv"
-
 	"strings"
 )
 

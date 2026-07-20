@@ -1,15 +1,22 @@
 package controlplane
 
 import (
-	"encoding/json"
+	"context"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 	"github.com/nexa-panel/nexa-panel/internal/platform/webui"
 )
 
@@ -22,6 +29,16 @@ type Server struct {
 	authorization  Authorization
 	patternsMu     sync.Mutex
 	patterns       map[string]struct{}
+	readiness      func(context.Context) error
+	startedAt      time.Time
+	requests       atomic.Uint64
+	inFlight       atomic.Int64
+	durationNanos  atomic.Uint64
+	panics         atomic.Uint64
+	lifecycleMu    sync.Mutex
+	background     []module.Background
+	started        bool
+	closed         bool
 }
 
 type Authentication interface {
@@ -46,10 +63,21 @@ func WithAuthorization(authorization Authorization) Option {
 	}
 }
 
+func WithReadiness(check func(context.Context) error) Option {
+	return func(server *Server) {
+		if check != nil {
+			server.readiness = check
+		}
+	}
+}
+
 func New(version string, modules []module.Module, logger *slog.Logger, options ...Option) (*Server, error) {
 	ordered, err := module.ValidateAndSort(modules)
 	if err != nil {
 		return nil, err
+	}
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	server := &Server{
 		version:        version,
@@ -59,6 +87,8 @@ func New(version string, modules []module.Module, logger *slog.Logger, options .
 		authentication: unavailableAuthentication{},
 		authorization:  unavailableAuthorization{},
 		patterns:       make(map[string]struct{}),
+		readiness:      func(context.Context) error { return nil },
+		startedAt:      time.Now().UTC(),
 	}
 	for _, option := range options {
 		option(server)
@@ -71,6 +101,9 @@ func New(version string, modules []module.Module, logger *slog.Logger, options .
 		if err := feature.Register(server); err != nil {
 			return nil, fmt.Errorf("register module %q: %w", feature.Descriptor().ID, err)
 		}
+		if background, ok := feature.(module.Background); ok {
+			server.background = append(server.background, background)
+		}
 	}
 	if frontend := webui.Handler(); frontend != nil {
 		if err := server.Handle("/", frontend); err != nil {
@@ -80,8 +113,36 @@ func New(version string, modules []module.Module, logger *slog.Logger, options .
 	return server, nil
 }
 
+// Start begins every module-owned worker only after New has validated and
+// registered the entire application. Calling Start more than once is safe.
+func (s *Server) Start(ctx context.Context) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.started || s.closed {
+		return
+	}
+	for _, background := range s.background {
+		background.Start(ctx)
+	}
+	s.started = true
+}
+
+// Close stops background modules in reverse dependency order. It is
+// idempotent so deferred cleanup remains safe on listener and shutdown errors.
+func (s *Server) Close() {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.closed {
+		return
+	}
+	for index := len(s.background) - 1; index >= 0; index-- {
+		s.background[index].Close()
+	}
+	s.closed = true
+}
+
 func (s *Server) Handler() http.Handler {
-	return s.recoverPanic(s.requestLog(s.securityHeaders(s.mux)))
+	return s.requestMetrics(s.requestLog(s.recoverPanic(s.requestID(s.securityHeaders(s.mux)))))
 }
 
 func (s *Server) Handle(pattern string, handler http.Handler) error {
@@ -112,6 +173,12 @@ func (s *Server) registerPlatformRoutes() error {
 	})); err != nil {
 		return err
 	}
+	if err := s.Handle("GET /api/v1/health/ready", http.HandlerFunc(s.readyHTTP)); err != nil {
+		return err
+	}
+	if err := s.Handle("GET /metrics", http.HandlerFunc(s.metricsHTTP)); err != nil {
+		return err
+	}
 	return s.HandleAuthorized("GET /api/v1/modules", "system.read", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		descriptors := make([]module.Descriptor, 0, len(s.modules))
 		for _, feature := range s.modules {
@@ -119,6 +186,38 @@ func (s *Server) registerPlatformRoutes() error {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": descriptors})
 	}))
+}
+
+func (s *Server) readyHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.readiness(ctx); err != nil {
+		httpapi.WriteError(w, http.StatusServiceUnavailable, "dependency_unavailable", "A required local dependency is unavailable.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "version": s.version})
+}
+
+func (s *Server) metricsHTTP(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	uptime := time.Since(s.startedAt).Seconds()
+	duration := float64(s.durationNanos.Load()) / float64(time.Second)
+	_, _ = fmt.Fprintf(
+		w,
+		"# TYPE nexa_build_info gauge\n"+
+			"nexa_build_info{version=%s} 1\n"+
+			"# TYPE nexa_process_uptime_seconds gauge\n"+
+			"nexa_process_uptime_seconds %.6f\n"+
+			"# TYPE nexa_http_requests_total counter\n"+
+			"nexa_http_requests_total %d\n"+
+			"# TYPE nexa_http_requests_in_flight gauge\n"+
+			"nexa_http_requests_in_flight %d\n"+
+			"# TYPE nexa_http_request_duration_seconds_total counter\n"+
+			"nexa_http_request_duration_seconds_total %.6f\n"+
+			"# TYPE nexa_http_panics_total counter\n"+
+			"nexa_http_panics_total %d\n",
+		strconv.Quote(s.version), uptime, s.requests.Load(), s.inFlight.Load(), duration, s.panics.Load(),
+	)
 }
 
 type unavailableAuthentication struct{}
@@ -145,17 +244,76 @@ func (unavailableAuthorization) Middleware(_ string, _ http.Handler) http.Handle
 func (s *Server) requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
+		observed := newResponseObserver(w)
+		defer func() {
+			s.logger.Info(
+				"http request",
+				"request_id", observed.Header().Get("X-Request-ID"),
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", observed.StatusCode(),
+				"bytes", observed.BytesWritten(),
+				"duration", time.Since(started),
+			)
+		}()
+		next.ServeHTTP(observed, r)
+	})
+}
+
+type requestIDContextKey struct{}
+
+func (s *Server) requestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := trustedRequestID(r)
+		if requestID == "" {
+			requestID = secureid.Hex(16)
+		}
+		w.Header().Set("X-Request-ID", requestID)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDContextKey{}, requestID)))
+	})
+}
+
+func trustedRequestID(r *http.Request) string {
+	if !httpapi.IsTrustedProxy(r.Context()) {
+		return ""
+	}
+	identifier := r.Header.Get("X-Request-ID")
+	if len(identifier) != 32 {
+		return ""
+	}
+	if _, err := hex.DecodeString(identifier); err != nil {
+		return ""
+	}
+	return identifier
+}
+
+func (s *Server) requestMetrics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		s.requests.Add(1)
+		s.inFlight.Add(1)
+		defer func() {
+			s.inFlight.Add(-1)
+			s.durationNanos.Add(uint64(time.Since(started)))
+		}()
 		next.ServeHTTP(w, r)
-		s.logger.Info("http request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(started))
 	})
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+		// Third-party database tools own their response policy. Applying the panel
+		// SPA's CSP to their proxied HTML would block their scripts and styles.
+		if !strings.HasPrefix(r.URL.Path, "/tools/") {
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
+		}
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=(), payment=(), usb=()")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		if httpapi.IsHTTPS(r) {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -164,19 +322,18 @@ func (s *Server) recoverPanic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				s.logger.Error("panic recovered", "error", recovered, "stack", string(debug.Stack()))
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"code":    "internal_error",
-					"message": "An internal error occurred.",
-				})
+				s.panics.Add(1)
+				s.logger.Error("panic recovered", "request_id", w.Header().Get("X-Request-ID"), "error", recovered, "stack", string(debug.Stack()))
+				if observed, ok := w.(*responseObserver); !ok || !observed.Committed() {
+					writeJSON(w, http.StatusInternalServerError, map[string]any{
+						"code":    "internal_error",
+						"message": "An internal error occurred.",
+					})
+				}
 			}
 		}()
 		next.ServeHTTP(w, r)
 	})
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
+var writeJSON = httpapi.WriteJSON

@@ -1,20 +1,20 @@
 import { ref } from 'vue'
 
-export interface ToastInput {
+interface ToastInput {
   title: string
   body?: string
-  tone?: 'success' | 'danger' | 'info'
+  tone?: 'success' | 'warning' | 'danger' | 'info'
   /** Route the optional action link navigates to. */
   to?: string
   toLabel?: string
   timeoutMs?: number
 }
 
-export interface Toast {
+interface Toast {
   id: number
   title: string
   body?: string
-  tone: 'success' | 'danger' | 'info'
+  tone: 'success' | 'warning' | 'danger' | 'info'
   to?: string
   toLabel?: string
   timeoutMs: number

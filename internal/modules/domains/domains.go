@@ -1,26 +1,20 @@
 package domains
 
 import (
-	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-
-	"net/http"
-
-	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
-
-	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+	"context"
+	"errors"
 	"net"
+	"net/http"
+	"regexp"
+	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 
 	"github.com/uptrace/bun"
-
-	"time"
-
-	"context"
-
-	"errors"
-	"regexp"
 )
 
 const schema = `

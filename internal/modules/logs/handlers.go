@@ -2,24 +2,18 @@ package logs
 
 import (
 	"database/sql"
-
 	"encoding/json"
 	"errors"
 	"fmt"
-
 	"io"
 	"mime"
 	"net/http"
-
 	"path"
 	"strconv"
-
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
-
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
