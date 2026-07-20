@@ -18,6 +18,7 @@ import (
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
+	phpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/php"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
@@ -35,6 +36,7 @@ type Server struct {
 	mysql        mysqloperator.Operator
 	adminTools   admintooloperator.Operator
 	packages     packagesoperator.Operator
+	php          phpoperator.Operator
 	files        filesoperator.Operator
 	logs         logsoperator.Operator
 	schedules    scheduleoperator.Operator
@@ -105,6 +107,14 @@ func (s *Server) Serve(ctx context.Context) error {
 		mux.HandleFunc("GET /v1/packages/installed", s.packagesDiscoverHTTP)
 		mux.HandleFunc("POST /v1/packages/plan", s.packagesPlanHTTP)
 		mux.HandleFunc("POST /v1/packages/apply", s.packagesApplyHTTP)
+	}
+	if s.php != nil {
+		mux.HandleFunc("GET /v1/php/versions", s.phpVersionsHTTP)
+		mux.HandleFunc("GET /v1/php/extensions", s.phpExtensionsHTTP)
+		mux.HandleFunc("GET /v1/php/settings", s.phpSettingsHTTP)
+		mux.HandleFunc("POST /v1/php/sites/settings", s.phpSiteSettingsHTTP)
+		mux.HandleFunc("POST /v1/php/plan", s.phpPlanHTTP)
+		mux.HandleFunc("POST /v1/php/apply", s.phpApplyHTTP)
 	}
 	if s.files != nil {
 		mux.HandleFunc("POST /v1/files/list", s.filesListHTTP)

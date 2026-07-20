@@ -1,0 +1,190 @@
+php_versions:
+  get:
+    operationId: listPhpVersions
+    summary: List Installed PHP Versions
+    tags:
+    - PHP
+    x-permission: applications.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: PHP branches installed on the node
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: string
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+php_extensions:
+  get:
+    operationId: listPhpExtensions
+    summary: List PHP Extensions
+    tags:
+    - PHP
+    x-permission: applications.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: version
+      in: query
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9]{1,2}\.[0-9]{1,2}$
+    responses:
+      '200':
+        description: Loadable modules the branch offers, joined with install state
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/php.yaml#/PhpExtension
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+  post:
+    operationId: changePhpExtension
+    summary: Install or Remove a PHP Extension
+    tags:
+    - PHP
+    x-permission: applications.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/php.yaml#/ChangePhpExtension
+    responses:
+      '202':
+        description: Extension install/remove was queued as a job
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+php_settings:
+  get:
+    operationId: listPhpSettings
+    summary: List PHP Settings
+    tags:
+    - PHP
+    x-permission: applications.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: version
+      in: query
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9]{1,2}\.[0-9]{1,2}$
+    responses:
+      '200':
+        description: php.ini directives for the branch as the FPM SAPI sees them
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/php.yaml#/PhpDirective
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+  put:
+    operationId: savePhpSettings
+    summary: Save PHP Settings
+    tags:
+    - PHP
+    x-permission: applications.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/php.yaml#/SavePhpSettings
+    responses:
+      '202':
+        description: Directive save was queued as a job
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+php_sites_id_settings:
+  get:
+    operationId: listSitePhpSettings
+    summary: List Per-Site PHP Settings
+    tags:
+    - PHP
+    x-permission: applications.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    responses:
+      '200':
+        description: Directives the site may override, with any per-site .user.ini value overlaid
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: string
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/php.yaml#/PhpDirective
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+  put:
+    operationId: saveSitePhpSettings
+    summary: Save Per-Site PHP Settings
+    tags:
+    - PHP
+    x-permission: applications.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/php.yaml#/SavePhpSettings
+    responses:
+      '202':
+        description: Per-site override save was queued as a job
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

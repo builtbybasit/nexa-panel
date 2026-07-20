@@ -19,6 +19,7 @@ import (
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
+	phpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/php"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
@@ -66,6 +67,10 @@ func runAgent(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create packages operator: %w", err)
 	}
+	phpOperator, err := phpoperator.NewHostOperator(nil, phpoperator.HostConfig{})
+	if err != nil {
+		return fmt.Errorf("create PHP operator: %w", err)
+	}
 	filesOperator, err := filesoperator.NewHostOperator("/srv/nexa/sites", sitefs.HostOwnership{})
 	if err != nil {
 		return fmt.Errorf("create files operator: %w", err)
@@ -86,6 +91,6 @@ func runAgent(args []string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	server := agent.New(*socket, version.Version, token, operator, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator))
+	server := agent.New(*socket, version.Version, token, operator, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithPHPOperator(phpOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator))
 	return server.Serve(ctx)
 }

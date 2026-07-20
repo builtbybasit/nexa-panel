@@ -6,6 +6,7 @@ import { RouterLink, useRoute } from 'vue-router'
 import { listCertificates, type Certificate } from '@/modules/certificates/api'
 import { listDomains, type Domain } from '@/modules/domains/api'
 import { useIdentityStore } from '@/modules/identity/store'
+import SitePhpSettingsCard from '@/modules/php/components/SitePhpSettingsCard.vue'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { daysUntil, formatDateTime } from '@/shared/formatters'
 import {
@@ -38,6 +39,7 @@ const canWriteFiles = computed(() => identity.can('files.write'))
 const canReadDomains = computed(() => identity.can('domains.read'))
 const canReadCertificates = computed(() => identity.can('certificates.read'))
 const canReadFiles = computed(() => identity.can('files.read'))
+const canReadApplications = computed(() => identity.can('applications.read'))
 
 const siteId = computed(() => String(route.params.siteId ?? ''))
 
@@ -568,6 +570,12 @@ watch(siteId, () => {
           <FeatureTile v-for="tile in tiles" :key="tile.label" v-bind="tile" />
         </div>
       </AppCard>
+
+      <SitePhpSettingsCard
+        v-if="canReadApplications && site && site.status === 'active'"
+        :site-id="site.id"
+        :php-version="site.phpVersion"
+      />
 
       <div class="grid items-start gap-4 lg:grid-cols-2">
         <AppCard v-if="canReadDomains" eyebrow="Routing" title="Domains">

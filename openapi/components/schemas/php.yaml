@@ -1,0 +1,82 @@
+PhpExtension:
+  type: object
+  required:
+  - name
+  - package
+  - installed
+  properties:
+    name:
+      type: string
+      description: Bare module suffix, e.g. redis
+      pattern: ^[a-z0-9]{1,40}$
+    package:
+      type: string
+      description: The apt package the suffix resolves to for this branch, e.g. php8.3-redis
+    installed:
+      type: boolean
+PhpDirective:
+  type: object
+  required:
+  - name
+  - module
+  - value
+  - access
+  - managed
+  properties:
+    name:
+      type: string
+      description: php.ini directive name, e.g. memory_limit
+    module:
+      type: string
+      description: The extension (module) that registers the directive; "core" for the engine itself
+    value:
+      type: string
+      description: The effective value under the FPM SAPI (including any nexa-managed override)
+    access:
+      type: string
+      description: PHP ini access scope
+      enum:
+      - PHP_INI_ALL
+      - PHP_INI_PERDIR
+      - PHP_INI_USER
+      - PHP_INI_SYSTEM
+      - PHP_INI_NONE
+    managed:
+      type: boolean
+      description: Whether nexa's managed drop-in (or, per-site, the .user.ini) currently overrides this directive
+SavePhpSettings:
+  type: object
+  additionalProperties: false
+  description: Directives to set to a value, and directives to reset to their default
+  properties:
+    version:
+      type: string
+      description: PHP branch to save (branch-wide settings only; omitted for per-site saves)
+      pattern: ^[0-9]{1,2}\.[0-9]{1,2}$
+    set:
+      type: object
+      additionalProperties:
+        type: string
+    reset:
+      type: array
+      items:
+        type: string
+ChangePhpExtension:
+  type: object
+  additionalProperties: false
+  required:
+  - version
+  - extension
+  - action
+  properties:
+    version:
+      type: string
+      pattern: ^[0-9]{1,2}\.[0-9]{1,2}$
+    extension:
+      type: string
+      pattern: ^[a-z0-9]{1,40}$
+    action:
+      type: string
+      enum:
+      - install
+      - remove

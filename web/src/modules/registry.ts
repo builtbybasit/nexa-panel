@@ -11,11 +11,12 @@ import { logsModule } from './logs'
 import { mysqlModule } from './mysql'
 import { nodeOperationsModule } from './nodeoperations'
 import { overviewModule } from './overview'
+import { phpModule } from './php'
 import { schedulesModule } from './schedules'
 import { sitesModule } from './sites'
 import { systemModule } from './system'
 import type { FeatureModule } from './types'
 
-export const featureModules: FeatureModule[] = [overviewModule, sitesModule, domainsModule, certificatesModule, filesModule, logsModule, schedulesModule, backupsModule, databasesModule, mysqlModule, applicationsModule, systemModule, nodeOperationsModule, jobsModule, identityModule, auditModule].sort(
+export const featureModules: FeatureModule[] = [overviewModule, sitesModule, domainsModule, certificatesModule, filesModule, logsModule, schedulesModule, backupsModule, databasesModule, mysqlModule, applicationsModule, phpModule, systemModule, nodeOperationsModule, jobsModule, identityModule, auditModule].sort(
   (left, right) => (left.navigation?.order ?? 999) - (right.navigation?.order ?? 999),
 )

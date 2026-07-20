@@ -210,6 +210,14 @@ paths:
     $ref: ./paths/applications.yaml#/applications_id_plan
   /applications/{id}/apply:
     $ref: ./paths/applications.yaml#/applications_id_apply
+  /php/versions:
+    $ref: ./paths/php.yaml#/php_versions
+  /php/extensions:
+    $ref: ./paths/php.yaml#/php_extensions
+  /php/settings:
+    $ref: ./paths/php.yaml#/php_settings
+  /php/sites/{id}/settings:
+    $ref: ./paths/php.yaml#/php_sites_id_settings
 components:
   responses:
     ClientError:
@@ -325,6 +333,14 @@ components:
       $ref: ./components/schemas/mysql-family.yaml#/MySQLFamilyDatabase
     CreateMySQLFamilyGrant:
       $ref: ./components/schemas/mysql-family.yaml#/CreateMySQLFamilyGrant
+    PhpExtension:
+      $ref: ./components/schemas/php.yaml#/PhpExtension
+    PhpDirective:
+      $ref: ./components/schemas/php.yaml#/PhpDirective
+    SavePhpSettings:
+      $ref: ./components/schemas/php.yaml#/SavePhpSettings
+    ChangePhpExtension:
+      $ref: ./components/schemas/php.yaml#/ChangePhpExtension
     FileEntry:
       $ref: ./components/schemas/files.yaml#/FileEntry
     FileListing:

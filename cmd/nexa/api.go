@@ -22,6 +22,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/modules/files"
 	"github.com/nexa-panel/nexa-panel/internal/modules/logs"
 	"github.com/nexa-panel/nexa-panel/internal/modules/mysql"
+	"github.com/nexa-panel/nexa-panel/internal/modules/php"
 	"github.com/nexa-panel/nexa-panel/internal/modules/postgres"
 	"github.com/nexa-panel/nexa-panel/internal/modules/runtimes"
 	"github.com/nexa-panel/nexa-panel/internal/modules/schedules"
@@ -44,6 +45,7 @@ import (
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
+	phpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/php"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
@@ -152,6 +154,10 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize applications module: %w", err)
 	}
+	phpModule, err := php.New(jobsModule, phpoperator.NewUnixClient(*agentSocket, *agentToken), sitesModule, identityModule)
+	if err != nil {
+		return fmt.Errorf("initialize PHP module: %w", err)
+	}
 	backupsModule, err := backups.New(setupCtx, backups.Dependencies{
 		Database: database, Jobs: jobsModule, Cipher: secretBox,
 		Operator:     backupoperator.NewUnixClient(*agentSocket, *agentToken),
@@ -182,6 +188,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		logsModule,
 		schedulesModule,
 		applicationsModule,
+		phpModule,
 		backupsModule,
 		system.New(capacity.NewProcReader(), podman.NewInspector()),
 	}
@@ -190,7 +197,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		version.Version, modules, logger,
 		controlplane.WithAuthentication(identityModule),
 		controlplane.WithAuthorization(authorization.New()),
-		controlplane.WithReadiness(apiReadiness(database, *agentSocket)),
+		controlplane.WithReadiness(apiReadiness(database, authenticatedAgentReadiness(*agentSocket, *agentToken))),
 	)
 	if err != nil {
 		return fmt.Errorf("create control plane: %w", err)
