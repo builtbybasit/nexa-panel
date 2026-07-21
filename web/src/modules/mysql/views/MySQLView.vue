@@ -15,7 +15,6 @@ import {
   AppDialog,
   AppIcon,
   AppInput,
-  AppSelect,
   CredentialReveal,
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +33,13 @@ import {
   TablePager,
   type Fact,
 } from '@/shared/ui'
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxFloatingContent,
+  ComboboxSelectItem,
+  ComboboxTriggerInput,
+} from '@/shared/ui/combobox'
 
 import { useToolLaunch } from '@/modules/admintools/composables/useToolLaunch'
 import { useIdentityStore } from '@/modules/identity/store'
@@ -872,14 +878,29 @@ watch(engine, () => {
           hint="The account that owns this database and gets full access to it."
           :error="ownerAccountError"
         >
-          <AppSelect
-            v-model="ownerAccountId"
-            :invalid="!!ownerAccountError"
-            empty-message="No active accounts — create one first"
-          >
-            <option v-if="ownerOptions.length" disabled value="">Select owner</option>
-            <option v-for="item in ownerOptions" :key="item.id" :value="item.id">{{ item.name }}@{{ item.host }}</option>
-          </AppSelect>
+          <Combobox v-model="ownerAccountId">
+            <ComboboxTriggerInput
+              :invalid="!!ownerAccountError"
+              placeholder="Select owner"
+              :display-value="
+                (id) => {
+                  const item = ownerOptions.find((i) => i.id === id)
+                  return item ? `${item.name}@${item.host}` : ''
+                }
+              "
+            />
+            <ComboboxFloatingContent>
+              <ComboboxEmpty>No active accounts — create one first</ComboboxEmpty>
+              <ComboboxSelectItem
+                v-for="item in ownerOptions"
+                :key="item.id"
+                :value="item.id"
+                :text-value="`${item.name}@${item.host}`"
+              >
+                {{ item.name }}@{{ item.host }}
+              </ComboboxSelectItem>
+            </ComboboxFloatingContent>
+          </Combobox>
         </FormField>
         <JobFailureNotice v-if="databaseRunner.error.value" v-bind="failureProps(databaseRunner)" />
         <JobProgress

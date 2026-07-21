@@ -9,7 +9,6 @@ import {
   AppAlert,
   AppButton,
   AppInput,
-  AppSelect,
   EmptyState,
   JobFailureNotice,
   JobProgress,
@@ -19,6 +18,7 @@ import {
   StatusPill,
   TablePager,
 } from '@/shared/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
 
 import {
   changePhpExtension,
@@ -227,9 +227,12 @@ async function save() {
         </div>
         <label class="flex items-center gap-2 pb-2 text-xs font-semibold text-ink-muted">
           PHP version
-          <AppSelect v-model="selectedVersion" class="w-32">
-            <option v-for="version in versions" :key="version" :value="version">PHP {{ version }}</option>
-          </AppSelect>
+          <Select v-model="selectedVersion">
+            <SelectTrigger class="w-32" />
+            <SelectContent>
+              <SelectItem v-for="version in versions" :key="version" :value="version">PHP {{ version }}</SelectItem>
+            </SelectContent>
+          </Select>
         </label>
       </div>
 

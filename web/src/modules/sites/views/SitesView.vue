@@ -11,11 +11,14 @@ import {
   AppButton,
   AppCard,
   AppIcon,
-  AppSelect,
   EmptyState,
   ListToolbar,
   PageHeader,
   ResourceRow,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
   SkeletonRow,
   StatusPill,
 } from '@/shared/ui'
@@ -35,6 +38,14 @@ const statusFilter = ref<SiteStatus | ''>('')
 const filteredSites = computed(() =>
   statusFilter.value ? sites.value.filter((site) => site.status === statusFilter.value) : sites.value,
 )
+
+const ALL_STATUSES = '__all__'
+const statusFilterModel = computed({
+  get: () => statusFilter.value || ALL_STATUSES,
+  set: (value: string) => {
+    statusFilter.value = value === ALL_STATUSES ? '' : (value as SiteStatus)
+  },
+})
 
 const { search, page, pageCount, items, matching } = useCollection(() => filteredSites.value, {
   searchText: (site) => `${site.displayName} ${site.primaryDomain} ${site.slug}`,
@@ -66,10 +77,15 @@ function openCreate() {
         >
           <template #filters>
             <div class="w-44">
-              <AppSelect v-model="statusFilter" aria-label="Filter by status">
-                <option value="">All statuses</option>
-                <option v-for="status in siteStatuses" :key="status" :value="status">{{ humanize(status) }}</option>
-              </AppSelect>
+              <Select v-model="statusFilterModel">
+                <SelectTrigger aria-label="Filter by status" />
+                <SelectContent>
+                  <SelectItem :value="ALL_STATUSES">All statuses</SelectItem>
+                  <SelectItem v-for="status in siteStatuses" :key="status" :value="status">
+                    {{ humanize(status) }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </template>
         </ListToolbar>

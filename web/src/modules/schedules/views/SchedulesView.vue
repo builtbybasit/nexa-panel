@@ -13,7 +13,6 @@ import {
   AppCard,
   AppConfirmDialog,
   AppDialog,
-  AppSelect,
   EmptyState,
   JobFailureNotice,
   JobProgress,
@@ -24,6 +23,13 @@ import {
   StatusPill,
   type Fact,
 } from '@/shared/ui'
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxFloatingContent,
+  ComboboxSelectItem,
+  ComboboxTriggerInput,
+} from '@/shared/ui/combobox'
 
 import { getJob, type Job } from '../../jobs/api'
 import { listSites } from '../../sites/api'
@@ -446,11 +452,27 @@ watch(
     <template v-else>
       <div class="flex flex-wrap items-center gap-3">
         <div class="w-full sm:w-72">
-          <AppSelect v-model="siteSelection" aria-label="Site">
-            <option v-for="site in activeSites" :key="site.id" :value="site.id">
-              {{ site.displayName }} — {{ site.primaryDomain }}
-            </option>
-          </AppSelect>
+          <Combobox v-model="siteSelection">
+            <ComboboxTriggerInput
+              aria-label="Site"
+              placeholder="Select a site"
+              :display-value="(id) => {
+                const site = activeSites.find((s) => s.id === id)
+                return site ? `${site.displayName} — ${site.primaryDomain}` : ''
+              }"
+            />
+            <ComboboxFloatingContent>
+              <ComboboxEmpty>No sites match.</ComboboxEmpty>
+              <ComboboxSelectItem
+                v-for="site in activeSites"
+                :key="site.id"
+                :value="site.id"
+                :text-value="`${site.displayName} ${site.primaryDomain}`"
+              >
+                {{ site.displayName }} — {{ site.primaryDomain }}
+              </ComboboxSelectItem>
+            </ComboboxFloatingContent>
+          </Combobox>
         </div>
         <AppButton size="sm" icon="refresh-cw" :loading="tasksQuery.isFetching.value" :disabled="!selectedSite" @click="tasksQuery.refetch()">
           Refresh

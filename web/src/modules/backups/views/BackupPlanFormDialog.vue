@@ -2,7 +2,8 @@
 import { useQuery } from '@tanstack/vue-query'
 import { computed, ref } from 'vue'
 
-import { AppAlert, AppButton, AppDialog, AppInput, AppSelect, EmptyState, FormField, Switch } from '@/shared/ui'
+import { AppAlert, AppButton, AppDialog, AppInput, EmptyState, FormField, Switch } from '@/shared/ui'
+import { Combobox, ComboboxEmpty, ComboboxFloatingContent, ComboboxSelectItem, ComboboxTriggerInput } from '@/shared/ui/combobox'
 
 import { listDatabases as listPostgresDatabases } from '../../databases/api'
 import { listDatabases as listMysqlDatabases } from '../../mysql/api'
@@ -103,9 +104,17 @@ function close() {
 
       <div class="grid gap-4 sm:grid-cols-2">
         <FormField label="Account" hint="Where copies are stored.">
-          <AppSelect v-model="accountId">
-            <option v-for="account in accounts" :key="account.id" :value="account.id">{{ account.name }}</option>
-          </AppSelect>
+          <Combobox v-model="accountId">
+            <ComboboxTriggerInput
+              :display-value="(id) => accounts.find((account) => account.id === id)?.name ?? ''"
+            />
+            <ComboboxFloatingContent>
+              <ComboboxEmpty>No matches.</ComboboxEmpty>
+              <ComboboxSelectItem v-for="account in accounts" :key="account.id" :value="account.id" :text-value="account.name">
+                {{ account.name }}
+              </ComboboxSelectItem>
+            </ComboboxFloatingContent>
+          </Combobox>
         </FormField>
         <FormField label="Retention target" hint="Recorded now for policy; automatic pruning is not enabled until copy verification is available.">
           <AppInput v-model="copiesLimit" type="number" min="1" max="1000" step="1" required />

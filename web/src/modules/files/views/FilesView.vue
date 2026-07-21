@@ -14,7 +14,6 @@ import {
   AppDialog,
   AppIcon,
   AppInput,
-  AppSelect,
   Checkbox,
   ContextMenu,
   ContextMenuContent,
@@ -36,6 +35,13 @@ import {
   SkeletonRow,
   StatusPill,
 } from '@/shared/ui'
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxFloatingContent,
+  ComboboxSelectItem,
+  ComboboxTriggerInput,
+} from '@/shared/ui/combobox'
 
 import { getJob } from '../../jobs/api'
 import { listSites } from '../../sites/api'
@@ -659,11 +665,27 @@ function onDrop(event: DragEvent) {
       <!-- Site selector + breadcrumb path -->
       <div class="flex flex-wrap items-center gap-3">
         <div class="w-full sm:w-72">
-          <AppSelect v-model="siteSelection" aria-label="Site">
-            <option v-for="site in activeSites" :key="site.id" :value="site.id">
-              {{ site.displayName }} — {{ site.primaryDomain }}
-            </option>
-          </AppSelect>
+          <Combobox v-model="siteSelection">
+            <ComboboxTriggerInput
+              aria-label="Site"
+              placeholder="Select a site"
+              :display-value="(id) => {
+                const site = activeSites.find((s) => s.id === id)
+                return site ? `${site.displayName} — ${site.primaryDomain}` : ''
+              }"
+            />
+            <ComboboxFloatingContent>
+              <ComboboxEmpty>No sites match.</ComboboxEmpty>
+              <ComboboxSelectItem
+                v-for="site in activeSites"
+                :key="site.id"
+                :value="site.id"
+                :text-value="`${site.displayName} ${site.primaryDomain}`"
+              >
+                {{ site.displayName }} — {{ site.primaryDomain }}
+              </ComboboxSelectItem>
+            </ComboboxFloatingContent>
+          </Combobox>
         </div>
         <nav class="flex min-w-0 flex-1 items-center gap-0.5 font-mono text-[13px]" aria-label="Path">
           <button

@@ -4,7 +4,9 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { formatBytes, formatDateTime } from '@/shared/formatters'
-import { AppAlert, AppButton, AppCard, AppIcon, AppInput, AppSelect, EmptyState, PageHeader, SkeletonRow, StatusPill, Switch } from '@/shared/ui'
+import { AppAlert, AppButton, AppCard, AppIcon, AppInput, EmptyState, PageHeader, SkeletonRow, StatusPill, Switch } from '@/shared/ui'
+import { Combobox, ComboboxEmpty, ComboboxFloatingContent, ComboboxSelectItem, ComboboxTriggerInput } from '@/shared/ui/combobox'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
 
 import { listSites } from '../../sites/api'
 import { downloadUrl, listLogs, readLog, subscribeToLogStream, type LogFile } from '../api'
@@ -331,11 +333,27 @@ onBeforeUnmount(() => {
     <template v-else>
       <div class="flex flex-wrap items-center gap-3">
         <div class="w-full sm:w-72">
-          <AppSelect v-model="siteSelection" aria-label="Site">
-            <option v-for="site in eligibleSites" :key="site.id" :value="site.id">
-              {{ site.displayName }} — {{ site.primaryDomain }}
-            </option>
-          </AppSelect>
+          <Combobox v-model="siteSelection">
+            <ComboboxTriggerInput
+              aria-label="Site"
+              placeholder="Select a site"
+              :display-value="(id) => {
+                const site = eligibleSites.find((s) => s.id === id)
+                return site ? `${site.displayName} — ${site.primaryDomain}` : ''
+              }"
+            />
+            <ComboboxFloatingContent>
+              <ComboboxEmpty>No sites match.</ComboboxEmpty>
+              <ComboboxSelectItem
+                v-for="site in eligibleSites"
+                :key="site.id"
+                :value="site.id"
+                :text-value="`${site.displayName} ${site.primaryDomain}`"
+              >
+                {{ site.displayName }} — {{ site.primaryDomain }}
+              </ComboboxSelectItem>
+            </ComboboxFloatingContent>
+          </Combobox>
         </div>
         <StatusPill v-if="selectedSite" :status="selectedSite.status" />
       </div>
@@ -406,11 +424,14 @@ onBeforeUnmount(() => {
           <div class="space-y-3 px-5 pb-5 sm:px-6 sm:pb-6">
             <div class="flex flex-wrap items-center gap-2">
               <div class="w-32">
-                <AppSelect v-model="tailCount" aria-label="Line count" :disabled="following">
-                  <option value="200">200 lines</option>
-                  <option value="500">500 lines</option>
-                  <option value="2000">2000 lines</option>
-                </AppSelect>
+                <Select v-model="tailCount" :disabled="following">
+                  <SelectTrigger aria-label="Line count" />
+                  <SelectContent>
+                    <SelectItem value="200">200 lines</SelectItem>
+                    <SelectItem value="500">500 lines</SelectItem>
+                    <SelectItem value="2000">2000 lines</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div class="min-w-0 flex-1 sm:max-w-xs">
                 <AppInput v-model="filterInput" placeholder="Filter lines" aria-label="Filter lines" autocomplete="off" />

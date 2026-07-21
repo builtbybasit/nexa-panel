@@ -13,7 +13,6 @@ import {
   AppCard,
   AppConfirmDialog,
   AppDialog,
-  AppSelect,
   CredentialReveal,
   EmptyState,
   FactList,
@@ -26,6 +25,14 @@ import {
   StatusPill,
   type Fact,
 } from '@/shared/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxFloatingContent,
+  ComboboxSelectItem,
+  ComboboxTriggerInput,
+} from '@/shared/ui/combobox'
 
 import {
   applyPlan,
@@ -618,21 +625,34 @@ const revealFacts = computed<Fact[]>(() => {
       <AppDialog :open="canWrite && showGrantDialog" title="Grant access" @close="showGrantDialog = false">
         <form class="space-y-4" novalidate @submit.prevent="submitGrant">
           <FormField label="Role" :error="grantRoleError">
-            <AppSelect
-              v-model="grantRoleId"
-              :invalid="!!grantRoleError"
-              empty-message="Every active role on this instance already has access"
-            >
-              <option v-if="grantableRoles.length" disabled value="">Select role</option>
-              <option v-for="role in grantableRoles" :key="role.id" :value="role.id">{{ role.name }}</option>
-            </AppSelect>
+            <Combobox v-model="grantRoleId">
+              <ComboboxTriggerInput
+                :invalid="!!grantRoleError"
+                placeholder="Select role"
+                :display-value="(id) => grantableRoles.find((role) => role.id === id)?.name ?? ''"
+              />
+              <ComboboxFloatingContent>
+                <ComboboxEmpty>Every active role on this instance already has access</ComboboxEmpty>
+                <ComboboxSelectItem
+                  v-for="role in grantableRoles"
+                  :key="role.id"
+                  :value="role.id"
+                  :text-value="role.name"
+                >
+                  {{ role.name }}
+                </ComboboxSelectItem>
+              </ComboboxFloatingContent>
+            </Combobox>
           </FormField>
           <FormField label="Access">
-            <AppSelect v-model="access">
-              <option value="connect">Connect only</option>
-              <option value="read_only">Read only</option>
-              <option value="read_write">Read and write</option>
-            </AppSelect>
+            <Select v-model="access">
+              <SelectTrigger placeholder="Select access" />
+              <SelectContent>
+                <SelectItem value="connect">Connect only</SelectItem>
+                <SelectItem value="read_only">Read only</SelectItem>
+                <SelectItem value="read_write">Read and write</SelectItem>
+              </SelectContent>
+            </Select>
           </FormField>
           <JobFailureNotice v-if="grantRunner.error.value" v-bind="failureProps(grantRunner)" />
           <JobProgress

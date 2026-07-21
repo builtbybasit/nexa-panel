@@ -14,7 +14,6 @@ import {
   AppCard,
   AppDialog,
   AppInput,
-  AppSelect,
   EmptyState,
   FactList,
   FormField,
@@ -24,10 +23,21 @@ import {
   PageHeader,
   PlanReviewDialog,
   ResourceRow,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
   SkeletonRow,
   StatusPill,
   type Fact,
 } from '@/shared/ui'
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxFloatingContent,
+  ComboboxSelectItem,
+  ComboboxTriggerInput,
+} from '@/shared/ui/combobox'
 
 import {
   activateDomain,
@@ -54,6 +64,13 @@ const siteFilter = ref('')
 const filteredDomains = computed(() =>
   siteFilter.value ? domains.value.filter((domain) => domain.siteId === siteFilter.value) : domains.value,
 )
+const ALL_SITES = '__all__'
+const siteFilterModel = computed({
+  get: () => siteFilter.value || ALL_SITES,
+  set: (value: string) => {
+    siteFilter.value = value === ALL_SITES ? '' : value
+  },
+})
 const { search, page, pageCount, items: pageItems, matching } = useCollection(() => filteredDomains.value, {
   searchText: (domain) => domain.hostname,
 })
@@ -292,10 +309,13 @@ const planDnsRows = computed(() =>
       <div class="space-y-3 p-3 sm:p-4">
         <ListToolbar v-model:search="search" :count="matching" count-label="domains" placeholder="Search hostnames">
           <template #filters>
-            <AppSelect v-model="siteFilter" aria-label="Filter by site" class="w-44">
-              <option value="">All sites</option>
-              <option v-for="site in sites" :key="site.id" :value="site.id">{{ site.displayName }}</option>
-            </AppSelect>
+            <Select v-model="siteFilterModel">
+              <SelectTrigger aria-label="Filter by site" class="w-44" />
+              <SelectContent>
+                <SelectItem :value="ALL_SITES">All sites</SelectItem>
+                <SelectItem v-for="site in sites" :key="site.id" :value="site.id">{{ site.displayName }}</SelectItem>
+              </SelectContent>
+            </Select>
           </template>
         </ListToolbar>
 
@@ -406,17 +426,36 @@ const planDnsRows = computed(() =>
     <AppDialog :open="createOpen" title="Add domain" @close="closeCreate">
       <form class="space-y-4" @submit.prevent="submitCreate">
         <FormField label="Site">
-          <AppSelect v-model="createSiteId" required>
-            <option disabled value="">Select site</option>
-            <option v-for="site in sites" :key="site.id" :value="site.id">{{ site.displayName }}</option>
-          </AppSelect>
+          <div class="w-full">
+            <Combobox v-model="createSiteId">
+              <ComboboxTriggerInput
+                aria-label="Site"
+                placeholder="Select site"
+                :display-value="(id) => sites.find((site) => site.id === id)?.displayName ?? ''"
+              />
+              <ComboboxFloatingContent>
+                <ComboboxEmpty>No sites match.</ComboboxEmpty>
+                <ComboboxSelectItem
+                  v-for="site in sites"
+                  :key="site.id"
+                  :value="site.id"
+                  :text-value="site.displayName"
+                >
+                  {{ site.displayName }}
+                </ComboboxSelectItem>
+              </ComboboxFloatingContent>
+            </Combobox>
+          </div>
         </FormField>
         <FormField label="Kind" hint="An alias serves the site directly; a redirect sends visitors to another hostname.">
-          <AppSelect v-model="kind">
-            <option value="subdomain">Subdomain</option>
-            <option value="alias">Alias</option>
-            <option value="redirect">Redirect</option>
-          </AppSelect>
+          <Select v-model="kind">
+            <SelectTrigger />
+            <SelectContent>
+              <SelectItem value="subdomain">Subdomain</SelectItem>
+              <SelectItem value="alias">Alias</SelectItem>
+              <SelectItem value="redirect">Redirect</SelectItem>
+            </SelectContent>
+          </Select>
         </FormField>
         <FormField label="Hostname" v-bind="hostnameFieldError">
           <!-- Displayed lowercase; the value is normalized on submit so typing keeps the caret. -->

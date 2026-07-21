@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 
 import AppButton from './AppButton.vue'
-import AppSelect from './AppSelect.vue'
+import { Select, SelectContent, SelectItem, SelectTrigger } from './select'
 
 const props = withDefaults(
   defineProps<{
@@ -87,11 +87,12 @@ const windowPages = computed(() => {
       </span>
       <label class="flex items-center gap-2 text-[13px] whitespace-nowrap text-ink-muted">
         Rows
-        <div class="w-[4.75rem]">
-          <AppSelect v-model="pageSize" aria-label="Rows per page">
-            <option v-for="option in pageSizeOptions" :key="option" :value="option">{{ option }}</option>
-          </AppSelect>
-        </div>
+        <Select v-model="pageSize">
+          <SelectTrigger class="w-[4.75rem]" aria-label="Rows per page" />
+          <SelectContent>
+            <SelectItem v-for="option in pageSizeOptions" :key="option" :value="option">{{ option }}</SelectItem>
+          </SelectContent>
+        </Select>
       </label>
     </div>
   </div>

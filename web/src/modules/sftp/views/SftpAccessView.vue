@@ -5,7 +5,14 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { useIdentityStore } from '@/modules/identity/store'
 import { listSites } from '@/modules/sites/api'
-import { AppAlert, AppButton, AppSelect, EmptyState, PageHeader, SkeletonRow } from '@/shared/ui'
+import { AppAlert, AppButton, EmptyState, PageHeader, SkeletonRow } from '@/shared/ui'
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxFloatingContent,
+  ComboboxSelectItem,
+  ComboboxTriggerInput,
+} from '@/shared/ui/combobox'
 
 import SftpAccessCard from '../components/SftpAccessCard.vue'
 
@@ -79,11 +86,27 @@ const siteSelection = computed({
 
     <template v-else>
       <div class="w-full sm:w-80">
-        <AppSelect v-model="siteSelection" aria-label="Site">
-          <option v-for="site in activeSites" :key="site.id" :value="site.id">
-            {{ site.displayName }} — {{ site.primaryDomain }}
-          </option>
-        </AppSelect>
+        <Combobox v-model="siteSelection">
+          <ComboboxTriggerInput
+            aria-label="Site"
+            placeholder="Select a site"
+            :display-value="(id) => {
+              const site = activeSites.find((s) => s.id === id)
+              return site ? `${site.displayName} — ${site.primaryDomain}` : ''
+            }"
+          />
+          <ComboboxFloatingContent>
+            <ComboboxEmpty>No sites match.</ComboboxEmpty>
+            <ComboboxSelectItem
+              v-for="site in activeSites"
+              :key="site.id"
+              :value="site.id"
+              :text-value="`${site.displayName} ${site.primaryDomain}`"
+            >
+              {{ site.displayName }} — {{ site.primaryDomain }}
+            </ComboboxSelectItem>
+          </ComboboxFloatingContent>
+        </Combobox>
       </div>
 
       <SftpAccessCard v-if="selectedSite" :key="selectedSite.id" :site-id="selectedSite.id" />

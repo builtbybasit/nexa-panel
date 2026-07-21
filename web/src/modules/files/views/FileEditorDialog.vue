@@ -11,7 +11,9 @@ import {
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { formatBytes } from '@/shared/formatters'
-import { AppAlert, AppButton, AppConfirmDialog, AppIcon, AppSelect } from '@/shared/ui'
+import { AppAlert, AppButton, AppConfirmDialog, AppIcon } from '@/shared/ui'
+import { Combobox, ComboboxEmpty, ComboboxFloatingContent, ComboboxSelectItem, ComboboxTriggerInput } from '@/shared/ui/combobox'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
 
 import { downloadUrl, FilesRequestError, readFileContent, writeFileContent } from '../api'
 
@@ -315,14 +317,26 @@ onBeforeUnmount(() => {
 
             <div class="ml-auto flex items-center gap-2">
               <div class="w-28">
-                <AppSelect :model-value="'utf-8'" disabled title="Files are read and written as UTF-8">
-                  <option value="utf-8">utf-8</option>
-                </AppSelect>
+                <Select model-value="utf-8" disabled>
+                  <SelectTrigger title="Files are read and written as UTF-8" />
+                  <SelectContent>
+                    <SelectItem value="utf-8">utf-8</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <div class="w-40">
-                <AppSelect v-model="languageSelect" title="Syntax highlighting language">
-                  <option v-for="[id, label] in languageOptions" :key="id" :value="id">{{ label }}</option>
-                </AppSelect>
+              <div class="w-48">
+                <Combobox v-model="languageSelect">
+                  <ComboboxTriggerInput
+                    title="Syntax highlighting language"
+                    :display-value="(id) => languageOptions.find(([optionId]) => optionId === id)?.[1] ?? ''"
+                  />
+                  <ComboboxFloatingContent>
+                    <ComboboxEmpty>No matches.</ComboboxEmpty>
+                    <ComboboxSelectItem v-for="[id, label] in languageOptions" :key="id" :value="id" :text-value="label">
+                      {{ label }}
+                    </ComboboxSelectItem>
+                  </ComboboxFloatingContent>
+                </Combobox>
               </div>
               <button
                 :class="[squareButtonBase, minimapOn ? squareButtonOn : squareButtonOff]"

@@ -12,7 +12,6 @@ import {
   AppButton,
   AppCard,
   AppIcon,
-  AppSelect,
   EmptyState,
   FactList,
   JobFailureNotice,
@@ -21,6 +20,10 @@ import {
   MetricCard,
   PageHeader,
   ProgressBar,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
   SkeletonRow,
   StatusPill,
   type Fact,
@@ -40,6 +43,22 @@ const activeJobs = computed(() => jobs.value.filter((job) => job.state === 'queu
 const stateFilter = ref<'' | JobState>('')
 const kindFilter = ref('')
 const failedOnly = ref(false)
+
+const ALL_STATES = '__all__'
+const stateFilterModel = computed({
+  get: () => stateFilter.value || ALL_STATES,
+  set: (value: string) => {
+    stateFilter.value = value === ALL_STATES ? '' : (value as JobState)
+  },
+})
+
+const ALL_KINDS = '__all__'
+const kindFilterModel = computed({
+  get: () => kindFilter.value || ALL_KINDS,
+  set: (value: string) => {
+    kindFilter.value = value === ALL_KINDS ? '' : value
+  },
+})
 
 const kinds = computed(() => [...new Set(jobs.value.map((job) => job.kind))].sort())
 
@@ -246,19 +265,25 @@ async function runDiagnostics() {
         >
           <template #filters>
             <div class="w-36">
-              <AppSelect v-model="stateFilter" aria-label="State">
-                <option value="">All states</option>
-                <option value="queued">Queued</option>
-                <option value="running">Running</option>
-                <option value="succeeded">Succeeded</option>
-                <option value="failed">Failed</option>
-              </AppSelect>
+              <Select v-model="stateFilterModel">
+                <SelectTrigger aria-label="State" />
+                <SelectContent>
+                  <SelectItem :value="ALL_STATES">All states</SelectItem>
+                  <SelectItem value="queued">Queued</SelectItem>
+                  <SelectItem value="running">Running</SelectItem>
+                  <SelectItem value="succeeded">Succeeded</SelectItem>
+                  <SelectItem value="failed">Failed</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div class="w-48">
-              <AppSelect v-model="kindFilter" aria-label="Kind">
-                <option value="">All kinds</option>
-                <option v-for="kind in kinds" :key="kind" :value="kind">{{ formatJobKind(kind) }}</option>
-              </AppSelect>
+              <Select v-model="kindFilterModel">
+                <SelectTrigger aria-label="Kind" />
+                <SelectContent>
+                  <SelectItem :value="ALL_KINDS">All kinds</SelectItem>
+                  <SelectItem v-for="kind in kinds" :key="kind" :value="kind">{{ formatJobKind(kind) }}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <AppButton
               size="sm"

@@ -11,13 +11,13 @@ import {
   AppDialog,
   AppIcon,
   AppInput,
-  AppSelect,
   EmptyState,
   FormField,
   PageHeader,
   SkeletonRow,
   StatusPill,
 } from '@/shared/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
 
 import {
   createBackupAccount,
@@ -322,9 +322,12 @@ function typeIcon(type: BackupAccountType) {
         </FormField>
 
         <FormField label="Type" hint="Changing the type replaces the fields below.">
-          <AppSelect v-model="form.type" :disabled="!!editing">
-            <option v-for="entry in typeCatalog" :key="entry.value" :value="entry.value">{{ entry.label }}</option>
-          </AppSelect>
+          <Select v-model="form.type" :disabled="!!editing">
+            <SelectTrigger />
+            <SelectContent>
+              <SelectItem v-for="entry in typeCatalog" :key="entry.value" :value="entry.value">{{ entry.label }}</SelectItem>
+            </SelectContent>
+          </Select>
         </FormField>
 
         <AppAlert v-if="activeCatalog.note" tone="info">{{ activeCatalog.note }}</AppAlert>
@@ -335,13 +338,16 @@ function typeIcon(type: BackupAccountType) {
           :label="field.label"
           :hint="field.secret && editing?.hasSecret ? 'Leave blank to keep the current value.' : field.hint"
         >
-          <AppSelect
+          <Select
             v-if="field.kind === 'select'"
             :model-value="form.values[field.key] ?? ''"
             @update:model-value="form.values[field.key] = String($event)"
           >
-            <option v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </AppSelect>
+            <SelectTrigger />
+            <SelectContent>
+              <SelectItem v-for="option in field.options" :key="option.value" :value="option.value">{{ option.label }}</SelectItem>
+            </SelectContent>
+          </Select>
           <AppInput
             v-else
             :model-value="form.values[field.key] ?? ''"

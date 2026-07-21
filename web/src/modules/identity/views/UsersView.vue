@@ -11,13 +11,16 @@ import {
   AppConfirmDialog,
   AppDialog,
   AppInput,
-  AppSelect,
   Checkbox,
   EmptyState,
   FormField,
   ListToolbar,
   PageHeader,
   PasswordField,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
   SkeletonRow,
   StatusPill,
 } from '@/shared/ui'
@@ -365,9 +368,14 @@ const submitDelete = () =>
           required
         />
         <FormField label="Role">
-          <AppSelect v-model="createRole">
-            <option v-for="option in roleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </AppSelect>
+          <Select v-model="createRole">
+            <SelectTrigger />
+            <SelectContent>
+              <SelectItem v-for="option in roleOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </FormField>
         <FormField
           v-if="createRole === 'developer'"
@@ -415,9 +423,14 @@ const submitDelete = () =>
     >
       <form v-if="target" class="space-y-4" @submit.prevent="submitEdit">
         <FormField label="Role" hint="Changing the role revokes the user's active sessions.">
-          <AppSelect v-model="editRole">
-            <option v-for="option in roleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </AppSelect>
+          <Select v-model="editRole">
+            <SelectTrigger />
+            <SelectContent>
+              <SelectItem v-for="option in roleOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </FormField>
         <PasswordField
           v-model="editPassword"

@@ -11,13 +11,19 @@ import {
   AppCard,
   AppIcon,
   AppInput,
-  AppSelect,
   FormField,
   JobFailureNotice,
   JobProgress,
   PageHeader,
   StatusPill,
 } from '@/shared/ui'
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxFloatingContent,
+  ComboboxSelectItem,
+  ComboboxTriggerInput,
+} from '@/shared/ui/combobox'
 
 import { createSite, listRuntimes, listSites, type Runtime, type Site } from '../api'
 
@@ -331,12 +337,32 @@ function labelClass(index: number): string {
           </div>
           <div class="mt-3">
             <FormField label="PHP version">
-              <AppSelect v-model="phpVersion" empty-message="No PHP runtimes installed" required>
-                <option v-for="runtime in runtimes" :key="runtime.version" :value="runtime.version">
-                  PHP {{ runtime.version
-                  }}{{ runtime.supportStatus === 'end_of_life_allowed' ? ' — no longer supported' : '' }}
-                </option>
-              </AppSelect>
+              <Combobox v-model="phpVersion">
+                <ComboboxTriggerInput
+                  aria-label="PHP version"
+                  placeholder="Select a PHP version"
+                  :display-value="
+                    (version) => {
+                      const runtime = runtimes.find((r) => r.version === version)
+                      return runtime
+                        ? `PHP ${runtime.version}${runtime.supportStatus === 'end_of_life_allowed' ? ' — no longer supported' : ''}`
+                        : ''
+                    }
+                  "
+                />
+                <ComboboxFloatingContent>
+                  <ComboboxEmpty>No PHP runtimes installed</ComboboxEmpty>
+                  <ComboboxSelectItem
+                    v-for="runtime in runtimes"
+                    :key="runtime.version"
+                    :value="runtime.version"
+                    :text-value="`PHP ${runtime.version}`"
+                  >
+                    PHP {{ runtime.version
+                    }}{{ runtime.supportStatus === 'end_of_life_allowed' ? ' — no longer supported' : '' }}
+                  </ComboboxSelectItem>
+                </ComboboxFloatingContent>
+              </Combobox>
             </FormField>
             <p class="mt-2 flex items-center justify-between gap-2 text-[12px]">
               <span class="text-ink-muted">Handler</span>

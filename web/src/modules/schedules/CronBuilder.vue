@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 import { formatDateTime } from '@/shared/formatters'
-import { AppIcon, AppInput, AppSelect } from '@/shared/ui'
+import { AppIcon, AppInput } from '@/shared/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
 
 import { describe as describeCron, nextRuns } from './cron'
 
@@ -198,14 +199,16 @@ watch(
             :aria-label="`${field.label} value`"
             @update:model-value="customValues[field.key] = String($event ?? '')"
           />
-          <AppSelect
+          <Select
             :model-value="modes[field.key]"
-            :aria-label="`${field.label} preset`"
             @update:model-value="onModeChange(field.key, String($event))"
           >
-            <option v-for="option in field.presets" :key="option.value" :value="option.value">{{ option.label }}</option>
-            <option :value="CUSTOM">Custom…</option>
-          </AppSelect>
+            <SelectTrigger :aria-label="`${field.label} preset`" />
+            <SelectContent>
+              <SelectItem v-for="option in field.presets" :key="option.value" :value="option.value">{{ option.label }}</SelectItem>
+              <SelectItem :value="CUSTOM">Custom…</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         <span class="mt-1 block text-[11px] text-ink-muted">{{ field.hint }}</span>
       </div>

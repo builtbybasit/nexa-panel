@@ -15,7 +15,6 @@ import {
   AppDialog,
   AppIcon,
   AppInput,
-  AppSelect,
   CredentialReveal,
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +33,14 @@ import {
   TablePager,
   type Fact,
 } from '@/shared/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxFloatingContent,
+  ComboboxSelectItem,
+  ComboboxTriggerInput,
+} from '@/shared/ui/combobox'
 
 import { useToolLaunch } from '@/modules/admintools/composables/useToolLaunch'
 import { useIdentityStore } from '@/modules/identity/store'
@@ -872,11 +879,14 @@ watch(databaseInstance, () => {
     <AppDialog :open="canWrite && showInstanceDialog" title="Provision instance" @close="showInstanceDialog = false">
       <form class="space-y-4" novalidate @submit.prevent="submitInstance">
         <FormField label="Version">
-          <AppSelect v-model="version">
-            <option value="16">PostgreSQL 16</option>
-            <option value="17">PostgreSQL 17</option>
-            <option value="18">PostgreSQL 18</option>
-          </AppSelect>
+          <Select v-model="version">
+            <SelectTrigger placeholder="Select version" />
+            <SelectContent>
+              <SelectItem value="16">PostgreSQL 16</SelectItem>
+              <SelectItem value="17">PostgreSQL 17</SelectItem>
+              <SelectItem value="18">PostgreSQL 18</SelectItem>
+            </SelectContent>
+          </Select>
         </FormField>
         <FormField label="Cluster name" :hint="NAME_HINT" :error="clusterError">
           <AppInput v-model="cluster" autocomplete="off" spellcheck="false" :invalid="!!clusterError" />
@@ -900,16 +910,29 @@ watch(databaseInstance, () => {
     <AppDialog :open="canWrite && showRoleDialog" title="Create role" @close="showRoleDialog = false">
       <form class="space-y-4" novalidate @submit.prevent="submitRole">
         <FormField label="Instance" :error="roleInstanceError">
-          <AppSelect
-            v-model="roleInstance"
-            :invalid="!!roleInstanceError"
-            empty-message="No active instances — provision one first"
-          >
-            <option v-if="activeInstances.length" disabled value="">Select instance</option>
-            <option v-for="item in activeInstances" :key="item.id" :value="item.id">
-              PostgreSQL {{ item.version }} · {{ item.cluster }}
-            </option>
-          </AppSelect>
+          <Combobox v-model="roleInstance">
+            <ComboboxTriggerInput
+              :invalid="!!roleInstanceError"
+              placeholder="Select instance"
+              :display-value="
+                (id) => {
+                  const item = activeInstances.find((i) => i.id === id)
+                  return item ? `PostgreSQL ${item.version} · ${item.cluster}` : ''
+                }
+              "
+            />
+            <ComboboxFloatingContent>
+              <ComboboxEmpty>No active instances — provision one first</ComboboxEmpty>
+              <ComboboxSelectItem
+                v-for="item in activeInstances"
+                :key="item.id"
+                :value="item.id"
+                :text-value="`PostgreSQL ${item.version} · ${item.cluster}`"
+              >
+                PostgreSQL {{ item.version }} · {{ item.cluster }}
+              </ComboboxSelectItem>
+            </ComboboxFloatingContent>
+          </Combobox>
         </FormField>
         <FormField label="Role name" :hint="NAME_HINT" :error="roleNameError">
           <AppInput v-model="roleName" autocomplete="off" spellcheck="false" :invalid="!!roleNameError" />
@@ -930,25 +953,52 @@ watch(databaseInstance, () => {
     <AppDialog :open="canWrite && showDatabaseDialog" title="New database" @close="closeDatabaseDialog">
       <form class="space-y-4" novalidate @submit.prevent="submitDatabase">
         <FormField label="Instance" :error="databaseInstanceError">
-          <AppSelect
-            v-model="databaseInstance"
-            :invalid="!!databaseInstanceError"
-            empty-message="No active instances — provision one first"
-          >
-            <option v-if="activeInstances.length" disabled value="">Select instance</option>
-            <option v-for="item in activeInstances" :key="item.id" :value="item.id">
-              PostgreSQL {{ item.version }} · {{ item.cluster }}
-            </option>
-          </AppSelect>
+          <Combobox v-model="databaseInstance">
+            <ComboboxTriggerInput
+              :invalid="!!databaseInstanceError"
+              placeholder="Select instance"
+              :display-value="
+                (id) => {
+                  const item = activeInstances.find((i) => i.id === id)
+                  return item ? `PostgreSQL ${item.version} · ${item.cluster}` : ''
+                }
+              "
+            />
+            <ComboboxFloatingContent>
+              <ComboboxEmpty>No active instances — provision one first</ComboboxEmpty>
+              <ComboboxSelectItem
+                v-for="item in activeInstances"
+                :key="item.id"
+                :value="item.id"
+                :text-value="`PostgreSQL ${item.version} · ${item.cluster}`"
+              >
+                PostgreSQL {{ item.version }} · {{ item.cluster }}
+              </ComboboxSelectItem>
+            </ComboboxFloatingContent>
+          </Combobox>
         </FormField>
         <FormField label="Database name" :hint="NAME_HINT" :error="databaseNameError">
           <AppInput v-model="databaseName" autocomplete="off" spellcheck="false" :invalid="!!databaseNameError" />
         </FormField>
         <FormField label="Owner role" hint="The role that owns the database and its objects." :error="ownerRoleError">
-          <AppSelect v-model="ownerRoleId" :invalid="!!ownerRoleError" :empty-message="ownerEmptyMessage">
-            <option v-if="ownerOptions.length" disabled value="">Select owner</option>
-            <option v-for="role in ownerOptions" :key="role.id" :value="role.id">{{ role.name }}</option>
-          </AppSelect>
+          <Combobox v-model="ownerRoleId">
+            <ComboboxTriggerInput
+              :invalid="!!ownerRoleError"
+              placeholder="Select owner"
+              :display-value="(id) => ownerOptions.find((role) => role.id === id)?.name ?? ''"
+            />
+            <ComboboxFloatingContent>
+              <ComboboxEmpty>{{ ownerEmptyMessage }}</ComboboxEmpty>
+              <ComboboxSelectItem
+                v-for="role in ownerOptions"
+                :key="role.id"
+                :value="role.id"
+                :text-value="role.name"
+              >
+                {{ role.name }}
+              </ComboboxSelectItem>
+            </ComboboxFloatingContent>
+          </Combobox>
         </FormField>
         <JobFailureNotice v-if="databaseRunner.error.value" v-bind="failureProps(databaseRunner)" />
         <JobProgress

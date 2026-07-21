@@ -13,7 +13,6 @@ import {
   AppCard,
   AppConfirmDialog,
   AppDialog,
-  AppSelect,
   CredentialReveal,
   EmptyState,
   FactList,
@@ -26,6 +25,14 @@ import {
   StatusPill,
   type Fact,
 } from '@/shared/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxFloatingContent,
+  ComboboxSelectItem,
+  ComboboxTriggerInput,
+} from '@/shared/ui/combobox'
 
 import {
   applyPlan,
@@ -691,23 +698,39 @@ const revealFacts = computed<Fact[]>(() => {
       <AppDialog :open="canWrite && showGrantDialog" title="Grant access" @close="showGrantDialog = false">
         <form class="space-y-4" novalidate @submit.prevent="submitGrant">
           <FormField label="Account" :error="grantAccountError">
-            <AppSelect
-              v-model="grantAccountId"
-              :invalid="!!grantAccountError"
-              empty-message="Every active account on this engine already has access"
-            >
-              <option v-if="grantableAccounts.length" disabled value="">Select account</option>
-              <option v-for="account in grantableAccounts" :key="account.id" :value="account.id">
-                {{ account.name }}@{{ account.host }}
-              </option>
-            </AppSelect>
+            <Combobox v-model="grantAccountId">
+              <ComboboxTriggerInput
+                :invalid="!!grantAccountError"
+                placeholder="Select account"
+                :display-value="
+                  (id) => {
+                    const account = grantableAccounts.find((a) => a.id === id)
+                    return account ? `${account.name}@${account.host}` : ''
+                  }
+                "
+              />
+              <ComboboxFloatingContent>
+                <ComboboxEmpty>Every active account on this engine already has access</ComboboxEmpty>
+                <ComboboxSelectItem
+                  v-for="account in grantableAccounts"
+                  :key="account.id"
+                  :value="account.id"
+                  :text-value="`${account.name}@${account.host}`"
+                >
+                  {{ account.name }}@{{ account.host }}
+                </ComboboxSelectItem>
+              </ComboboxFloatingContent>
+            </Combobox>
           </FormField>
           <FormField label="Access">
-            <AppSelect v-model="access">
-              <option value="connect">Connect only</option>
-              <option value="read_only">Read only</option>
-              <option value="read_write">Read and write</option>
-            </AppSelect>
+            <Select v-model="access">
+              <SelectTrigger placeholder="Select access" />
+              <SelectContent>
+                <SelectItem value="connect">Connect only</SelectItem>
+                <SelectItem value="read_only">Read only</SelectItem>
+                <SelectItem value="read_write">Read and write</SelectItem>
+              </SelectContent>
+            </Select>
           </FormField>
           <JobFailureNotice v-if="grantRunner.error.value" v-bind="failureProps(grantRunner)" />
           <JobProgress
