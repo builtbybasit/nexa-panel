@@ -16,6 +16,12 @@ import {
   AppInput,
   AppSelect,
   Checkbox,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -242,6 +248,21 @@ const countLabel = (count: number) => `${count} ${count === 1 ? 'item' : 'items'
 
 function hasActions(entry: FileEntry): boolean {
   return entry.kind === 'dir' || entry.kind === 'file' || canMutateHere.value
+}
+
+// --- Right-click context menu ---
+
+/** The row a right-click landed on; drives the single shared context menu. */
+const activeEntry = ref<FileEntry>()
+const activeMenuEntry = computed(() =>
+  activeEntry.value && hasActions(activeEntry.value) ? activeEntry.value : undefined,
+)
+
+/** Resolve which row (if any) a right-click hit before Reka opens the menu. */
+function onRowContextMenu(event: MouseEvent) {
+  const row = (event.target as HTMLElement).closest('tr[data-name]')
+  const name = row?.getAttribute('data-name')
+  activeEntry.value = name ? visibleItems.value.find((entry) => entry.name === name) : undefined
 }
 
 // --- Editor ---
@@ -787,7 +808,9 @@ function onDrop(event: DragEvent) {
                 :description="`No names in this directory match “${nameFilter.trim()}”.`"
                 class="m-2"
               />
-              <div v-else class="overflow-x-auto">
+              <ContextMenu v-else>
+                <ContextMenuTrigger as-child>
+                  <div class="overflow-x-auto" @contextmenu="onRowContextMenu">
                 <table class="w-full border-collapse text-left">
                   <thead>
                     <tr class="border-b border-outline">
@@ -834,7 +857,7 @@ function onDrop(event: DragEvent) {
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-outline">
-                    <tr v-for="entry in visibleItems" :key="entry.name">
+                    <tr v-for="entry in visibleItems" :key="entry.name" :data-name="entry.name">
                       <td class="px-3 py-2.5">
                         <Checkbox
                           :model-value="selectedNames.includes(entry.name)"
@@ -904,7 +927,40 @@ function onDrop(event: DragEvent) {
                     </tr>
                   </tbody>
                 </table>
-              </div>
+                  </div>
+                </ContextMenuTrigger>
+                <!-- Right-click menu — mirrors the per-row three-dots actions. -->
+                <ContextMenuContent v-if="activeMenuEntry">
+                  <ContextMenuLabel>{{ activeMenuEntry.name }}</ContextMenuLabel>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem v-if="activeMenuEntry.kind === 'dir'" @select="openEntry(activeMenuEntry)">Open</ContextMenuItem>
+                  <ContextMenuItem v-if="activeMenuEntry.kind === 'file'" @select="openEntry(activeMenuEntry)">Edit</ContextMenuItem>
+                  <ContextMenuItem v-if="activeMenuEntry.kind === 'file'" as-child>
+                    <a :href="downloadUrl(siteId, entryPath(activeMenuEntry))">Download</a>
+                  </ContextMenuItem>
+                  <ContextMenuItem v-if="activeMenuEntry.kind === 'dir'" @select="computeSize(activeMenuEntry)">
+                    Compute size
+                  </ContextMenuItem>
+                  <template v-if="canMutateHere">
+                    <ContextMenuSeparator />
+                    <ContextMenuItem @select="openDialog('rename', activeMenuEntry)">Rename…</ContextMenuItem>
+                    <ContextMenuItem @select="openDialog('copy', activeMenuEntry)">Copy to…</ContextMenuItem>
+                    <ContextMenuItem @select="openDialog('move', activeMenuEntry)">Move to…</ContextMenuItem>
+                    <ContextMenuItem
+                      v-if="activeMenuEntry.kind === 'file' && isArchiveName(activeMenuEntry.name)"
+                      @select="openDialog('extract', activeMenuEntry)"
+                    >
+                      Extract…
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      class="text-rose-300 data-[highlighted]:bg-rose-500/10 data-[highlighted]:text-rose-300"
+                      @select="openDialog('delete', activeMenuEntry)"
+                    >
+                      Delete…
+                    </ContextMenuItem>
+                  </template>
+                </ContextMenuContent>
+              </ContextMenu>
             </template>
           </div>
         </AppCard>
