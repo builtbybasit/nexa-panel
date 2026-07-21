@@ -48,6 +48,7 @@ import (
 	phpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/php"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+	selfupdateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/selfupdate"
 	servicesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/services"
 	sftpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sftp"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
@@ -200,7 +201,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		servicesModule,
 		sftpModule,
 		backupsModule,
-		system.New(capacity.NewProcReader(), podman.NewInspector()),
+		system.New(capacity.NewProcReader(), podman.NewInspector(), system.WithUpdates(jobsModule, selfupdateoperator.NewUnixClient(*agentSocket, *agentToken))),
 	}
 
 	app, err := controlplane.New(

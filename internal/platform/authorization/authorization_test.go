@@ -25,7 +25,7 @@ func TestRolePermissions(t *testing.T) {
 func TestRolePermissionMatrix(t *testing.T) {
 	policy := New()
 	permissions := []Permission{
-		SystemRead, JobsRead, AuditRead, RuntimesRead, SitesRead, SitesWrite,
+		SystemRead, SystemUpdate, JobsRead, AuditRead, RuntimesRead, SitesRead, SitesWrite,
 		DomainsRead, DomainsWrite, CertificatesRead, CertificatesWrite,
 		DatabasesRead, DatabasesWrite, OperationsApply,
 		FilesRead, FilesWrite, LogsRead, SchedulesRead, SchedulesWrite, UsersManage,
@@ -48,7 +48,7 @@ func TestRolePermissionMatrix(t *testing.T) {
 			FilesRead: true, FilesWrite: true, LogsRead: true, SchedulesRead: true, SchedulesWrite: true,
 		},
 		"admin": {
-			SystemRead: true, JobsRead: true, AuditRead: true, RuntimesRead: true, SitesRead: true, SitesWrite: true,
+			SystemRead: true, SystemUpdate: true, JobsRead: true, AuditRead: true, RuntimesRead: true, SitesRead: true, SitesWrite: true,
 			DomainsRead: true, DomainsWrite: true, CertificatesRead: true, CertificatesWrite: true,
 			DatabasesRead: true, DatabasesWrite: true, OperationsApply: true,
 			FilesRead: true, FilesWrite: true, LogsRead: true, SchedulesRead: true, SchedulesWrite: true,

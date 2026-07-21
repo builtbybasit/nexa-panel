@@ -19,24 +19,48 @@ type podmanInspector interface {
 type Module struct {
 	memory capacity.Reader
 	podman podmanInspector
+	// updates is nil unless WithUpdates configured self-update support; when nil
+	// the module serves only capacity/podman discovery and no update routes.
+	updates *updates
+	// initErr captures a job-handler registration failure from an option so it can
+	// surface from Register, keeping New signature-compatible with its callers.
+	initErr error
 }
 
-func New(memory capacity.Reader, containerRuntime podmanInspector) *Module {
-	return &Module{memory: memory, podman: containerRuntime}
+// Option configures optional system-module capabilities.
+type Option func(*Module)
+
+func New(memory capacity.Reader, containerRuntime podmanInspector, options ...Option) *Module {
+	m := &Module{memory: memory, podman: containerRuntime}
+	for _, option := range options {
+		option(m)
+	}
+	return m
 }
 
 func (m *Module) Descriptor() module.Descriptor {
-	return module.Descriptor{
+	descriptor := module.Descriptor{
 		ID:                 "system",
 		Name:               "System",
 		Version:            "0.1.0",
 		Description:        "Node capacity and platform capability discovery.",
 		EstimatedIdleBytes: 2 * 1024 * 1024,
 	}
+	if m.updates != nil {
+		descriptor.Description = "Node capacity, platform capability discovery, and panel self-update."
+		descriptor.Dependencies = []string{"jobs"}
+	}
+	return descriptor
 }
 
 func (m *Module) Register(registry module.Registry) error {
-	return registry.HandleAuthorized("GET /api/v1/system/overview", "system.read", http.HandlerFunc(m.overview))
+	if m.initErr != nil {
+		return m.initErr
+	}
+	if err := registry.HandleAuthorized("GET /api/v1/system/overview", "system.read", http.HandlerFunc(m.overview)); err != nil {
+		return err
+	}
+	return m.registerUpdates(registry)
 }
 
 type overviewResponse struct {

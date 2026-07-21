@@ -12,6 +12,7 @@ type Permission string
 
 const (
 	SystemRead        Permission = "system.read"
+	SystemUpdate      Permission = "system.update"
 	JobsRead          Permission = "jobs.read"
 	AuditRead         Permission = "audit.read"
 	RuntimesRead      Permission = "runtimes.read"
@@ -56,7 +57,7 @@ func New() *Policy {
 			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {},
 		},
 		"admin": {
-			SystemRead: {}, JobsRead: {}, AuditRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, OperationsApply: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {}, UsersManage: {},
+			SystemRead: {}, SystemUpdate: {}, JobsRead: {}, AuditRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, OperationsApply: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {}, UsersManage: {},
 		},
 	}}
 }
@@ -86,7 +87,7 @@ func (p *Policy) Middleware(permission string, next http.Handler) http.Handler {
 }
 
 func sensitivePermission(permission Permission) bool {
-	return permission == OperationsApply || permission == UsersManage
+	return permission == OperationsApply || permission == UsersManage || permission == SystemUpdate
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {

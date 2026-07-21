@@ -14,6 +14,10 @@ paths:
     $ref: ./paths/platform.yaml#/modules
   /system/overview:
     $ref: ./paths/platform.yaml#/system_overview
+  /system/updates:
+    $ref: ./paths/platform.yaml#/system_updates
+  /system/updates/apply:
+    $ref: ./paths/platform.yaml#/system_updates_apply
   /auth/status:
     $ref: ./paths/identity.yaml#/auth_status
   /auth/bootstrap:

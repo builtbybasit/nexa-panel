@@ -7,9 +7,11 @@ describe('session permissions', () => {
     for (const role of ['viewer', 'developer', 'operator'] as const) {
       expect(hasPermission(role, 'operations.apply')).toBe(false)
       expect(hasPermission(role, 'users.manage')).toBe(false)
+      expect(hasPermission(role, 'system.update')).toBe(false)
     }
     expect(hasPermission('admin', 'operations.apply')).toBe(true)
     expect(hasPermission('admin', 'users.manage')).toBe(true)
+    expect(hasPermission('admin', 'system.update')).toBe(true)
   })
 
   it('preserves the operator write capabilities without granting apply', () => {

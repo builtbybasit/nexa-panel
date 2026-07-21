@@ -20,6 +20,7 @@ import (
 	phpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/php"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+	selfupdateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/selfupdate"
 	servicesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/services"
 	sftpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sftp"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
@@ -43,6 +44,7 @@ type Server struct {
 	schedules    scheduleoperator.Operator
 	backups      backupoperator.Operator
 	services     servicesoperator.Operator
+	selfUpdate   selfupdateoperator.Operator
 	logger       *slog.Logger
 }
 
@@ -156,6 +158,10 @@ func (s *Server) Serve(ctx context.Context) error {
 		mux.HandleFunc("GET /v1/services", s.servicesDiscoverHTTP)
 		mux.HandleFunc("POST /v1/services/plan", s.servicesPlanHTTP)
 		mux.HandleFunc("POST /v1/services/apply", s.servicesApplyHTTP)
+	}
+	if s.selfUpdate != nil {
+		mux.HandleFunc("GET /v1/self-update/latest", s.selfUpdateLatestHTTP)
+		mux.HandleFunc("POST /v1/self-update/apply", s.selfUpdateApplyHTTP)
 	}
 	httpServer := &http.Server{
 		Handler:           s.authenticate(mux),

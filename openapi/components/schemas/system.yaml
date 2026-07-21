@@ -67,3 +67,40 @@ PodmanStatus:
       type: string
     path:
       type: string
+SystemRelease:
+  type: object
+  required:
+  - version
+  - tag
+  properties:
+    version:
+      type: string
+    tag:
+      type: string
+    notes:
+      type: string
+    publishedAt:
+      type: string
+      format: date-time
+SystemUpdateAvailability:
+  type: object
+  required:
+  - installedVersion
+  - updateAvailable
+  - checkedAt
+  properties:
+    installedVersion:
+      type: string
+    latest:
+      $ref: '#/SystemRelease'
+    updateAvailable:
+      type: boolean
+    checkedAt:
+      type: string
+      format: date-time
+ApplySystemUpdate:
+  type: object
+  properties:
+    version:
+      type: string
+      description: Target release version; empty installs the latest.

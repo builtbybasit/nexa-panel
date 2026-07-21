@@ -2,6 +2,7 @@ export type SessionRole = 'admin' | 'operator' | 'developer' | 'viewer'
 
 export type Permission =
   | 'system.read'
+  | 'system.update'
   | 'jobs.read'
   | 'audit.read'
   | 'runtimes.read'
@@ -70,7 +71,7 @@ const operatorPermissions = [
   'services.write',
 ] as const satisfies readonly Permission[]
 
-const adminPermissions = [...operatorPermissions, 'audit.read', 'operations.apply', 'users.manage'] as const satisfies readonly Permission[]
+const adminPermissions = [...operatorPermissions, 'audit.read', 'operations.apply', 'users.manage', 'system.update'] as const satisfies readonly Permission[]
 
 const permissionsByRole: Readonly<Record<SessionRole, ReadonlySet<Permission>>> = {
   viewer: new Set(readOnlyPermissions),

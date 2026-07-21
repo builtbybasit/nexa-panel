@@ -31,6 +31,8 @@ func run(args []string, logger *slog.Logger) error {
 		return runAgent(args[1:], logger)
 	case "agent-token":
 		return runAgentToken(args[1:])
+	case "self-update":
+		return runSelfUpdate(args[1:])
 	case "backup":
 		return runBackup(args[1:], logger)
 	case "doctor":
@@ -61,6 +63,7 @@ Usage:
   nexa api [--address 127.0.0.1:8080 | --unix-socket /run/nexa-panel/api.sock] [--state /var/lib/nexa-panel/control.db] [--master-key /var/lib/nexa-panel/master.key]
   nexa agent [--socket /run/nexa-panel/agent.sock] [--token /run/nexa-panel/agent.token]
   nexa agent-token [--path /etc/nexa-panel/agent.token]
+  nexa self-update [--check | --version X.Y.Z | --binary /path/to/nexa-linux-ARCH] [--socket /run/nexa-panel/agent.sock] [--token /run/nexa-panel/agent.token]
   nexa doctor
   nexa version`)
 }

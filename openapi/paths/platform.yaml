@@ -80,3 +80,58 @@ system_overview:
 
       '4XX':
         $ref: ../components/responses.yaml#/ClientError
+system_updates:
+  get:
+    operationId: getSystemUpdates
+    summary: Get Available Panel Update
+    tags:
+    - System
+    x-permission: system.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Installed version and, when newer, the latest available release.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/system.yaml#/SystemUpdateAvailability
+      '503':
+        description: The node could not be reached to check for updates.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+system_updates_apply:
+  post:
+    operationId: applySystemUpdate
+    summary: Install a Panel Update
+    description: >-
+      Queues a self-update job. This is a sensitive action and requires a recent
+      multi-factor step-up. The privileged agent downloads the release, verifies
+      its checksum, swaps the binary atomically, and restarts the panel.
+    tags:
+    - System
+    x-permission: system.update
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/system.yaml#/ApplySystemUpdate
+    responses:
+      '202':
+        description: The panel update was queued as a job.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

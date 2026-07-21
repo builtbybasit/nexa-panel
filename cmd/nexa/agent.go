@@ -21,6 +21,7 @@ import (
 	phpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/php"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+	selfupdateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/selfupdate"
 	servicesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/services"
 	sftpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sftp"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
@@ -91,10 +92,20 @@ func runAgent(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create SFTP operator: %w", err)
 	}
+	selfUpdateOperator, err := selfupdateoperator.NewHostOperator(selfupdateoperator.HostConfig{
+		InstalledVersion: version.Version,
+		// The swap target is /usr/bin/nexa on a real host; NEXA_SELFUPDATE_BINARY
+		// overrides it for environments where the live binary is not directly
+		// rewritable (e.g. the bind-mounted test node in compose.yaml).
+		BinaryPath: os.Getenv("NEXA_SELFUPDATE_BINARY"),
+	})
+	if err != nil {
+		return fmt.Errorf("create self-update operator: %w", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	server := agent.New(*socket, version.Version, token, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithPHPOperator(phpOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator), agent.WithServicesOperator(servicesOperator), agent.WithSFTPOperator(sftpOperator))
+	server := agent.New(*socket, version.Version, token, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithPHPOperator(phpOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator), agent.WithServicesOperator(servicesOperator), agent.WithSFTPOperator(sftpOperator), agent.WithSelfUpdateOperator(selfUpdateOperator))
 	return server.Serve(ctx)
 }
