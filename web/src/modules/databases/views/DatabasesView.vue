@@ -36,10 +36,14 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
 import {
   Combobox,
+  ComboboxAnchor,
   ComboboxEmpty,
-  ComboboxFloatingContent,
-  ComboboxSelectItem,
-  ComboboxTriggerInput,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemIndicator,
+  ComboboxList,
+  ComboboxTrigger,
 } from '@/shared/ui/combobox'
 
 import { useToolLaunch } from '@/modules/admintools/composables/useToolLaunch'
@@ -911,27 +915,32 @@ watch(databaseInstance, () => {
       <form class="space-y-4" novalidate @submit.prevent="submitRole">
         <FormField label="Instance" :error="roleInstanceError">
           <Combobox v-model="roleInstance">
-            <ComboboxTriggerInput
-              :invalid="!!roleInstanceError"
-              placeholder="Select instance"
-              :display-value="
-                (id) => {
-                  const item = activeInstances.find((i) => i.id === id)
-                  return item ? `PostgreSQL ${item.version} · ${item.cluster}` : ''
-                }
-              "
-            />
-            <ComboboxFloatingContent>
+            <ComboboxAnchor as-child>
+              <ComboboxTrigger
+                :invalid="!!roleInstanceError"
+                placeholder="Select instance"
+                :label="
+                  ((id) => {
+                    const item = activeInstances.find((i) => i.id === id)
+                    return item ? `PostgreSQL ${item.version} · ${item.cluster}` : ''
+                  })(roleInstance)
+                "
+              />
+            </ComboboxAnchor>
+            <ComboboxList>
+              <ComboboxInput placeholder="Search instances…" />
               <ComboboxEmpty>No active instances — provision one first</ComboboxEmpty>
-              <ComboboxSelectItem
-                v-for="item in activeInstances"
-                :key="item.id"
-                :value="item.id"
-                :text-value="`PostgreSQL ${item.version} · ${item.cluster}`"
-              >
-                PostgreSQL {{ item.version }} · {{ item.cluster }}
-              </ComboboxSelectItem>
-            </ComboboxFloatingContent>
+              <ComboboxGroup>
+                <ComboboxItem
+                  v-for="item in activeInstances"
+                  :key="item.id"
+                  :value="item.id"
+                  :text-value="`PostgreSQL ${item.version} · ${item.cluster}`"
+                >
+                  PostgreSQL {{ item.version }} · {{ item.cluster }}<ComboboxItemIndicator />
+                </ComboboxItem>
+              </ComboboxGroup>
+            </ComboboxList>
           </Combobox>
         </FormField>
         <FormField label="Role name" :hint="NAME_HINT" :error="roleNameError">
@@ -954,27 +963,32 @@ watch(databaseInstance, () => {
       <form class="space-y-4" novalidate @submit.prevent="submitDatabase">
         <FormField label="Instance" :error="databaseInstanceError">
           <Combobox v-model="databaseInstance">
-            <ComboboxTriggerInput
-              :invalid="!!databaseInstanceError"
-              placeholder="Select instance"
-              :display-value="
-                (id) => {
-                  const item = activeInstances.find((i) => i.id === id)
-                  return item ? `PostgreSQL ${item.version} · ${item.cluster}` : ''
-                }
-              "
-            />
-            <ComboboxFloatingContent>
+            <ComboboxAnchor as-child>
+              <ComboboxTrigger
+                :invalid="!!databaseInstanceError"
+                placeholder="Select instance"
+                :label="
+                  ((id) => {
+                    const item = activeInstances.find((i) => i.id === id)
+                    return item ? `PostgreSQL ${item.version} · ${item.cluster}` : ''
+                  })(databaseInstance)
+                "
+              />
+            </ComboboxAnchor>
+            <ComboboxList>
+              <ComboboxInput placeholder="Search instances…" />
               <ComboboxEmpty>No active instances — provision one first</ComboboxEmpty>
-              <ComboboxSelectItem
-                v-for="item in activeInstances"
-                :key="item.id"
-                :value="item.id"
-                :text-value="`PostgreSQL ${item.version} · ${item.cluster}`"
-              >
-                PostgreSQL {{ item.version }} · {{ item.cluster }}
-              </ComboboxSelectItem>
-            </ComboboxFloatingContent>
+              <ComboboxGroup>
+                <ComboboxItem
+                  v-for="item in activeInstances"
+                  :key="item.id"
+                  :value="item.id"
+                  :text-value="`PostgreSQL ${item.version} · ${item.cluster}`"
+                >
+                  PostgreSQL {{ item.version }} · {{ item.cluster }}<ComboboxItemIndicator />
+                </ComboboxItem>
+              </ComboboxGroup>
+            </ComboboxList>
           </Combobox>
         </FormField>
         <FormField label="Database name" :hint="NAME_HINT" :error="databaseNameError">
@@ -982,22 +996,27 @@ watch(databaseInstance, () => {
         </FormField>
         <FormField label="Owner role" hint="The role that owns the database and its objects." :error="ownerRoleError">
           <Combobox v-model="ownerRoleId">
-            <ComboboxTriggerInput
-              :invalid="!!ownerRoleError"
-              placeholder="Select owner"
-              :display-value="(id) => ownerOptions.find((role) => role.id === id)?.name ?? ''"
-            />
-            <ComboboxFloatingContent>
+            <ComboboxAnchor as-child>
+              <ComboboxTrigger
+                :invalid="!!ownerRoleError"
+                placeholder="Select owner"
+                :label="((id) => ownerOptions.find((role) => role.id === id)?.name ?? '')(ownerRoleId)"
+              />
+            </ComboboxAnchor>
+            <ComboboxList>
+              <ComboboxInput placeholder="Search accounts…" />
               <ComboboxEmpty>{{ ownerEmptyMessage }}</ComboboxEmpty>
-              <ComboboxSelectItem
-                v-for="role in ownerOptions"
-                :key="role.id"
-                :value="role.id"
-                :text-value="role.name"
-              >
-                {{ role.name }}
-              </ComboboxSelectItem>
-            </ComboboxFloatingContent>
+              <ComboboxGroup>
+                <ComboboxItem
+                  v-for="role in ownerOptions"
+                  :key="role.id"
+                  :value="role.id"
+                  :text-value="role.name"
+                >
+                  {{ role.name }}<ComboboxItemIndicator />
+                </ComboboxItem>
+              </ComboboxGroup>
+            </ComboboxList>
           </Combobox>
         </FormField>
         <JobFailureNotice v-if="databaseRunner.error.value" v-bind="failureProps(databaseRunner)" />

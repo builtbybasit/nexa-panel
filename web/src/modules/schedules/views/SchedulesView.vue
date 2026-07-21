@@ -25,10 +25,14 @@ import {
 } from '@/shared/ui'
 import {
   Combobox,
+  ComboboxAnchor,
   ComboboxEmpty,
-  ComboboxFloatingContent,
-  ComboboxSelectItem,
-  ComboboxTriggerInput,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemIndicator,
+  ComboboxList,
+  ComboboxTrigger,
 } from '@/shared/ui/combobox'
 
 import { getJob, type Job } from '../../jobs/api'
@@ -453,25 +457,31 @@ watch(
       <div class="flex flex-wrap items-center gap-3">
         <div class="w-full sm:w-72">
           <Combobox v-model="siteSelection">
-            <ComboboxTriggerInput
-              aria-label="Site"
-              placeholder="Select a site"
-              :display-value="(id) => {
-                const site = activeSites.find((s) => s.id === id)
-                return site ? `${site.displayName} — ${site.primaryDomain}` : ''
-              }"
-            />
-            <ComboboxFloatingContent>
+            <ComboboxAnchor as-child>
+              <ComboboxTrigger
+                aria-label="Site"
+                placeholder="Select a site"
+                :label="((id) => {
+                  const site = activeSites.find((s) => s.id === id)
+                  return site ? `${site.displayName} — ${site.primaryDomain}` : ''
+                })(siteSelection)"
+              />
+            </ComboboxAnchor>
+            <ComboboxList>
+              <ComboboxInput placeholder="Search sites…" />
               <ComboboxEmpty>No sites match.</ComboboxEmpty>
-              <ComboboxSelectItem
-                v-for="site in activeSites"
-                :key="site.id"
-                :value="site.id"
-                :text-value="`${site.displayName} ${site.primaryDomain}`"
-              >
-                {{ site.displayName }} — {{ site.primaryDomain }}
-              </ComboboxSelectItem>
-            </ComboboxFloatingContent>
+              <ComboboxGroup>
+                <ComboboxItem
+                  v-for="site in activeSites"
+                  :key="site.id"
+                  :value="site.id"
+                  :text-value="`${site.displayName} ${site.primaryDomain}`"
+                >
+                  {{ site.displayName }} — {{ site.primaryDomain }}
+                  <ComboboxItemIndicator />
+                </ComboboxItem>
+              </ComboboxGroup>
+            </ComboboxList>
           </Combobox>
         </div>
         <AppButton size="sm" icon="refresh-cw" :loading="tasksQuery.isFetching.value" :disabled="!selectedSite" @click="tasksQuery.refetch()">

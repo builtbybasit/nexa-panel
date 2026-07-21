@@ -21,13 +21,13 @@ import { featureModules } from '@/modules/registry'
 import { listSites } from '@/modules/sites/api'
 import { AppIcon, EmptyState } from '@/shared/ui'
 import {
-  Combobox,
-  ComboboxContent,
-  ComboboxGroup,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxLabel,
-} from '@/shared/ui/combobox'
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/shared/ui/command'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -140,27 +140,12 @@ const resourceItems = computed<PaletteItem[]>(() => {
   return items
 })
 
-const RESULTS_PER_GROUP = 8
-
-const results = computed<PaletteItem[]>(() => {
-  const query = search.value.trim().toLowerCase()
-  if (!query) return navigationItems.value
-  const matches = (item: PaletteItem) => (item.searchText ?? item.label).toLowerCase().includes(query)
-  const found = navigationItems.value.filter(matches)
-  const perGroup = new Map<string, number>()
-  for (const item of resourceItems.value) {
-    if (!matches(item)) continue
-    const count = perGroup.get(item.group) ?? 0
-    if (count >= RESULTS_PER_GROUP) continue
-    perGroup.set(item.group, count + 1)
-    found.push(item)
-  }
-  return found
-})
-
-const groups = computed(() => {
+// The Command menu filters by each row's `text-value`; grouping is purely for
+// display. Resource groups are only rendered while searching (see the template)
+// so the empty state stays limited to navigation.
+const resourceGroups = computed(() => {
   const ordered: { label: string; entries: PaletteItem[] }[] = []
-  for (const item of results.value) {
+  for (const item of resourceItems.value) {
     const existing = ordered.find((group) => group.label === item.group)
     if (existing) existing.entries.push(item)
     else ordered.push({ label: item.group, entries: [item] })
@@ -199,23 +184,21 @@ const placeholder = computed(() =>
           <DialogDescription>Search pages, sites, and resources, then press Enter to navigate.</DialogDescription>
         </VisuallyHidden>
 
-        <Combobox :open="true" ignore-filter class="block">
-          <div class="flex items-center gap-3 border-b border-outline px-4">
-            <AppIcon name="search" :size="16" class="shrink-0 text-ink-muted" />
-            <ComboboxInput v-model="search" :placeholder="placeholder" auto-focus />
-            <kbd class="shrink-0 rounded border border-outline px-1.5 py-0.5 text-[10px] font-semibold text-ink-muted">Esc</kbd>
-          </div>
+        <Command v-model:search-term="search" @keydown.escape="emit('close')">
+          <CommandInput :placeholder="placeholder">
+            <template #suffix>
+              <kbd class="shrink-0 rounded border border-outline px-1.5 py-0.5 text-[10px] font-semibold text-ink-muted">Esc</kbd>
+            </template>
+          </CommandInput>
 
-          <ComboboxContent
-            v-if="results.length"
-            class="border-none"
-            @escape-key-down="emit('close')"
-            @pointer-down-outside="emit('close')"
-          >
-            <ComboboxGroup v-for="group in groups" :key="group.label">
-              <ComboboxLabel>{{ group.label }}</ComboboxLabel>
-              <ComboboxItem
-                v-for="item in group.entries"
+          <CommandList>
+            <CommandEmpty>
+              <EmptyState icon="search" title="No matches" description="Try a different page name, site, hostname, or database." />
+            </CommandEmpty>
+
+            <CommandGroup heading="Navigation">
+              <CommandItem
+                v-for="item in navigationItems"
                 :key="item.id"
                 :value="item.id"
                 :text-value="item.label"
@@ -228,15 +211,37 @@ const placeholder = computed(() =>
                   class="shrink-0 text-ink-muted group-data-[highlighted]:text-accent-300"
                 />
                 <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
-                <span v-if="item.hint" class="max-w-44 shrink-0 truncate text-xs font-normal text-ink-muted">{{ item.hint }}</span>
-              </ComboboxItem>
-            </ComboboxGroup>
-          </ComboboxContent>
+              </CommandItem>
+            </CommandGroup>
 
-          <div v-else class="p-3">
-            <EmptyState icon="search" title="No matches" description="Try a different page name, site, hostname, or database." />
-          </div>
-        </Combobox>
+            <!--
+              Resource rows stay mounted so the Command filter has them registered
+              from the first keystroke; `v-show` merely hides them until searching,
+              keeping the resting palette limited to navigation.
+            -->
+            <div v-show="search.trim()" role="presentation">
+              <CommandGroup v-for="group in resourceGroups" :key="group.label" :heading="group.label">
+                <CommandItem
+                  v-for="item in group.entries"
+                  :key="item.id"
+                  :value="item.id"
+                  :text-value="item.searchText ?? item.label"
+                  :disabled="!search.trim()"
+                  class="group"
+                  @select="go(item)"
+                >
+                  <AppIcon
+                    :name="item.icon"
+                    :size="15"
+                    class="shrink-0 text-ink-muted group-data-[highlighted]:text-accent-300"
+                  />
+                  <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
+                  <span v-if="item.hint" class="max-w-44 shrink-0 truncate text-xs font-normal text-ink-muted">{{ item.hint }}</span>
+                </CommandItem>
+              </CommandGroup>
+            </div>
+          </CommandList>
+        </Command>
       </DialogContent>
     </DialogPortal>
   </DialogRoot>

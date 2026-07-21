@@ -4,7 +4,6 @@ import {
   type ComboboxContentEmits,
   type ComboboxContentProps,
   ComboboxPortal,
-  ComboboxViewport,
   useForwardPropsEmits,
 } from 'reka-ui'
 import { computed, type HTMLAttributes } from 'vue'
@@ -12,14 +11,14 @@ import { computed, type HTMLAttributes } from 'vue'
 import { cn } from '@/shared/lib/utils'
 
 /**
- * Popper-positioned, portaled results panel for a combobox used as a
- * floating select (anchored to a `ComboboxAnchor` trigger, elsewhere in a
- * dialog's overflow). The plain `ComboboxContent` stays `inline` for the
- * command palette, which lays itself out inside its own dialog.
+ * Popper-positioned, portaled results panel. Place a `ComboboxInput`,
+ * `ComboboxEmpty`, and one or more `ComboboxGroup`/`ComboboxItem` inside it; the
+ * inner region scrolls while matching reka's filtering against each item's
+ * `text-value`.
  */
 const props = withDefaults(defineProps<ComboboxContentProps & { class?: HTMLAttributes['class'] }>(), {
   position: 'popper',
-  sideOffset: 8,
+  sideOffset: 6,
 })
 const emits = defineEmits<ComboboxContentEmits>()
 
@@ -37,15 +36,15 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       v-bind="forwarded"
       :class="
         cn(
-          'relative z-50 max-h-[min(20rem,var(--reka-combobox-content-available-height))] w-[var(--reka-combobox-trigger-width)] overflow-hidden rounded-xl border border-outline-strong bg-raised shadow-[0_16px_40px_-16px_rgba(0,0,0,0.7)] outline-none',
+          'relative z-50 w-[var(--reka-combobox-trigger-width)] overflow-hidden rounded-xl border border-outline-strong bg-raised text-ink shadow-[0_16px_40px_-16px_rgba(0,0,0,0.7)] outline-none',
           'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2',
           props.class,
         )
       "
     >
-      <ComboboxViewport class="max-h-80 overflow-y-auto p-1.5">
+      <div class="max-h-[min(20rem,var(--reka-combobox-content-available-height))] overflow-x-hidden overflow-y-auto">
         <slot />
-      </ComboboxViewport>
+      </div>
     </ComboboxContent>
   </ComboboxPortal>
 </template>

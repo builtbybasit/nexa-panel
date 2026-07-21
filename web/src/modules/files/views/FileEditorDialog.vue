@@ -12,7 +12,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 
 
 import { formatBytes } from '@/shared/formatters'
 import { AppAlert, AppButton, AppConfirmDialog, AppIcon } from '@/shared/ui'
-import { Combobox, ComboboxEmpty, ComboboxFloatingContent, ComboboxSelectItem, ComboboxTriggerInput } from '@/shared/ui/combobox'
+import { Combobox, ComboboxAnchor, ComboboxEmpty, ComboboxGroup, ComboboxInput, ComboboxItem, ComboboxItemIndicator, ComboboxList, ComboboxTrigger } from '@/shared/ui/combobox'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
 
 import { downloadUrl, FilesRequestError, readFileContent, writeFileContent } from '../api'
@@ -326,16 +326,21 @@ onBeforeUnmount(() => {
               </div>
               <div class="w-48">
                 <Combobox v-model="languageSelect">
-                  <ComboboxTriggerInput
-                    title="Syntax highlighting language"
-                    :display-value="(id) => languageOptions.find(([optionId]) => optionId === id)?.[1] ?? ''"
-                  />
-                  <ComboboxFloatingContent>
+                  <ComboboxAnchor as-child>
+                    <ComboboxTrigger
+                      title="Syntax highlighting language"
+                      :label="((id) => languageOptions.find(([optionId]) => optionId === id)?.[1] ?? '')(languageSelect)"
+                    />
+                  </ComboboxAnchor>
+                  <ComboboxList>
+                    <ComboboxInput placeholder="Search languages…" />
                     <ComboboxEmpty>No matches.</ComboboxEmpty>
-                    <ComboboxSelectItem v-for="[id, label] in languageOptions" :key="id" :value="id" :text-value="label">
-                      {{ label }}
-                    </ComboboxSelectItem>
-                  </ComboboxFloatingContent>
+                    <ComboboxGroup>
+                      <ComboboxItem v-for="[id, label] in languageOptions" :key="id" :value="id" :text-value="label">
+                        {{ label }}<ComboboxItemIndicator />
+                      </ComboboxItem>
+                    </ComboboxGroup>
+                  </ComboboxList>
                 </Combobox>
               </div>
               <button

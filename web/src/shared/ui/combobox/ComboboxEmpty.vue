@@ -13,7 +13,7 @@ const delegatedProps = computed(() => {
 </script>
 
 <template>
-  <ComboboxEmpty v-bind="delegatedProps" :class="cn('px-3 py-2 text-[13px] text-ink-muted', props.class)">
+  <ComboboxEmpty v-bind="delegatedProps" :class="cn('px-3 py-6 text-center text-[13px] text-ink-muted', props.class)">
     <slot />
   </ComboboxEmpty>
 </template>

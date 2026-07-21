@@ -8,14 +8,10 @@ import {
 
 /**
  * Root of the combobox family. Forwards props + emits so `v-model`, `:open`,
- * and `:ignore-filter` pass through. Consumers that do their own filtering
- * should set `ignore-filter` so reka keeps every rendered item navigable.
- *
- * Defaults `open-on-click` on since most consumers use this as a floating
- * select (click to browse) rather than a type-to-search-only field; the
- * command palette forces `:open="true"` itself so the default is moot there.
+ * and `by` pass through. Used as a floating single-select: a `ComboboxTrigger`
+ * button opens a `ComboboxList` popover whose `ComboboxInput` filters the items.
  */
-const props = withDefaults(defineProps<ComboboxRootProps>(), { openOnClick: true })
+const props = defineProps<ComboboxRootProps>()
 const emits = defineEmits<ComboboxRootEmits>()
 
 const forwarded = useForwardPropsEmits(props, emits)

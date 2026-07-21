@@ -28,10 +28,14 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
 import {
   Combobox,
+  ComboboxAnchor,
   ComboboxEmpty,
-  ComboboxFloatingContent,
-  ComboboxSelectItem,
-  ComboboxTriggerInput,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemIndicator,
+  ComboboxList,
+  ComboboxTrigger,
 } from '@/shared/ui/combobox'
 
 import {
@@ -626,22 +630,27 @@ const revealFacts = computed<Fact[]>(() => {
         <form class="space-y-4" novalidate @submit.prevent="submitGrant">
           <FormField label="Role" :error="grantRoleError">
             <Combobox v-model="grantRoleId">
-              <ComboboxTriggerInput
-                :invalid="!!grantRoleError"
-                placeholder="Select role"
-                :display-value="(id) => grantableRoles.find((role) => role.id === id)?.name ?? ''"
-              />
-              <ComboboxFloatingContent>
+              <ComboboxAnchor as-child>
+                <ComboboxTrigger
+                  :invalid="!!grantRoleError"
+                  placeholder="Select role"
+                  :label="((id) => grantableRoles.find((role) => role.id === id)?.name ?? '')(grantRoleId)"
+                />
+              </ComboboxAnchor>
+              <ComboboxList>
+                <ComboboxInput placeholder="Search roles…" />
                 <ComboboxEmpty>Every active role on this instance already has access</ComboboxEmpty>
-                <ComboboxSelectItem
-                  v-for="role in grantableRoles"
-                  :key="role.id"
-                  :value="role.id"
-                  :text-value="role.name"
-                >
-                  {{ role.name }}
-                </ComboboxSelectItem>
-              </ComboboxFloatingContent>
+                <ComboboxGroup>
+                  <ComboboxItem
+                    v-for="role in grantableRoles"
+                    :key="role.id"
+                    :value="role.id"
+                    :text-value="role.name"
+                  >
+                    {{ role.name }}<ComboboxItemIndicator />
+                  </ComboboxItem>
+                </ComboboxGroup>
+              </ComboboxList>
             </Combobox>
           </FormField>
           <FormField label="Access">

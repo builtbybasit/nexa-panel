@@ -19,10 +19,14 @@ import {
 } from '@/shared/ui'
 import {
   Combobox,
+  ComboboxAnchor,
   ComboboxEmpty,
-  ComboboxFloatingContent,
-  ComboboxSelectItem,
-  ComboboxTriggerInput,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemIndicator,
+  ComboboxList,
+  ComboboxTrigger,
 } from '@/shared/ui/combobox'
 
 import { createSite, listRuntimes, listSites, type Runtime, type Site } from '../api'
@@ -338,30 +342,36 @@ function labelClass(index: number): string {
           <div class="mt-3">
             <FormField label="PHP version">
               <Combobox v-model="phpVersion">
-                <ComboboxTriggerInput
-                  aria-label="PHP version"
-                  placeholder="Select a PHP version"
-                  :display-value="
-                    (version) => {
-                      const runtime = runtimes.find((r) => r.version === version)
-                      return runtime
-                        ? `PHP ${runtime.version}${runtime.supportStatus === 'end_of_life_allowed' ? ' — no longer supported' : ''}`
-                        : ''
-                    }
-                  "
-                />
-                <ComboboxFloatingContent>
+                <ComboboxAnchor as-child>
+                  <ComboboxTrigger
+                    aria-label="PHP version"
+                    placeholder="Select a PHP version"
+                    :label="(
+                      (version) => {
+                        const runtime = runtimes.find((r) => r.version === version)
+                        return runtime
+                          ? `PHP ${runtime.version}${runtime.supportStatus === 'end_of_life_allowed' ? ' — no longer supported' : ''}`
+                          : ''
+                      }
+                    )(phpVersion)"
+                  />
+                </ComboboxAnchor>
+                <ComboboxList>
+                  <ComboboxInput placeholder="Search versions…" />
                   <ComboboxEmpty>No PHP runtimes installed</ComboboxEmpty>
-                  <ComboboxSelectItem
-                    v-for="runtime in runtimes"
-                    :key="runtime.version"
-                    :value="runtime.version"
-                    :text-value="`PHP ${runtime.version}`"
-                  >
-                    PHP {{ runtime.version
-                    }}{{ runtime.supportStatus === 'end_of_life_allowed' ? ' — no longer supported' : '' }}
-                  </ComboboxSelectItem>
-                </ComboboxFloatingContent>
+                  <ComboboxGroup>
+                    <ComboboxItem
+                      v-for="runtime in runtimes"
+                      :key="runtime.version"
+                      :value="runtime.version"
+                      :text-value="`PHP ${runtime.version}`"
+                    >
+                      PHP {{ runtime.version
+                      }}{{ runtime.supportStatus === 'end_of_life_allowed' ? ' — no longer supported' : '' }}
+                      <ComboboxItemIndicator />
+                    </ComboboxItem>
+                  </ComboboxGroup>
+                </ComboboxList>
               </Combobox>
             </FormField>
             <p class="mt-2 flex items-center justify-between gap-2 text-[12px]">

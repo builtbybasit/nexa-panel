@@ -4,7 +4,7 @@ import { computed, reactive, ref, watchEffect } from 'vue'
 
 import { formatBytes } from '@/shared/formatters'
 import { AppAlert, AppButton, AppDialog, AppInput, FormField } from '@/shared/ui'
-import { Combobox, ComboboxEmpty, ComboboxFloatingContent, ComboboxSelectItem, ComboboxTriggerInput } from '@/shared/ui/combobox'
+import { Combobox, ComboboxAnchor, ComboboxEmpty, ComboboxGroup, ComboboxInput, ComboboxItem, ComboboxItemIndicator, ComboboxList, ComboboxTrigger } from '@/shared/ui/combobox'
 
 import { listDatabases as listPostgresDatabases } from '../../databases/api'
 import { listDatabases as listMysqlDatabases } from '../../mysql/api'
@@ -143,31 +143,36 @@ function submit() {
         <div v-if="stateFor(item).include" class="mt-3 grid gap-3 pl-6 sm:grid-cols-2">
           <FormField :label="item.kind === 'site' ? 'Restore to site' : 'Restore to database'">
             <Combobox v-model="stateFor(item).dest">
-              <ComboboxTriggerInput
-                :display-value="
-                  (id) =>
-                    (item.kind === 'site' ? siteOptions : databaseOptionsFor(item.engine)).find((option) => option.value === id)
-                      ?.label ?? ''
-                "
-              />
-              <ComboboxFloatingContent>
+              <ComboboxAnchor as-child>
+                <ComboboxTrigger
+                  :label="
+                    ((id) =>
+                      (item.kind === 'site' ? siteOptions : databaseOptionsFor(item.engine)).find((option) => option.value === id)
+                        ?.label ?? '')(stateFor(item).dest)
+                  "
+                />
+              </ComboboxAnchor>
+              <ComboboxList>
+                <ComboboxInput placeholder="Search…" />
                 <ComboboxEmpty>Nothing available</ComboboxEmpty>
-                <template v-if="item.kind === 'site'">
-                  <ComboboxSelectItem v-for="option in siteOptions" :key="option.value" :value="option.value" :text-value="option.label">
-                    {{ option.label }}
-                  </ComboboxSelectItem>
-                </template>
-                <template v-else>
-                  <ComboboxSelectItem
-                    v-for="option in databaseOptionsFor(item.engine)"
-                    :key="option.value"
-                    :value="option.value"
-                    :text-value="option.label"
-                  >
-                    {{ option.label }}
-                  </ComboboxSelectItem>
-                </template>
-              </ComboboxFloatingContent>
+                <ComboboxGroup>
+                  <template v-if="item.kind === 'site'">
+                    <ComboboxItem v-for="option in siteOptions" :key="option.value" :value="option.value" :text-value="option.label">
+                      {{ option.label }}<ComboboxItemIndicator />
+                    </ComboboxItem>
+                  </template>
+                  <template v-else>
+                    <ComboboxItem
+                      v-for="option in databaseOptionsFor(item.engine)"
+                      :key="option.value"
+                      :value="option.value"
+                      :text-value="option.label"
+                    >
+                      {{ option.label }}<ComboboxItemIndicator />
+                    </ComboboxItem>
+                  </template>
+                </ComboboxGroup>
+              </ComboboxList>
             </Combobox>
           </FormField>
           <FormField label="From" hint="The item's origin in this copy.">

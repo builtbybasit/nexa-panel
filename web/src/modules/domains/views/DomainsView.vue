@@ -33,10 +33,14 @@ import {
 } from '@/shared/ui'
 import {
   Combobox,
+  ComboboxAnchor,
   ComboboxEmpty,
-  ComboboxFloatingContent,
-  ComboboxSelectItem,
-  ComboboxTriggerInput,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemIndicator,
+  ComboboxList,
+  ComboboxTrigger,
 } from '@/shared/ui/combobox'
 
 import {
@@ -311,19 +315,24 @@ const planDnsRows = computed(() =>
           <template #filters>
             <div class="w-44">
               <Combobox v-model="siteFilterModel">
-                <ComboboxTriggerInput
-                  aria-label="Filter by site"
-                  :display-value="
-                    (id) => (id === ALL_SITES ? 'All sites' : (sites.find((site) => site.id === id)?.displayName ?? ''))
-                  "
-                />
-                <ComboboxFloatingContent>
+                <ComboboxAnchor as-child>
+                  <ComboboxTrigger
+                    aria-label="Filter by site"
+                    :label="(
+                      (id) => (id === ALL_SITES ? 'All sites' : (sites.find((site) => site.id === id)?.displayName ?? ''))
+                    )(siteFilterModel)"
+                  />
+                </ComboboxAnchor>
+                <ComboboxList>
+                  <ComboboxInput placeholder="Search sites…" />
                   <ComboboxEmpty>No sites match.</ComboboxEmpty>
-                  <ComboboxSelectItem :value="ALL_SITES" text-value="All sites">All sites</ComboboxSelectItem>
-                  <ComboboxSelectItem v-for="site in sites" :key="site.id" :value="site.id" :text-value="site.displayName">
-                    {{ site.displayName }}
-                  </ComboboxSelectItem>
-                </ComboboxFloatingContent>
+                  <ComboboxGroup>
+                    <ComboboxItem :value="ALL_SITES" text-value="All sites">All sites<ComboboxItemIndicator /></ComboboxItem>
+                    <ComboboxItem v-for="site in sites" :key="site.id" :value="site.id" :text-value="site.displayName">
+                      {{ site.displayName }}<ComboboxItemIndicator />
+                    </ComboboxItem>
+                  </ComboboxGroup>
+                </ComboboxList>
               </Combobox>
             </div>
           </template>
@@ -438,22 +447,27 @@ const planDnsRows = computed(() =>
         <FormField label="Site">
           <div class="w-full">
             <Combobox v-model="createSiteId">
-              <ComboboxTriggerInput
-                aria-label="Site"
-                placeholder="Select site"
-                :display-value="(id) => sites.find((site) => site.id === id)?.displayName ?? ''"
-              />
-              <ComboboxFloatingContent>
+              <ComboboxAnchor as-child>
+                <ComboboxTrigger
+                  aria-label="Site"
+                  placeholder="Select site"
+                  :label="((id) => sites.find((site) => site.id === id)?.displayName ?? '')(createSiteId)"
+                />
+              </ComboboxAnchor>
+              <ComboboxList>
+                <ComboboxInput placeholder="Search sites…" />
                 <ComboboxEmpty>No sites match.</ComboboxEmpty>
-                <ComboboxSelectItem
-                  v-for="site in sites"
-                  :key="site.id"
-                  :value="site.id"
-                  :text-value="site.displayName"
-                >
-                  {{ site.displayName }}
-                </ComboboxSelectItem>
-              </ComboboxFloatingContent>
+                <ComboboxGroup>
+                  <ComboboxItem
+                    v-for="site in sites"
+                    :key="site.id"
+                    :value="site.id"
+                    :text-value="site.displayName"
+                  >
+                    {{ site.displayName }}<ComboboxItemIndicator />
+                  </ComboboxItem>
+                </ComboboxGroup>
+              </ComboboxList>
             </Combobox>
           </div>
         </FormField>

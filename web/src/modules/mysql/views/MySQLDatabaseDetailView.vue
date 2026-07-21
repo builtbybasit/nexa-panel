@@ -28,10 +28,14 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
 import {
   Combobox,
+  ComboboxAnchor,
   ComboboxEmpty,
-  ComboboxFloatingContent,
-  ComboboxSelectItem,
-  ComboboxTriggerInput,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemIndicator,
+  ComboboxList,
+  ComboboxTrigger,
 } from '@/shared/ui/combobox'
 
 import {
@@ -699,27 +703,32 @@ const revealFacts = computed<Fact[]>(() => {
         <form class="space-y-4" novalidate @submit.prevent="submitGrant">
           <FormField label="Account" :error="grantAccountError">
             <Combobox v-model="grantAccountId">
-              <ComboboxTriggerInput
-                :invalid="!!grantAccountError"
-                placeholder="Select account"
-                :display-value="
-                  (id) => {
-                    const account = grantableAccounts.find((a) => a.id === id)
-                    return account ? `${account.name}@${account.host}` : ''
-                  }
-                "
-              />
-              <ComboboxFloatingContent>
+              <ComboboxAnchor as-child>
+                <ComboboxTrigger
+                  :invalid="!!grantAccountError"
+                  placeholder="Select account"
+                  :label="(
+                    (id) => {
+                      const account = grantableAccounts.find((a) => a.id === id)
+                      return account ? `${account.name}@${account.host}` : ''
+                    }
+                  )(grantAccountId)"
+                />
+              </ComboboxAnchor>
+              <ComboboxList>
+                <ComboboxInput placeholder="Search accounts…" />
                 <ComboboxEmpty>Every active account on this engine already has access</ComboboxEmpty>
-                <ComboboxSelectItem
-                  v-for="account in grantableAccounts"
-                  :key="account.id"
-                  :value="account.id"
-                  :text-value="`${account.name}@${account.host}`"
-                >
-                  {{ account.name }}@{{ account.host }}
-                </ComboboxSelectItem>
-              </ComboboxFloatingContent>
+                <ComboboxGroup>
+                  <ComboboxItem
+                    v-for="account in grantableAccounts"
+                    :key="account.id"
+                    :value="account.id"
+                    :text-value="`${account.name}@${account.host}`"
+                  >
+                    {{ account.name }}@{{ account.host }}<ComboboxItemIndicator />
+                  </ComboboxItem>
+                </ComboboxGroup>
+              </ComboboxList>
             </Combobox>
           </FormField>
           <FormField label="Access">

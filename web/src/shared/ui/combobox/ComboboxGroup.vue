@@ -15,7 +15,7 @@ const forwarded = useForwardProps(delegatedProps)
 </script>
 
 <template>
-  <ComboboxGroup v-bind="forwarded" :class="cn(props.class)">
+  <ComboboxGroup v-bind="forwarded" :class="cn('p-1.5', props.class)">
     <slot />
   </ComboboxGroup>
 </template>

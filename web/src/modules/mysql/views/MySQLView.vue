@@ -35,10 +35,14 @@ import {
 } from '@/shared/ui'
 import {
   Combobox,
+  ComboboxAnchor,
   ComboboxEmpty,
-  ComboboxFloatingContent,
-  ComboboxSelectItem,
-  ComboboxTriggerInput,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemIndicator,
+  ComboboxList,
+  ComboboxTrigger,
 } from '@/shared/ui/combobox'
 
 import { useToolLaunch } from '@/modules/admintools/composables/useToolLaunch'
@@ -879,27 +883,32 @@ watch(engine, () => {
           :error="ownerAccountError"
         >
           <Combobox v-model="ownerAccountId">
-            <ComboboxTriggerInput
-              :invalid="!!ownerAccountError"
-              placeholder="Select owner"
-              :display-value="
-                (id) => {
-                  const item = ownerOptions.find((i) => i.id === id)
-                  return item ? `${item.name}@${item.host}` : ''
-                }
-              "
-            />
-            <ComboboxFloatingContent>
+            <ComboboxAnchor as-child>
+              <ComboboxTrigger
+                :invalid="!!ownerAccountError"
+                placeholder="Select owner"
+                :label="(
+                  (id) => {
+                    const item = ownerOptions.find((i) => i.id === id)
+                    return item ? `${item.name}@${item.host}` : ''
+                  }
+                )(ownerAccountId)"
+              />
+            </ComboboxAnchor>
+            <ComboboxList>
+              <ComboboxInput placeholder="Search accounts…" />
               <ComboboxEmpty>No active accounts — create one first</ComboboxEmpty>
-              <ComboboxSelectItem
-                v-for="item in ownerOptions"
-                :key="item.id"
-                :value="item.id"
-                :text-value="`${item.name}@${item.host}`"
-              >
-                {{ item.name }}@{{ item.host }}
-              </ComboboxSelectItem>
-            </ComboboxFloatingContent>
+              <ComboboxGroup>
+                <ComboboxItem
+                  v-for="item in ownerOptions"
+                  :key="item.id"
+                  :value="item.id"
+                  :text-value="`${item.name}@${item.host}`"
+                >
+                  {{ item.name }}@{{ item.host }}<ComboboxItemIndicator />
+                </ComboboxItem>
+              </ComboboxGroup>
+            </ComboboxList>
           </Combobox>
         </FormField>
         <JobFailureNotice v-if="databaseRunner.error.value" v-bind="failureProps(databaseRunner)" />

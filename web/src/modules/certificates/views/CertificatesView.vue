@@ -30,10 +30,14 @@ import {
 } from '@/shared/ui'
 import {
   Combobox,
+  ComboboxAnchor,
   ComboboxEmpty,
-  ComboboxFloatingContent,
-  ComboboxSelectItem,
-  ComboboxTriggerInput,
+  ComboboxGroup,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxItemIndicator,
+  ComboboxList,
+  ComboboxTrigger,
 } from '@/shared/ui/combobox'
 
 import {
@@ -468,27 +472,32 @@ const planDnsRows = computed(() =>
         <FormField label="Site">
           <div class="w-full">
             <Combobox v-model="createSiteId">
-              <ComboboxTriggerInput
-                aria-label="Site"
-                placeholder="Select site"
-                :display-value="
-                  (id) => {
-                    const site = sites.find((item) => item.id === id)
-                    return site ? `${site.displayName} · ${site.primaryDomain}` : ''
-                  }
-                "
-              />
-              <ComboboxFloatingContent>
+              <ComboboxAnchor as-child>
+                <ComboboxTrigger
+                  aria-label="Site"
+                  placeholder="Select site"
+                  :label="(
+                    (id) => {
+                      const site = sites.find((item) => item.id === id)
+                      return site ? `${site.displayName} · ${site.primaryDomain}` : ''
+                    }
+                  )(createSiteId)"
+                />
+              </ComboboxAnchor>
+              <ComboboxList>
+                <ComboboxInput placeholder="Search sites…" />
                 <ComboboxEmpty>No sites match.</ComboboxEmpty>
-                <ComboboxSelectItem
-                  v-for="site in sites"
-                  :key="site.id"
-                  :value="site.id"
-                  :text-value="`${site.displayName} ${site.primaryDomain}`"
-                >
-                  {{ site.displayName }} · {{ site.primaryDomain }}
-                </ComboboxSelectItem>
-              </ComboboxFloatingContent>
+                <ComboboxGroup>
+                  <ComboboxItem
+                    v-for="site in sites"
+                    :key="site.id"
+                    :value="site.id"
+                    :text-value="`${site.displayName} ${site.primaryDomain}`"
+                  >
+                    {{ site.displayName }} · {{ site.primaryDomain }}<ComboboxItemIndicator />
+                  </ComboboxItem>
+                </ComboboxGroup>
+              </ComboboxList>
             </Combobox>
           </div>
         </FormField>
