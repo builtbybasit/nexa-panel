@@ -309,13 +309,23 @@ const planDnsRows = computed(() =>
       <div class="space-y-3 p-3 sm:p-4">
         <ListToolbar v-model:search="search" :count="matching" count-label="domains" placeholder="Search hostnames">
           <template #filters>
-            <Select v-model="siteFilterModel">
-              <SelectTrigger aria-label="Filter by site" class="w-44" />
-              <SelectContent>
-                <SelectItem :value="ALL_SITES">All sites</SelectItem>
-                <SelectItem v-for="site in sites" :key="site.id" :value="site.id">{{ site.displayName }}</SelectItem>
-              </SelectContent>
-            </Select>
+            <div class="w-44">
+              <Combobox v-model="siteFilterModel">
+                <ComboboxTriggerInput
+                  aria-label="Filter by site"
+                  :display-value="
+                    (id) => (id === ALL_SITES ? 'All sites' : (sites.find((site) => site.id === id)?.displayName ?? ''))
+                  "
+                />
+                <ComboboxFloatingContent>
+                  <ComboboxEmpty>No sites match.</ComboboxEmpty>
+                  <ComboboxSelectItem :value="ALL_SITES" text-value="All sites">All sites</ComboboxSelectItem>
+                  <ComboboxSelectItem v-for="site in sites" :key="site.id" :value="site.id" :text-value="site.displayName">
+                    {{ site.displayName }}
+                  </ComboboxSelectItem>
+                </ComboboxFloatingContent>
+              </Combobox>
+            </div>
           </template>
         </ListToolbar>
 
