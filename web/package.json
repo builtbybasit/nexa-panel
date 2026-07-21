@@ -28,7 +28,7 @@
     "dompurify": "3.4.12"
   },
   "devDependencies": {
-    "@redocly/cli": "2.39.0",
+    "@redocly/cli": "2.40.0",
     "@tailwindcss/vite": "^4.3.2",
     "@types/node": "^22.15.30",
     "@vitejs/plugin-vue": "^6.0.0",
