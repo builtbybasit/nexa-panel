@@ -89,33 +89,6 @@ func (m *Module) reconcileSchedules(ctx context.Context, force bool) error {
 	return errors.Join(failures...)
 }
 
-// plansSchema is migration #2 for the "backups" module (appended after
-// accountsSchema — never reordered). A plan names what to back up (sites and/or
-// databases), where (account_id), how many copies to keep (copies_limit), and
-// when (schedule, a 5-field cron expression).
-const plansSchema = `
-	CREATE TABLE backup_plans (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		account_id TEXT NOT NULL REFERENCES backup_accounts(id),
-		copies_limit INTEGER NOT NULL,
-		site_ids TEXT NOT NULL,
-		database_ids TEXT NOT NULL,
-		schedule TEXT NOT NULL,
-		enabled INTEGER NOT NULL,
-		created_at TIMESTAMP NOT NULL,
-		updated_at TIMESTAMP NOT NULL
-	);
-	CREATE INDEX idx_backup_plans_account ON backup_plans(account_id);
-`
-
-const scheduleLifecycleSchema = `
-	ALTER TABLE backup_plans ADD COLUMN schedule_state TEXT NOT NULL DEFAULT 'pending';
-	ALTER TABLE backup_plans ADD COLUMN schedule_error TEXT;
-	ALTER TABLE backup_plans ADD COLUMN schedule_synced_at TIMESTAMP;
-	CREATE INDEX backup_plans_schedule_state_idx ON backup_plans (schedule_state);
-`
-
 const maxCopiesLimit = 1000
 
 const maxPlanTargets = 128

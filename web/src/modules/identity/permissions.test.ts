@@ -12,11 +12,17 @@ describe('session permissions', () => {
     expect(hasPermission('admin', 'users.manage')).toBe(true)
   })
 
-  it('preserves the operator planning and write capabilities without granting apply', () => {
-    expect(hasPermission('operator', 'operations.plan')).toBe(true)
+  it('preserves the operator write capabilities without granting apply', () => {
     expect(hasPermission('operator', 'databases.write')).toBe(true)
     expect(hasPermission('operator', 'applications.write')).toBe(true)
     expect(hasPermission('operator', 'operations.apply')).toBe(false)
+  })
+
+  it('lets viewers read services but only operators act on them', () => {
+    expect(hasPermission('viewer', 'services.read')).toBe(true)
+    expect(hasPermission('viewer', 'services.write')).toBe(false)
+    expect(hasPermission('operator', 'services.write')).toBe(true)
+    expect(hasPermission('admin', 'services.write')).toBe(true)
   })
 
   it('denies missing and unknown sessions', () => {

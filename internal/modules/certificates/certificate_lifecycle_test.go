@@ -95,12 +95,14 @@ func TestCertificateIssuePlanApplyAndExpiryState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	t.Cleanup(func() { _ = database.Close() })
-	_, err = database.ExecContext(ctx, "CREATE TABLE sites (id TEXT PRIMARY KEY)")
+	_, err = database.ExecContext(ctx, "INSERT INTO sites(id, slug, display_name, primary_domain, php_version, unix_user, root_path, socket_path, status, created_at, updated_at) VALUES ('site-1', 'demo-site', 'Demo', 'demo.example.com', '8.4', 'nexa_demo_site', '/srv/nexa/sites/demo-site', '/run/php/nexa-demo-site.sock', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = database.ExecContext(ctx, "INSERT INTO sites(id) VALUES ('site-1')")
 	auditLog, _ := audit.New(ctx, database)
 	queue, err := jobs.NewWithConfig(ctx, database, auditLog, slog.New(slog.NewTextHandler(io.Discard, nil)), jobs.Config{PollInterval: 5 * time.Millisecond})
 	if err != nil {

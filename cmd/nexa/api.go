@@ -26,6 +26,8 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/modules/postgres"
 	"github.com/nexa-panel/nexa-panel/internal/modules/runtimes"
 	"github.com/nexa-panel/nexa-panel/internal/modules/schedules"
+	"github.com/nexa-panel/nexa-panel/internal/modules/services"
+	sftpmodule "github.com/nexa-panel/nexa-panel/internal/modules/sftp"
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
 	"github.com/nexa-panel/nexa-panel/internal/modules/system"
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
@@ -36,18 +38,18 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-	"github.com/nexa-panel/nexa-panel/internal/platform/nodeoperations"
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
 	phpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/php"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+	servicesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/services"
+	sftpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sftp"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
@@ -78,6 +80,9 @@ func runAPI(args []string, logger *slog.Logger) error {
 
 	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelSetup()
+	if err := persistence.RunMigrations(setupCtx, database); err != nil {
+		return fmt.Errorf("run control-plane migrations: %w", err)
+	}
 	auditModule, err := audit.New(setupCtx, database)
 	if err != nil {
 		return fmt.Errorf("initialize audit module: %w", err)
@@ -91,10 +96,6 @@ func runAPI(args []string, logger *slog.Logger) error {
 		return fmt.Errorf("initialize jobs module: %w", err)
 	}
 	jobsModule.SetSiteAccessPolicy(identityModule)
-	nodeOperationsModule, err := nodeoperations.New(nodeoperator.NewUnixClient(*agentSocket, *agentToken), jobsModule)
-	if err != nil {
-		return fmt.Errorf("initialize node operations module: %w", err)
-	}
 	runtimesModule, err := runtimes.New(runtimes.FilesystemDiscoverer{PHPConfigRoot: "/etc/php"})
 	if err != nil {
 		return fmt.Errorf("initialize runtimes module: %w", err)
@@ -158,6 +159,14 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize PHP module: %w", err)
 	}
+	servicesModule, err := services.New(jobsModule, servicesoperator.NewUnixClient(*agentSocket, *agentToken))
+	if err != nil {
+		return fmt.Errorf("initialize services module: %w", err)
+	}
+	sftpModule, err := sftpmodule.New(setupCtx, database, sftpoperator.NewUnixClient(*agentSocket, *agentToken), sitesModule, identityModule)
+	if err != nil {
+		return fmt.Errorf("initialize SFTP module: %w", err)
+	}
 	backupsModule, err := backups.New(setupCtx, backups.Dependencies{
 		Database: database, Jobs: jobsModule, Cipher: secretBox,
 		Operator:     backupoperator.NewUnixClient(*agentSocket, *agentToken),
@@ -176,7 +185,6 @@ func runAPI(args []string, logger *slog.Logger) error {
 		auditModule,
 		identityModule,
 		jobsModule,
-		nodeOperationsModule,
 		runtimesModule,
 		sitesModule,
 		domainsModule,
@@ -189,6 +197,8 @@ func runAPI(args []string, logger *slog.Logger) error {
 		schedulesModule,
 		applicationsModule,
 		phpModule,
+		servicesModule,
+		sftpModule,
 		backupsModule,
 		system.New(capacity.NewProcReader(), podman.NewInspector()),
 	}

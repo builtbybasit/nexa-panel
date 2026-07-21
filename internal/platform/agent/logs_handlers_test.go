@@ -16,7 +16,6 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
-	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
 
@@ -45,8 +44,7 @@ func startLogsAgent(t *testing.T) (*logsoperator.UnixClient, sitefs.Scope, strin
 		t.Fatal(err)
 	}
 
-	nodeOperator, _ := nodeoperator.NewFileOperator(filepath.Join(directory, "probe.conf"))
-	server := New(socketPath, "test", token, nodeOperator, slog.New(slog.NewTextHandler(io.Discard, nil)), WithLogsOperator(hostOperator))
+	server := New(socketPath, "test", token, slog.New(slog.NewTextHandler(io.Discard, nil)), WithLogsOperator(hostOperator))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()

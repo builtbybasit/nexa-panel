@@ -11,22 +11,8 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/uptrace/bun"
 )
-
-const schema = `
-	CREATE TABLE audit_events (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		occurred_at TIMESTAMP NOT NULL,
-		actor_user_id TEXT,
-		action TEXT NOT NULL,
-		subject TEXT NOT NULL,
-		remote_address TEXT NOT NULL DEFAULT '',
-		metadata TEXT NOT NULL DEFAULT '{}'
-	);
-	CREATE INDEX audit_events_occurred_at_idx ON audit_events (occurred_at DESC);
-`
 
 type Event struct {
 	ID            int64          `json:"id"`
@@ -66,12 +52,11 @@ type eventModel struct {
 	Metadata      string `bun:",notnull"`
 }
 
-func New(ctx context.Context, database *bun.DB) (*Module, error) {
+// New builds the audit module. Its schema is applied centrally by
+// persistence.RunMigrations before the module is constructed.
+func New(_ context.Context, database *bun.DB) (*Module, error) {
 	if database == nil {
 		return nil, errors.New("audit database is required")
-	}
-	if err := persistence.Migrate(ctx, database, "audit", []string{schema}); err != nil {
-		return nil, err
 	}
 	return &Module{database: database, now: time.Now}, nil
 }

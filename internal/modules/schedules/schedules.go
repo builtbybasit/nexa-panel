@@ -11,35 +11,9 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 
 	"github.com/uptrace/bun"
 )
-
-const schema = `
-	CREATE TABLE scheduled_tasks (
-		id TEXT PRIMARY KEY,
-		site_id TEXT NOT NULL,
-		name TEXT NOT NULL,
-		cron_expression TEXT NOT NULL,
-		command TEXT NOT NULL,
-		timeout_seconds INTEGER NOT NULL,
-		enabled INTEGER NOT NULL,
-		status TEXT NOT NULL,
-		pending_removal INTEGER NOT NULL DEFAULT 0,
-		last_job_id INTEGER REFERENCES jobs(id),
-		failure TEXT,
-		created_at TIMESTAMP NOT NULL,
-		updated_at TIMESTAMP NOT NULL
-	);
-	CREATE INDEX scheduled_tasks_site_idx ON scheduled_tasks (site_id, name);
-	CREATE TABLE scheduled_task_plans (
-		task_id TEXT PRIMARY KEY REFERENCES scheduled_tasks(id) ON DELETE CASCADE,
-		plan_json TEXT NOT NULL,
-		created_at TIMESTAMP NOT NULL,
-		expires_at TIMESTAMP NOT NULL
-	);
-`
 
 type Status string
 
@@ -122,12 +96,9 @@ type planModel struct {
 	ExpiresAt     time.Time
 }
 
-func New(ctx context.Context, database *bun.DB, jobQueue *jobs.Module, catalog SiteCatalog, access AccessPolicy, operator scheduleoperator.Operator) (*Module, error) {
+func New(_ context.Context, database *bun.DB, jobQueue *jobs.Module, catalog SiteCatalog, access AccessPolicy, operator scheduleoperator.Operator) (*Module, error) {
 	if database == nil || jobQueue == nil || catalog == nil || access == nil || operator == nil {
 		return nil, errors.New("schedules database, jobs, site catalog, access policy, and operator are required")
-	}
-	if err := persistence.Migrate(ctx, database, "schedules", []string{schema}); err != nil {
-		return nil, err
 	}
 	m := &Module{database: database, jobs: jobQueue, sites: catalog, access: access, operator: operator, now: time.Now}
 	if err := jobQueue.RegisterHandler("schedule.plan", m.planJob); err != nil {

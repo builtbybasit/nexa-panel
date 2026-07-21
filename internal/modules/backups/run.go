@@ -17,32 +17,6 @@ import (
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 )
 
-// copiesSchema is migration #3 for the "backups" module. A copy row records one
-// uploaded backup so the UI can distinguish transport success from verified
-// health; failed uploads leave no row (the job carries the failure).
-const copiesSchema = `
-	CREATE TABLE backup_copies (
-		id TEXT PRIMARY KEY,
-		plan_id TEXT NOT NULL,
-		account_id TEXT NOT NULL,
-		copy_name TEXT NOT NULL,
-		remote_path TEXT NOT NULL,
-		size_bytes INTEGER NOT NULL,
-		entries TEXT NOT NULL,
-		status TEXT NOT NULL,
-		created_at TIMESTAMP NOT NULL
-	);
-	CREATE INDEX idx_backup_copies_plan ON backup_copies(plan_id);
-`
-
-const copyHealthSchema = `
-	ALTER TABLE backup_copies ADD COLUMN integrity_state TEXT NOT NULL DEFAULT 'unverified';
-	ALTER TABLE backup_copies ADD COLUMN integrity_checked_at TIMESTAMP;
-	ALTER TABLE backup_copies ADD COLUMN restore_test_state TEXT NOT NULL DEFAULT 'not_tested';
-	ALTER TABLE backup_copies ADD COLUMN restore_tested_at TIMESTAMP;
-	ALTER TABLE backup_copies ADD COLUMN health_error TEXT;
-`
-
 const (
 	copyStatusUploaded   = "uploaded"
 	integrityUnverified  = "unverified"

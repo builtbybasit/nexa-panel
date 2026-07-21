@@ -80,7 +80,6 @@ function jobTarget(job: Job): string | undefined {
         v-else
         label="Memory available"
         icon="cpu"
-        to="/system"
         :value="memory ? formatBytes(memory.availableBytes) : '—'"
         :detail="memory ? `${Math.round(memory.usedPercent)}% used · ${memory.profile} profile` : 'Capacity not reported'"
       />

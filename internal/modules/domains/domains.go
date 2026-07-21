@@ -12,44 +12,9 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 
 	"github.com/uptrace/bun"
 )
-
-const schema = `
-	CREATE TABLE domains (
-		id TEXT PRIMARY KEY,
-		site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-		hostname TEXT NOT NULL UNIQUE,
-		kind TEXT NOT NULL,
-		redirect_target TEXT,
-		status TEXT NOT NULL,
-		resolved_addresses TEXT NOT NULL DEFAULT '[]',
-		last_job_id INTEGER REFERENCES jobs(id),
-		failure TEXT,
-		created_at TIMESTAMP NOT NULL,
-		updated_at TIMESTAMP NOT NULL
-	);
-	CREATE INDEX domains_site_kind_idx ON domains (site_id, kind, hostname);
-	CREATE TABLE domain_plans (
-		domain_id TEXT PRIMARY KEY REFERENCES domains(id) ON DELETE CASCADE,
-		plan_json TEXT NOT NULL,
-		created_at TIMESTAMP NOT NULL,
-		expires_at TIMESTAMP NOT NULL
-	);
-`
-
-const domainGuards = `
-	CREATE TRIGGER domains_guard_site_primary
-	BEFORE INSERT ON sites
-	WHEN EXISTS (SELECT 1 FROM domains WHERE hostname = NEW.primary_domain)
-	BEGIN SELECT RAISE(ABORT, 'hostname is already managed'); END;
-	CREATE TRIGGER sites_guard_domain_hostname
-	BEFORE INSERT ON domains
-	WHEN EXISTS (SELECT 1 FROM sites WHERE primary_domain = NEW.hostname AND id <> NEW.site_id)
-	BEGIN SELECT RAISE(ABORT, 'hostname is already a site primary domain'); END;
-`
 
 var hostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
@@ -153,9 +118,6 @@ func New(ctx context.Context, database *bun.DB, queue *jobs.Module, siteCatalog 
 	}
 	if resolver == nil {
 		resolver = net.DefaultResolver
-	}
-	if err := persistence.Migrate(ctx, database, "domains", []string{schema, domainGuards}); err != nil {
-		return nil, err
 	}
 	m := &Module{database: database, jobs: queue, sites: siteCatalog, operator: operator, resolver: resolver, now: time.Now}
 	if err := m.ensurePrimaryDomains(ctx); err != nil {

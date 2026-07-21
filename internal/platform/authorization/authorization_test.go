@@ -10,8 +10,7 @@ func TestRolePermissions(t *testing.T) {
 		allowed    bool
 	}{
 		{"viewer", SystemRead, true},
-		{"viewer", OperationsPlan, false},
-		{"operator", OperationsPlan, true},
+		{"viewer", OperationsApply, false},
 		{"operator", OperationsApply, false},
 		{"admin", OperationsApply, true},
 		{"unknown", SystemRead, false},
@@ -28,7 +27,7 @@ func TestRolePermissionMatrix(t *testing.T) {
 	permissions := []Permission{
 		SystemRead, JobsRead, AuditRead, RuntimesRead, SitesRead, SitesWrite,
 		DomainsRead, DomainsWrite, CertificatesRead, CertificatesWrite,
-		DatabasesRead, DatabasesWrite, OperationsPlan, OperationsApply,
+		DatabasesRead, DatabasesWrite, OperationsApply,
 		FilesRead, FilesWrite, LogsRead, SchedulesRead, SchedulesWrite, UsersManage,
 	}
 	expected := map[string]map[Permission]bool{
@@ -45,13 +44,13 @@ func TestRolePermissionMatrix(t *testing.T) {
 		"operator": {
 			SystemRead: true, JobsRead: true, RuntimesRead: true, SitesRead: true, SitesWrite: true,
 			DomainsRead: true, DomainsWrite: true, CertificatesRead: true, CertificatesWrite: true,
-			DatabasesRead: true, DatabasesWrite: true, OperationsPlan: true,
+			DatabasesRead: true, DatabasesWrite: true,
 			FilesRead: true, FilesWrite: true, LogsRead: true, SchedulesRead: true, SchedulesWrite: true,
 		},
 		"admin": {
 			SystemRead: true, JobsRead: true, AuditRead: true, RuntimesRead: true, SitesRead: true, SitesWrite: true,
 			DomainsRead: true, DomainsWrite: true, CertificatesRead: true, CertificatesWrite: true,
-			DatabasesRead: true, DatabasesWrite: true, OperationsPlan: true, OperationsApply: true,
+			DatabasesRead: true, DatabasesWrite: true, OperationsApply: true,
 			FilesRead: true, FilesWrite: true, LogsRead: true, SchedulesRead: true, SchedulesWrite: true,
 			UsersManage: true,
 		},

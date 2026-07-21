@@ -8,54 +8,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-const schema = `
-CREATE TABLE admin_tools (
-  kind TEXT PRIMARY KEY,
-  image TEXT NOT NULL,
-  container_name TEXT NOT NULL UNIQUE,
-  port INTEGER NOT NULL UNIQUE,
-  memory_mb INTEGER NOT NULL,
-  pids_limit INTEGER NOT NULL,
-  status TEXT NOT NULL,
-  systemd_unit TEXT NOT NULL UNIQUE,
-  on_demand BOOLEAN NOT NULL,
-  last_job_id INTEGER REFERENCES jobs(id),
-  failure TEXT,
-  created_at TIMESTAMP NOT NULL,
-  updated_at TIMESTAMP NOT NULL
-);
-CREATE TABLE admin_tool_plans (
-  id TEXT PRIMARY KEY,
-  tool_kind TEXT NOT NULL REFERENCES admin_tools(kind) ON DELETE CASCADE,
-  operation TEXT NOT NULL,
-  plan_json TEXT NOT NULL,
-  created_at TIMESTAMP NOT NULL,
-  expires_at TIMESTAMP NOT NULL
-);
-CREATE INDEX admin_tool_plans_tool_idx ON admin_tool_plans(tool_kind, created_at DESC);
-`
-
-const launchSchema = `
-CREATE TABLE admin_tool_launches (
-  id TEXT PRIMARY KEY,
-  actor_user_id TEXT NOT NULL,
-  panel_user TEXT NOT NULL,
-  tool_kind TEXT NOT NULL REFERENCES admin_tools(kind) ON DELETE CASCADE,
-  source_engine TEXT NOT NULL,
-  database_id TEXT NOT NULL,
-  account_id TEXT NOT NULL,
-  launch_token_hash TEXT NOT NULL UNIQUE,
-  session_token_hash TEXT NOT NULL UNIQUE,
-  session_ciphertext TEXT NOT NULL,
-  upstream_cookie_name TEXT,
-  used_at TIMESTAMP,
-  expires_at TIMESTAMP NOT NULL,
-  session_expires_at TIMESTAMP NOT NULL,
-  created_at TIMESTAMP NOT NULL
-);
-CREATE INDEX admin_tool_launches_expiry_idx ON admin_tool_launches(session_expires_at);
-`
-
 type Status string
 
 const (

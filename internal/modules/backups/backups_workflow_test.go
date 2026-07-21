@@ -86,6 +86,9 @@ func newTestModule(t *testing.T) (*Module, *fakeBackupOperator) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := persistence.RunMigrations(context.Background(), store); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	t.Cleanup(func() { _ = store.Close() })
 	cipher, err := secrets.New(make([]byte, 32))
 	if err != nil {

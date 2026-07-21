@@ -18,28 +18,32 @@ func TestBackupTriggerOnlyEnqueuesAndDeduplicatesTimerRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	defer database.Close()
 	ctx := context.Background()
 	if _, err := jobs.NewEnqueuer(ctx, database); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(ctx, `CREATE TABLE backup_plans (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		site_ids TEXT NOT NULL,
-		database_ids TEXT NOT NULL,
-		enabled INTEGER NOT NULL
-	)`); err != nil {
+	// backup_plans is created by the central migrations; seed a valid row (and
+	// the backup_accounts row its account_id foreign key requires).
+	now := time.Now().UTC()
+	if _, err := database.ExecContext(
+		ctx,
+		"INSERT INTO backup_accounts (id, name, type, path, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		"acct_1", "Local", "local", "/backups", "{}", now, now,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(
 		ctx,
-		"INSERT INTO backup_plans (id, name, site_ids, database_ids, enabled) VALUES (?, ?, ?, ?, 1)",
-		"bkplan_1", "Nightly", `["site_a"]`, `[]`,
+		`INSERT INTO backup_plans (id, name, account_id, copies_limit, site_ids, database_ids, schedule, enabled, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+		"bkplan_1", "Nightly", "acct_1", 5, `["site_a"]`, `[]`, "daily", now, now,
 	); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
 	expired := now.Add(-time.Minute)
 	if _, err := database.ExecContext(
 		ctx, `INSERT INTO jobs (

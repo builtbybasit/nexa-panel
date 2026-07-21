@@ -22,6 +22,9 @@ func TestAPIReadinessRequiresAuthenticatedAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	t.Cleanup(func() { _ = database.Close() })
 
 	check := apiReadiness(database, func(context.Context) error { return nil })

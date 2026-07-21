@@ -23,7 +23,6 @@ const (
 	CertificatesWrite Permission = "certificates.write"
 	DatabasesRead     Permission = "databases.read"
 	DatabasesWrite    Permission = "databases.write"
-	OperationsPlan    Permission = "operations.plan"
 	OperationsApply   Permission = "operations.apply"
 	FilesRead         Permission = "files.read"
 	FilesWrite        Permission = "files.write"
@@ -34,6 +33,8 @@ const (
 	ApplicationsWrite Permission = "applications.write"
 	BackupsRead       Permission = "backups.read"
 	BackupsWrite      Permission = "backups.write"
+	ServicesRead      Permission = "services.read"
+	ServicesWrite     Permission = "services.write"
 	UsersManage       Permission = "users.manage"
 )
 
@@ -46,16 +47,16 @@ type Policy struct {
 func New() *Policy {
 	return &Policy{now: time.Now, stepUpTTL: 10 * time.Minute, grants: map[string]map[Permission]struct{}{
 		"viewer": {
-			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, DomainsRead: {}, CertificatesRead: {}, DatabasesRead: {}, FilesRead: {}, LogsRead: {}, SchedulesRead: {}, ApplicationsRead: {}, BackupsRead: {},
+			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, DomainsRead: {}, CertificatesRead: {}, DatabasesRead: {}, FilesRead: {}, LogsRead: {}, SchedulesRead: {}, ApplicationsRead: {}, BackupsRead: {}, ServicesRead: {},
 		},
 		"developer": {
 			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, BackupsRead: {},
 		},
 		"operator": {
-			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, OperationsPlan: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {},
+			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {},
 		},
 		"admin": {
-			SystemRead: {}, JobsRead: {}, AuditRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, OperationsPlan: {}, OperationsApply: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, UsersManage: {},
+			SystemRead: {}, JobsRead: {}, AuditRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, OperationsApply: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {}, UsersManage: {},
 		},
 	}}
 }

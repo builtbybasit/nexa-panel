@@ -62,7 +62,7 @@ const node = computed(() => {
       dot: 'bg-amber-400',
       ping: true,
       label: 'Local node',
-      detail: `${overview.warnings.length} ${overview.warnings.length === 1 ? 'warning' : 'warnings'} — see System`,
+      detail: `${overview.warnings.length} ${overview.warnings.length === 1 ? 'warning' : 'warnings'}`,
       title: overview.warnings.join('\n'),
     }
   }

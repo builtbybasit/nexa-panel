@@ -92,6 +92,9 @@ func TestHeartbeatKeepsLongRunningJobLeaseActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	ctx := context.Background()
 	auditLog, err := audit.New(ctx, database)
 	if err != nil {
@@ -145,6 +148,9 @@ func TestExpiredRetryLeaseRequeuesInterruptedJob(t *testing.T) {
 		t.Fatalf("open database: %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	auditLog, err := audit.New(context.Background(), database)
 	if err != nil {
 		t.Fatalf("create audit module: %v", err)
@@ -194,6 +200,9 @@ func TestExpiredFailLeaseRequiresReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	ctx := context.Background()
 	auditLog, err := audit.New(ctx, database)
 	if err != nil {
@@ -236,6 +245,9 @@ func TestActiveLeaseIsNotRecoveredByAnotherWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	ctx := context.Background()
 	auditLog, err := audit.New(ctx, database)
 	if err != nil {
@@ -278,6 +290,9 @@ func TestEnqueuerDoesNotRecoverAndDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	ctx := context.Background()
 	enqueuer, err := NewEnqueuer(ctx, database)
 	if err != nil {
@@ -373,6 +388,9 @@ func TestAuthenticatedDiagnosticsHTTPAndEventStream(t *testing.T) {
 		t.Fatalf("open database: %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	ctx := context.Background()
 	auditLog, err := audit.New(ctx, database)
 	if err != nil {
@@ -447,6 +465,9 @@ func newTestModule(t *testing.T) (*Module, *audit.Module) {
 		t.Fatalf("open database: %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	auditLog, err := audit.New(context.Background(), database)
 	if err != nil {
 		t.Fatalf("create audit module: %v", err)

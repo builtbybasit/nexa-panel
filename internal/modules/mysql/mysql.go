@@ -8,7 +8,6 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 
 	"github.com/uptrace/bun"
@@ -61,12 +60,9 @@ type AdminToolCredential struct {
 	Secret   []byte
 }
 
-func New(ctx context.Context, database *bun.DB, queue *jobs.Module, cipher secrets.Cipher, operator mysqloperator.Operator) (*Module, error) {
+func New(_ context.Context, database *bun.DB, queue *jobs.Module, cipher secrets.Cipher, operator mysqloperator.Operator) (*Module, error) {
 	if database == nil || queue == nil || cipher == nil || operator == nil {
 		return nil, errors.New("databases state, jobs, secret cipher, and MySQL-family operator are required")
-	}
-	if err := persistence.Migrate(ctx, database, "mysql_databases", []string{schema, databaseSizeSchema}); err != nil {
-		return nil, err
 	}
 	m := &Module{database: database, jobs: queue, cipher: cipher, operator: operator, now: time.Now, backupRoot: "/var/lib/nexa-panel/backups/mysql"}
 	if err := queue.RegisterHandler("mysql_family.plan", m.planJob); err != nil {

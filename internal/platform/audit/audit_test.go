@@ -14,6 +14,9 @@ func TestRecordAndList(t *testing.T) {
 		t.Fatalf("open database: %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 
 	log, err := New(context.Background(), database)
 	if err != nil {

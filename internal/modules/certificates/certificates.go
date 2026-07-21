@@ -15,34 +15,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 )
-
-const schema = `
-	CREATE TABLE certificates (
-		id TEXT PRIMARY KEY,
-		site_id TEXT NOT NULL UNIQUE REFERENCES sites(id) ON DELETE CASCADE,
-		primary_domain TEXT NOT NULL,
-		email TEXT NOT NULL,
-		status TEXT NOT NULL,
-		domains_json TEXT NOT NULL DEFAULT '[]',
-		certificate_path TEXT,
-		private_key_path TEXT,
-		issued_at TIMESTAMP,
-		expires_at TIMESTAMP,
-		last_job_id INTEGER REFERENCES jobs(id),
-		failure TEXT,
-		created_at TIMESTAMP NOT NULL,
-		updated_at TIMESTAMP NOT NULL
-	);
-	CREATE TABLE certificate_plans (
-		certificate_id TEXT PRIMARY KEY REFERENCES certificates(id) ON DELETE CASCADE,
-		operation TEXT NOT NULL,
-		plan_json TEXT NOT NULL,
-		created_at TIMESTAMP NOT NULL,
-		expires_at TIMESTAMP NOT NULL
-	);
-`
 
 type Status string
 
@@ -136,15 +109,12 @@ type planModel struct {
 	ExpiresAt     time.Time
 }
 
-func New(ctx context.Context, database *bun.DB, queue *jobs.Module, siteCatalog SiteCatalog, domainCatalog DomainCatalog, certOperator certificateoperator.Operator, siteOperator siteoperator.Operator, resolver Resolver) (*Module, error) {
+func New(_ context.Context, database *bun.DB, queue *jobs.Module, siteCatalog SiteCatalog, domainCatalog DomainCatalog, certOperator certificateoperator.Operator, siteOperator siteoperator.Operator, resolver Resolver) (*Module, error) {
 	if database == nil || queue == nil || siteCatalog == nil || domainCatalog == nil || certOperator == nil || siteOperator == nil {
 		return nil, errors.New("certificate dependencies are required")
 	}
 	if resolver == nil {
 		resolver = net.DefaultResolver
-	}
-	if err := persistence.Migrate(ctx, database, "certificates", []string{schema}); err != nil {
-		return nil, err
 	}
 	m := &Module{database: database, jobs: queue, sites: siteCatalog, domains: domainCatalog, certificates: certOperator, siteOperator: siteOperator, resolver: resolver, now: time.Now}
 	if err := queue.RegisterHandler("certificate.plan", m.planJob); err != nil {

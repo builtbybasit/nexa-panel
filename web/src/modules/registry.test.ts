@@ -8,9 +8,8 @@ describe('feature module registry', () => {
 
     expect(new Set(identities).size).toBe(identities.length)
     expect(identities).toContain('overview')
-    expect(identities).toContain('system')
     expect(identities).toContain('jobs')
-    expect(identities).toContain('nodeoperations')
+    expect(identities).toContain('services')
     expect(identities).toContain('audit')
   })
 

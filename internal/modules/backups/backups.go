@@ -18,7 +18,6 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 )
 
@@ -55,40 +54,6 @@ type Dependencies struct {
 	StateDBPath string
 	Logger      *slog.Logger
 }
-
-// accountsSchema is migration #1 for the "backups" module. Later phases append
-// new statements (plans, copies) to the migration slice — never edit this one
-// (see nexa-backend-conventions: versions are the slice index).
-const accountsSchema = `
-	CREATE TABLE backup_accounts (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL UNIQUE,
-		type TEXT NOT NULL,
-		path TEXT NOT NULL,
-		config_json TEXT NOT NULL,
-		secret_ciphertext TEXT,
-		created_at TIMESTAMP NOT NULL,
-		updated_at TIMESTAMP NOT NULL
-	);
-`
-
-// SQLite cannot add a foreign key to the already-shipped backup_copies table.
-// These append-only guards provide the same invariant for upgraded databases:
-// a copy can never outlive, or be created without, its owning plan.
-const copyPlanIntegritySchema = `
-	CREATE TRIGGER backup_copies_require_plan
-	BEFORE INSERT ON backup_copies
-	FOR EACH ROW WHEN NOT EXISTS (SELECT 1 FROM backup_plans WHERE id = NEW.plan_id)
-	BEGIN
-		SELECT RAISE(ABORT, 'backup copy requires an existing plan');
-	END;
-	CREATE TRIGGER backup_plans_require_no_copies
-	BEFORE DELETE ON backup_plans
-	FOR EACH ROW WHEN EXISTS (SELECT 1 FROM backup_copies WHERE plan_id = OLD.id)
-	BEGIN
-		SELECT RAISE(ABORT, 'backup plan still has stored copies');
-	END;
-`
 
 // AccountType values map straight onto rclone backend names.
 const (
@@ -164,16 +129,6 @@ func New(ctx context.Context, deps Dependencies) (*Module, error) {
 	}
 	if !filepath.IsAbs(deps.StateDBPath) || filepath.Clean(deps.StateDBPath) != deps.StateDBPath {
 		return nil, errors.New("backups state database path must be absolute and clean")
-	}
-	if err := persistence.Migrate(ctx, deps.Database, "backups", []string{
-		accountsSchema,
-		plansSchema,
-		copiesSchema,
-		scheduleLifecycleSchema,
-		copyHealthSchema,
-		copyPlanIntegritySchema,
-	}); err != nil {
-		return nil, err
 	}
 	logger := deps.Logger
 	if logger == nil {

@@ -64,6 +64,9 @@ func TestDomainPlanAndActivationIncludeAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	t.Cleanup(func() { _ = database.Close() })
 	auditLog, _ := audit.New(ctx, database)
 	queue, err := jobs.NewWithConfig(ctx, database, auditLog, slog.New(slog.NewTextHandler(io.Discard, nil)), jobs.Config{PollInterval: 5 * time.Millisecond})

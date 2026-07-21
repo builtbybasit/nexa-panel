@@ -82,7 +82,12 @@ func (s *HostSystem) PrepareSite(ctx context.Context, site Site) error {
 		return fmt.Errorf("open site parent: %w", err)
 	}
 	defer parent.Close()
-	if err := prepareOwnedDirectory(parent, filepath.Base(site.RootPath), 0o750, uid, gid); err != nil {
+	// The site root is owned by root, not the site account, and is not
+	// group- or world-writable. This is what lets it double as an OpenSSH
+	// ChrootDirectory for optional per-site SFTP: sshd refuses to chroot into
+	// any path a login user could rename. The writable tree lives one level
+	// down in the subdirectories below, which the site account does own.
+	if err := prepareOwnedDirectory(parent, filepath.Base(site.RootPath), 0o755, 0, 0); err != nil {
 		return fmt.Errorf("prepare site root: %w", err)
 	}
 	root, err := parent.OpenRoot(filepath.Base(site.RootPath))

@@ -97,6 +97,7 @@ apt-get install -y --no-install-recommends \
   postgresql-common libjson-perl \
   passwd util-linux \
   rclone \
+  openssh-server \
   podman fuse-overlayfs \
   ca-certificates curl gnupg software-properties-common
 
@@ -206,9 +207,34 @@ sed -e "s/__LISTEN__/$PANEL_LISTEN/g" -e "s/__SERVER_NAME__/$PANEL_SERVER_NAME/g
 ln -sfn /etc/nginx/sites-available/nexa-panel.conf /etc/nginx/sites-enabled/nexa-panel.conf
 nginx -t
 
+# --- per-site SFTP -----------------------------------------------------------
+# Optional per-site SFTP access is served by the node's own OpenSSH: the SFTP
+# operator drops one `Match User` block per enabled site into
+# /etc/ssh/sshd_config.d/. That directory only takes effect if the main config
+# Includes it. Debian and Ubuntu ship the Include line by default; add it (once)
+# when a hardened or older config lacks it, so enabling SFTP from the panel works
+# without hand-editing sshd_config. Password auth stays disabled globally — each
+# site's Match block re-enables it for that one jailed account only.
+log "Ensuring OpenSSH honours the per-site SFTP drop-in directory"
+install -d -m 0755 /etc/ssh/sshd_config.d
+if ! grep -qsE '^\s*Include\s+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
+  printf '\n# Added by Nexa Panel: honour per-site SFTP drop-ins.\nInclude /etc/ssh/sshd_config.d/*.conf\n' >> /etc/ssh/sshd_config
+fi
+# Generate any missing host keys so `sshd -t` can load them; in an image build
+# the package postinst may not have run ssh-keygen. Idempotent: -A only creates
+# keys that are absent.
+ssh-keygen -A
+# `sshd -t` needs the privilege-separation directory to exist. On a real host
+# tmpfiles/ssh.service create it at boot, but during an image build /run is empty
+# and the check would abort with "Missing privilege separation directory".
+install -d -m 0755 /run/sshd
+# Validate before enabling so a pre-existing broken config surfaces here, not on
+# the first site that enables SFTP.
+sshd -t
+
 # --- services ---------------------------------------------------------------
 log "Enabling services"
-systemctl enable nexa-agent.service nexa-api.service nginx.service cron.service
+systemctl enable nexa-agent.service nexa-api.service nginx.service cron.service ssh.service
 
 # systemd is not running inside an image build, so there is nothing to start and
 # `systemctl start` would fail; the units are enabled and start on first boot.

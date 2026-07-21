@@ -16,7 +16,6 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
-	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
 
@@ -51,8 +50,7 @@ func startFilesAgent(t *testing.T) (*filesoperator.UnixClient, sitefs.Scope, str
 		t.Fatal(err)
 	}
 
-	nodeOperator, _ := nodeoperator.NewFileOperator(filepath.Join(directory, "probe.conf"))
-	server := New(socketPath, "test", token, nodeOperator, slog.New(slog.NewTextHandler(io.Discard, nil)), WithFilesOperator(hostOperator))
+	server := New(socketPath, "test", token, slog.New(slog.NewTextHandler(io.Discard, nil)), WithFilesOperator(hostOperator))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()

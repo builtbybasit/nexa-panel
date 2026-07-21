@@ -11,50 +11,13 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 
 	"github.com/uptrace/bun"
 )
 
 const (
-	cookieName     = "nexa_session"
-	identitySchema = `
-		CREATE TABLE identity_users (
-			id TEXT PRIMARY KEY,
-			username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-			password_hash TEXT NOT NULL,
-			created_at TIMESTAMP NOT NULL,
-			last_login_at TIMESTAMP
-		);
-		CREATE TABLE identity_sessions (
-			id TEXT PRIMARY KEY,
-			user_id TEXT NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
-			token_hash BLOB NOT NULL UNIQUE,
-			created_at TIMESTAMP NOT NULL,
-			expires_at TIMESTAMP NOT NULL,
-			last_seen_at TIMESTAMP NOT NULL,
-			remote_address TEXT NOT NULL DEFAULT '',
-			user_agent TEXT NOT NULL DEFAULT ''
-		);
-		CREATE INDEX identity_sessions_expires_at_idx ON identity_sessions (expires_at);
-	`
-	identityMFASchema = `
-		ALTER TABLE identity_users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin';
-		ALTER TABLE identity_users ADD COLUMN totp_secret_encrypted TEXT;
-		ALTER TABLE identity_users ADD COLUMN totp_confirmed_at TIMESTAMP;
-		ALTER TABLE identity_users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0;
-		ALTER TABLE identity_users ADD COLUMN recovery_code_hashes TEXT NOT NULL DEFAULT '[]';
-		ALTER TABLE identity_sessions ADD COLUMN mfa_verified_at TIMESTAMP;
-	`
-	identitySiteGrantSchema = `
-		CREATE TABLE identity_site_grants (
-			user_id TEXT NOT NULL REFERENCES identity_users(id) ON DELETE CASCADE,
-			site_id TEXT NOT NULL,
-			created_at TIMESTAMP NOT NULL,
-			PRIMARY KEY (user_id, site_id)
-		);
-	`
+	cookieName = "nexa_session"
 )
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$`)
@@ -165,7 +128,7 @@ func New(ctx context.Context, database *bun.DB, recorder audit.Recorder, cryptog
 	return NewWithConfig(ctx, database, recorder, cryptography, logger, DefaultConfig())
 }
 
-func NewWithConfig(ctx context.Context, database *bun.DB, recorder audit.Recorder, cryptography secrets.Cipher, logger *slog.Logger, config Config) (*Module, error) {
+func NewWithConfig(_ context.Context, database *bun.DB, recorder audit.Recorder, cryptography secrets.Cipher, logger *slog.Logger, config Config) (*Module, error) {
 	if database == nil || recorder == nil || cryptography == nil {
 		return nil, errors.New("identity database, audit recorder, and secret cipher are required")
 	}
@@ -180,9 +143,6 @@ func NewWithConfig(ctx context.Context, database *bun.DB, recorder audit.Recorde
 	}
 	if config.SessionTTL <= 0 || config.PasswordMemoryKiB == 0 || config.PasswordIterations == 0 || config.PasswordThreads == 0 || config.AttemptLimit <= 0 || config.AttemptWindow <= 0 {
 		return nil, errors.New("identity configuration values must be positive")
-	}
-	if err := persistence.Migrate(ctx, database, "identity", []string{identitySchema, identityMFASchema, identitySiteGrantSchema}); err != nil {
-		return nil, err
 	}
 	return &Module{
 		database: database,

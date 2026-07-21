@@ -37,7 +37,7 @@ async function loadChildren(node: DirNode) {
   node.error = ''
   try {
     const listing = await listFiles(props.siteId, node.path)
-    node.children = listing.items
+    node.children = listing.entries
       .filter((entry) => entry.kind === 'dir')
       .map((entry) => makeNode(entry.name, node.path === '.' ? entry.name : `${node.path}/${entry.name}`))
   } catch (caught) {

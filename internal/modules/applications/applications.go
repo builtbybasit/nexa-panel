@@ -15,7 +15,6 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 	"github.com/uptrace/bun"
 )
@@ -28,12 +27,9 @@ type Module struct {
 	now        func() time.Time
 }
 
-func New(ctx context.Context, database *bun.DB, queue *jobs.Module, operator packagesoperator.Operator, adminTools AdminToolsReader) (*Module, error) {
+func New(_ context.Context, database *bun.DB, queue *jobs.Module, operator packagesoperator.Operator, adminTools AdminToolsReader) (*Module, error) {
 	if database == nil || queue == nil || operator == nil {
 		return nil, errors.New("applications state, jobs, and operator are required")
-	}
-	if err := persistence.Migrate(ctx, database, "applications", []string{schema}); err != nil {
-		return nil, err
 	}
 	m := &Module{database: database, jobs: queue, operator: operator, adminTools: adminTools, now: time.Now}
 	if err := queue.RegisterHandler("applications.plan", m.planJob); err != nil {

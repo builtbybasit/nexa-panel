@@ -28,6 +28,9 @@ func TestViewerCannotReadAuditButAdminCan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	t.Cleanup(func() { _ = database.Close() })
 	auditLog, err := audit.New(ctx, database)
 	if err != nil {

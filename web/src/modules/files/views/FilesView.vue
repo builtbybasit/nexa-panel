@@ -107,7 +107,7 @@ const listingQuery = useQuery({
   enabled: computed(() => Boolean(selectedSite.value)),
   retry: false,
 })
-const items = computed(() => listingQuery.data.value?.items ?? [])
+const items = computed(() => listingQuery.data.value?.entries ?? [])
 const listingTruncated = computed(() => listingQuery.data.value?.truncated ?? false)
 const listingError = computed(() => (listingQuery.error.value instanceof Error ? listingQuery.error.value.message : ''))
 

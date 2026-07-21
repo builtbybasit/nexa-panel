@@ -14,33 +14,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 )
-
-const schema = `
-	CREATE TABLE sites (
-		id TEXT PRIMARY KEY,
-		slug TEXT NOT NULL UNIQUE,
-		display_name TEXT NOT NULL,
-		primary_domain TEXT NOT NULL UNIQUE,
-		php_version TEXT NOT NULL,
-		unix_user TEXT NOT NULL UNIQUE,
-		root_path TEXT NOT NULL UNIQUE,
-		socket_path TEXT NOT NULL UNIQUE,
-		status TEXT NOT NULL,
-		last_job_id INTEGER REFERENCES jobs(id),
-		failure TEXT,
-		created_at TIMESTAMP NOT NULL,
-		updated_at TIMESTAMP NOT NULL
-	);
-	CREATE INDEX sites_status_slug_idx ON sites (status, slug);
-	CREATE TABLE site_plans (
-		site_id TEXT PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
-		plan_json TEXT NOT NULL,
-		created_at TIMESTAMP NOT NULL,
-		expires_at TIMESTAMP NOT NULL
-	);
-`
 
 var (
 	slugPattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
@@ -130,12 +104,9 @@ type planModel struct {
 	ExpiresAt     time.Time
 }
 
-func New(ctx context.Context, database *bun.DB, jobQueue *jobs.Module, runtimeCatalog RuntimeCatalog, operator siteoperator.Operator) (*Module, error) {
+func New(_ context.Context, database *bun.DB, jobQueue *jobs.Module, runtimeCatalog RuntimeCatalog, operator siteoperator.Operator) (*Module, error) {
 	if database == nil || jobQueue == nil || runtimeCatalog == nil || operator == nil {
 		return nil, errors.New("sites database, jobs, runtime catalog, and node operator are required")
-	}
-	if err := persistence.Migrate(ctx, database, "sites", []string{schema}); err != nil {
-		return nil, err
 	}
 	m := &Module{database: database, jobs: jobQueue, runtimes: runtimeCatalog, operator: operator, now: time.Now}
 	if err := jobQueue.RegisterHandler("site.plan", m.planJob); err != nil {

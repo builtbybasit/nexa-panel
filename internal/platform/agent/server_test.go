@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,14 +14,12 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
-	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
 
 func TestAgentRejectsMissingCredential(t *testing.T) {
-	operator, _ := nodeoperator.NewFileOperator(filepath.Join(t.TempDir(), "probe.conf"))
-	server := New("", "test", "expected-token", operator, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New("", "test", "expected-token", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	handler := server.authenticate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -40,18 +39,13 @@ func TestAgentRejectsMissingCredential(t *testing.T) {
 }
 
 func TestServeRejectsUnsafeConfigurationBeforeOpeningSocket(t *testing.T) {
-	operator, _ := nodeoperator.NewFileOperator(filepath.Join(t.TempDir(), "probe.conf"))
-	if err := New("/private/tmp/unused-agent.sock", "test", "", operator, nil).Serve(context.Background()); err == nil || !strings.Contains(err.Error(), "credential") {
+	if err := New("/private/tmp/unused-agent.sock", "test", "", nil).Serve(context.Background()); err == nil || !strings.Contains(err.Error(), "credential") {
 		t.Fatalf("empty credential error = %v", err)
-	}
-	if err := New("/private/tmp/unused-agent.sock", "test", "token", nil, nil).Serve(context.Background()); err == nil || !strings.Contains(err.Error(), "operator") {
-		t.Fatalf("nil operator error = %v", err)
 	}
 }
 
 func TestAgentSignsSitePlansAndRejectsTampering(t *testing.T) {
-	operator, _ := nodeoperator.NewFileOperator(filepath.Join(t.TempDir(), "probe.conf"))
-	server := New("", "test", "signing-token", operator, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New("", "test", "signing-token", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	plan := siteoperator.Plan{ID: "plan-1", Kind: siteoperator.PlanKind, Site: siteoperator.Site{ID: "site-1"}, PlannedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
 	if server.verifySitePlan(plan) {
 		t.Fatal("an unsigned site plan must not verify")
@@ -67,8 +61,7 @@ func TestAgentSignsSitePlansAndRejectsTampering(t *testing.T) {
 }
 
 func TestAgentSignsPostgresPlansAndRejectsTampering(t *testing.T) {
-	operator, _ := nodeoperator.NewFileOperator(filepath.Join(t.TempDir(), "probe.conf"))
-	server := New("", "test", "signing-token", operator, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New("", "test", "signing-token", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	plan := postgresoperator.Plan{ID: "plan-1", Kind: postgresoperator.PlanKind, Change: postgresoperator.Change{Action: postgresoperator.ActionCreateDatabase, Database: "app_db"}, PlannedAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute)}
 	plan.Signature = server.signPostgresPlan(plan)
 	if !server.verifyPostgresPlan(plan) {
@@ -80,27 +73,7 @@ func TestAgentSignsPostgresPlansAndRejectsTampering(t *testing.T) {
 	}
 }
 
-func TestAgentSignsPlansAndRejectsTampering(t *testing.T) {
-	operator, _ := nodeoperator.NewFileOperator(filepath.Join(t.TempDir(), "probe.conf"))
-	server := New("", "test", "signing-token", operator, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	plan, err := operator.Plan(context.Background(), nodeoperator.Change{Present: true, Content: "managed=true\n"})
-	if err != nil {
-		t.Fatalf("Plan returned an error: %v", err)
-	}
-	if server.verifyPlan(plan) {
-		t.Fatal("an unsigned node plan must not verify")
-	}
-	plan.Signature = server.signPlan(plan)
-	if !server.verifyPlan(plan) {
-		t.Fatal("agent-issued plan should verify")
-	}
-	plan.Desired.Content = "tampered=true\n"
-	if server.verifyPlan(plan) {
-		t.Fatal("tampered plan should not verify")
-	}
-}
-
-func TestUnixClientPlanApplyObserveRollback(t *testing.T) {
+func TestAgentServesHealthOverUnixSocket(t *testing.T) {
 	directory := t.TempDir()
 	socketDirectory, err := os.MkdirTemp("/private/tmp", "nexa-agent-")
 	if err != nil {
@@ -109,13 +82,11 @@ func TestUnixClientPlanApplyObserveRollback(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(socketDirectory) })
 	socketPath := filepath.Join(socketDirectory, "agent.sock")
 	tokenPath := filepath.Join(directory, "agent.token")
-	probePath := filepath.Join(directory, "etc", "probe.conf")
 	token, err := agentauth.OpenOrCreate(tokenPath)
 	if err != nil {
 		t.Fatalf("create token: %v", err)
 	}
-	operator, _ := nodeoperator.NewFileOperator(probePath)
-	server := New(socketPath, "test", token, operator, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New(socketPath, "test", token, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()
@@ -138,22 +109,22 @@ func TestUnixClientPlanApplyObserveRollback(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	client := nodeoperator.NewUnixClient(socketPath, tokenPath)
-	plan, err := client.Plan(context.Background(), nodeoperator.Change{Present: true, Content: "managed=true\n"})
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "unix", socketPath)
+	}}}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://unix/v1/health", nil)
 	if err != nil {
-		t.Fatalf("client Plan returned an error: %v", err)
+		t.Fatalf("build health request: %v", err)
 	}
-	applied, err := client.Apply(context.Background(), plan)
-	if err != nil || !applied.Exists {
-		t.Fatalf("client Apply = %+v, %v", applied, err)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("health request failed: %v", err)
 	}
-	observed, err := client.Observe(context.Background())
-	if err != nil || observed.Digest != plan.Desired.Digest {
-		t.Fatalf("client Observe = %+v, %v", observed, err)
-	}
-	rolledBack, err := client.Rollback(context.Background(), plan)
-	if err != nil || rolledBack.Exists {
-		t.Fatalf("client Rollback = %+v, %v", rolledBack, err)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("health status = %d", response.StatusCode)
 	}
 
 	cancel()

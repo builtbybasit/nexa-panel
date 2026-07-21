@@ -46,11 +46,11 @@ describe('files API', () => {
   it('lists and reads entries with the path pinned in the query string', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(Response.json({ items: [entry], truncated: false }))
+      .mockResolvedValueOnce(Response.json({ entries: [entry], truncated: false }))
       .mockResolvedValueOnce(Response.json({ content: '<?php', etag: 'abc', size: 512, truncated: false, binary: false }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(listFiles('site_1', 'public/app dir')).resolves.toEqual({ items: [entry], truncated: false })
+    await expect(listFiles('site_1', 'public/app dir')).resolves.toEqual({ entries: [entry], truncated: false })
     await expect(readFileContent('site_1', 'public/index.php')).resolves.toEqual({
       content: '<?php',
       etag: 'abc',

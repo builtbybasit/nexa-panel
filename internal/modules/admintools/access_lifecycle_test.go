@@ -52,6 +52,9 @@ func TestLaunchTokenExchangesOnceForScopedHttpOnlySession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	defer database.Close()
 	auditLog, err := audit.New(ctx, database)
 	if err != nil {
@@ -233,6 +236,9 @@ func TestDeployAndStopUseReviewedJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	defer database.Close()
 	auditLog, err := audit.New(ctx, database)
 	if err != nil {
@@ -286,6 +292,9 @@ func TestSyncKeepsPlanReadyStatusApplicable(t *testing.T) {
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
 	}
 	defer database.Close()
 	auditLog, err := audit.New(ctx, database)

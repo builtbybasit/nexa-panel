@@ -16,54 +16,8 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
-
-const schema = `
-	CREATE TABLE jobs (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		kind TEXT NOT NULL,
-		title TEXT NOT NULL DEFAULT '',
-		state TEXT NOT NULL,
-		progress INTEGER NOT NULL DEFAULT 0,
-		actor_user_id TEXT,
-		request_json TEXT NOT NULL DEFAULT '{}',
-		result_json TEXT,
-		failure TEXT,
-		created_at TIMESTAMP NOT NULL,
-		updated_at TIMESTAMP NOT NULL,
-		started_at TIMESTAMP,
-		completed_at TIMESTAMP
-	);
-	CREATE INDEX jobs_state_id_idx ON jobs (state, id);
-	CREATE TABLE job_events (
-		sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-		job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-		state TEXT NOT NULL,
-		progress INTEGER NOT NULL,
-		message TEXT NOT NULL,
-		occurred_at TIMESTAMP NOT NULL
-	);
-	CREATE INDEX job_events_job_sequence_idx ON job_events (job_id, sequence);
-`
-
-// lifecycleSchema adds the ownership data needed to make recovery deliberate.
-// Running work is protected by a renewable lease; an expired lease is either
-// retried or failed according to the handler's persisted policy. Idempotency
-// keys make submissions safe to repeat across timer and HTTP retries.
-const lifecycleSchema = `
-	ALTER TABLE jobs ADD COLUMN recovery_policy TEXT NOT NULL DEFAULT 'fail';
-	ALTER TABLE jobs ADD COLUMN idempotency_key TEXT;
-	ALTER TABLE jobs ADD COLUMN scope_site_ids TEXT NOT NULL DEFAULT '[]';
-	ALTER TABLE jobs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0;
-	ALTER TABLE jobs ADD COLUMN lease_owner TEXT;
-	ALTER TABLE jobs ADD COLUMN lease_token TEXT;
-	ALTER TABLE jobs ADD COLUMN lease_expires_at TIMESTAMP;
-	CREATE UNIQUE INDEX jobs_kind_idempotency_idx
-		ON jobs (kind, idempotency_key) WHERE idempotency_key IS NOT NULL;
-	CREATE INDEX jobs_running_lease_idx ON jobs (state, lease_expires_at);
-`
 
 type State string
 
@@ -208,9 +162,6 @@ func NewWithConfig(ctx context.Context, database *bun.DB, recorder audit.Recorde
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	if err := migrate(ctx, database); err != nil {
-		return nil, err
-	}
 	module := &Module{
 		database: database, audit: recorder, logger: logger, now: time.Now, config: config,
 		handlers: make(map[string]handlerRegistration), workerID: randomToken(),
@@ -270,10 +221,6 @@ func (m *Module) RegisterHandlerWithOptions(kind string, handler Handler, option
 	}
 	m.handlers[kind] = handlerRegistration{handler: handler, recoveryPolicy: options.RecoveryPolicy}
 	return nil
-}
-
-func migrate(ctx context.Context, database *bun.DB) error {
-	return persistence.Migrate(ctx, database, "jobs", []string{schema, lifecycleSchema})
 }
 
 func randomToken() string { return secureid.Hex(16) }

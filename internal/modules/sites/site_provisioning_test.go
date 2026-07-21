@@ -53,6 +53,9 @@ func TestCreateDerivesPrivilegedIdentityAndBuildsDurablePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	t.Cleanup(func() { _ = database.Close() })
 	auditLog, err := audit.New(ctx, database)
 	if err != nil {
@@ -97,6 +100,9 @@ func TestCreateDerivesPrivilegedIdentityAndBuildsDurablePlan(t *testing.T) {
 func TestCreateRejectsUnavailableRuntimeAndDuplicateDomain(t *testing.T) {
 	ctx := context.Background()
 	database, _ := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	t.Cleanup(func() { _ = database.Close() })
 	auditLog, _ := audit.New(ctx, database)
 	queue, _ := jobs.NewWithConfig(ctx, database, auditLog, slog.New(slog.NewTextHandler(io.Discard, nil)), jobs.Config{PollInterval: time.Second})

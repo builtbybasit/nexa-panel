@@ -16,11 +16,12 @@ import (
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
 	phpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/php"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+	servicesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/services"
+	sftpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sftp"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 	"github.com/nexa-panel/nexa-panel/internal/platform/unixsocket"
 )
@@ -29,8 +30,8 @@ type Server struct {
 	socketPath   string
 	version      string
 	token        string
-	operator     nodeoperator.Operator
 	sites        siteoperator.Operator
+	sftp         sftpoperator.Operator
 	certificates certificateoperator.Operator
 	postgres     postgresoperator.Operator
 	mysql        mysqloperator.Operator
@@ -41,16 +42,17 @@ type Server struct {
 	logs         logsoperator.Operator
 	schedules    scheduleoperator.Operator
 	backups      backupoperator.Operator
+	services     servicesoperator.Operator
 	logger       *slog.Logger
 }
 
 type Option func(*Server)
 
-func New(socketPath, version, token string, operator nodeoperator.Operator, logger *slog.Logger, options ...Option) *Server {
+func New(socketPath, version, token string, logger *slog.Logger, options ...Option) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	server := &Server{socketPath: socketPath, version: version, token: token, operator: operator, logger: logger}
+	server := &Server{socketPath: socketPath, version: version, token: token, logger: logger}
 	for _, option := range options {
 		option(server)
 	}
@@ -61,9 +63,6 @@ func (s *Server) Serve(ctx context.Context) error {
 	if strings.TrimSpace(s.token) == "" {
 		return errors.New("agent credential is required")
 	}
-	if s.operator == nil {
-		return errors.New("node operator is required")
-	}
 	listener, cleanup, err := unixsocket.Listen(s.socketPath, 0o750, 0o660)
 	if err != nil {
 		return err
@@ -72,14 +71,13 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.healthHTTP)
-	mux.HandleFunc("POST /v1/node/probe/plan", s.planHTTP)
-	mux.HandleFunc("POST /v1/node/probe/apply", s.applyHTTP)
-	mux.HandleFunc("GET /v1/node/probe/observe", s.observeHTTP)
-	mux.HandleFunc("POST /v1/node/probe/rollback", s.rollbackHTTP)
 	if s.sites != nil {
 		mux.HandleFunc("POST /v1/sites/plan", s.sitePlanHTTP)
 		mux.HandleFunc("POST /v1/sites/apply", s.siteApplyHTTP)
 		mux.HandleFunc("POST /v1/sites/rollback", s.siteRollbackHTTP)
+	}
+	if s.sftp != nil {
+		mux.HandleFunc("POST /v1/sftp/apply", s.sftpApplyHTTP)
 	}
 	if s.certificates != nil {
 		mux.HandleFunc("POST /v1/certificates/plan", s.certificatePlanHTTP)
@@ -154,6 +152,11 @@ func (s *Server) Serve(ctx context.Context) error {
 		mux.HandleFunc("POST /v1/backups/schedules/install", s.backupInstallScheduleHTTP)
 		mux.HandleFunc("POST /v1/backups/schedules/remove", s.backupRemoveScheduleHTTP)
 	}
+	if s.services != nil {
+		mux.HandleFunc("GET /v1/services", s.servicesDiscoverHTTP)
+		mux.HandleFunc("POST /v1/services/plan", s.servicesPlanHTTP)
+		mux.HandleFunc("POST /v1/services/apply", s.servicesApplyHTTP)
+	}
 	httpServer := &http.Server{
 		Handler:           s.authenticate(mux),
 		ReadHeaderTimeout: 2 * time.Second,
@@ -197,64 +200,4 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 
 func (s *Server) healthHTTP(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": s.version})
-}
-
-func (s *Server) planHTTP(w http.ResponseWriter, r *http.Request) {
-	var change nodeoperator.Change
-	if err := decodeJSON(w, r, &change); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	plan, err := s.operator.Plan(r.Context(), change)
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "plan_failed", err.Error())
-		return
-	}
-	plan.Signature = s.signPlan(plan)
-	writeJSON(w, http.StatusOK, plan)
-}
-
-func (s *Server) applyHTTP(w http.ResponseWriter, r *http.Request) {
-	var plan nodeoperator.Plan
-	if err := decodeJSON(w, r, &plan); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	if !s.verifyPlan(plan) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_plan_signature", "The operation plan was not issued by this agent.")
-		return
-	}
-	observation, err := s.operator.Apply(r.Context(), plan)
-	if err != nil {
-		writeError(w, http.StatusConflict, "apply_failed", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, observation)
-}
-
-func (s *Server) observeHTTP(w http.ResponseWriter, r *http.Request) {
-	observation, err := s.operator.Observe(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "observation_failed", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, observation)
-}
-
-func (s *Server) rollbackHTTP(w http.ResponseWriter, r *http.Request) {
-	var plan nodeoperator.Plan
-	if err := decodeJSON(w, r, &plan); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	if !s.verifyPlan(plan) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_plan_signature", "The operation plan was not issued by this agent.")
-		return
-	}
-	observation, err := s.operator.Rollback(r.Context(), plan)
-	if err != nil {
-		writeError(w, http.StatusConflict, "rollback_failed", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, observation)
 }

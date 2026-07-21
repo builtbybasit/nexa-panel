@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/agentauth"
-	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
@@ -86,8 +85,7 @@ func startScheduleAgent(t *testing.T) (*scheduleoperator.UnixClient, scheduleope
 	}
 	operator := &backdatingOperator{Operator: hostOperator}
 
-	nodeOperator, _ := nodeoperator.NewFileOperator(filepath.Join(directory, "probe.conf"))
-	server := New(socketPath, "test", token, nodeOperator, slog.New(slog.NewTextHandler(io.Discard, nil)), WithScheduleOperator(operator))
+	server := New(socketPath, "test", token, slog.New(slog.NewTextHandler(io.Discard, nil)), WithScheduleOperator(operator))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()

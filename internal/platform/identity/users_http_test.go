@@ -55,6 +55,9 @@ func newUsersHarness(t *testing.T) *usersHarness {
 		t.Fatalf("open database: %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	ctx := context.Background()
 	auditModule, err := audit.New(ctx, database)
 	if err != nil {

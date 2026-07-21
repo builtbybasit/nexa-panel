@@ -11,7 +11,6 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
-	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 	"github.com/uptrace/bun"
@@ -44,12 +43,9 @@ func WithLaunchGateway(cipher secrets.Cipher, resolver CredentialResolver, recor
 	return func(module *Module) { module.cipher = cipher; module.resolver = resolver; module.audit = recorder }
 }
 
-func New(ctx context.Context, database *bun.DB, queue *jobs.Module, operator admintooloperator.Operator, options ...Option) (*Module, error) {
+func New(_ context.Context, database *bun.DB, queue *jobs.Module, operator admintooloperator.Operator, options ...Option) (*Module, error) {
 	if database == nil || queue == nil || operator == nil {
 		return nil, errors.New("admin tool state, jobs, and operator are required")
-	}
-	if err := persistence.Migrate(ctx, database, "admin_tools", []string{schema, launchSchema}); err != nil {
-		return nil, err
 	}
 	m := &Module{database: database, jobs: queue, operator: operator, now: time.Now}
 	for _, option := range options {

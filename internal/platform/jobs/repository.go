@@ -32,8 +32,7 @@ type EnqueueOptions struct {
 }
 
 // Enqueuer is the narrow queue-writing interface used by systemd helpers. It
-// applies queue migrations and inserts events, but never recovers or executes
-// running work.
+// inserts jobs and events, but never recovers or executes running work.
 type Enqueuer struct {
 	database *bun.DB
 	now      func() time.Time
@@ -42,9 +41,6 @@ type Enqueuer struct {
 func NewEnqueuer(ctx context.Context, database *bun.DB) (*Enqueuer, error) {
 	if database == nil {
 		return nil, errors.New("jobs database is required")
-	}
-	if err := migrate(ctx, database); err != nil {
-		return nil, err
 	}
 	return &Enqueuer{database: database, now: time.Now}, nil
 }

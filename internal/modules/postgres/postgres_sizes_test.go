@@ -29,6 +29,9 @@ func newSizeTestModule(t *testing.T, databases ...string) (*Module, *fakePostgre
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := persistence.RunMigrations(context.Background(), store); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
 	t.Cleanup(func() { _ = store.Close() })
 	auditLog, err := audit.New(ctx, store)
 	if err != nil {
@@ -61,37 +64,6 @@ func newSizeTestModule(t *testing.T, databases ...string) (*Module, *fakePostgre
 		}
 	}
 	return module, operator
-}
-
-// Regression: persistence.Migrate versions migrations by slice index, so an
-// install that already recorded the original schema as version 1 skips it
-// forever. Folding the size columns into that const would have left every
-// upgraded install without them — and passed every test, because tests always
-// start from a fresh database.
-func TestSizeColumnsReachAnInstallCreatedBeforeThemExisted(t *testing.T) {
-	ctx := context.Background()
-	store, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-
-	// The install as it stood before sizing existed.
-	if err := persistence.Migrate(ctx, store, "databases", []string{schema}); err != nil {
-		t.Fatal(err)
-	}
-	// Upgrading to the current binary.
-	if err := persistence.Migrate(ctx, store, "databases", []string{schema, databaseSizeSchema}); err != nil {
-		t.Fatal(err)
-	}
-
-	var count int
-	if err := store.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('managed_databases') WHERE name IN ('size_bytes', 'size_observed_at')").Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 2 {
-		t.Fatalf("size columns present after upgrade = %d, want 2", count)
-	}
 }
 
 func TestDatabaseSizesArePersistedAndReusedWithinTheRefreshInterval(t *testing.T) {

@@ -83,16 +83,15 @@ function signOut() {
     <div class="flex-1" />
 
     <div class="flex shrink-0 items-center gap-3">
-      <RouterLink
+      <div
         v-if="memory"
-        to="/system"
-        class="hidden items-center gap-2 rounded-lg border border-outline px-2.5 py-2 transition-colors hover:border-outline-strong md:flex"
-        :title="`Memory: ${Math.round(memory.usedPercent)}% used — open System`"
+        class="hidden items-center gap-2 rounded-lg border border-outline px-2.5 py-2 md:flex"
+        :title="`Memory: ${Math.round(memory.usedPercent)}% used`"
       >
         <span class="text-[11px] font-semibold text-ink-muted">Mem</span>
         <span class="w-16"><ProgressBar :value="memory.usedPercent" :tone="memoryTone" /></span>
         <span class="text-[11px] text-ink-secondary tabular-nums">{{ Math.round(memory.usedPercent) }}%</span>
-      </RouterLink>
+      </div>
 
       <JobsIndicator />
 

@@ -124,6 +124,7 @@ const tiles = computed<ManageTile[]>(() => {
   }
   if (identity.can('schedules.read')) items.push({ label: 'Scheduler', icon: 'clock', to: `/schedules?site=${id}` })
   if (identity.can('applications.read')) items.push({ label: 'PHP settings', icon: 'wrench', to: `/php/site?site=${id}` })
+  if (identity.can('operations.apply')) items.push({ label: 'SFTP access', icon: 'server', to: `/sftp?site=${id}` })
   if (identity.can('logs.read')) items.push({ label: 'Logs', icon: 'file-text', to: `/logs?site=${id}` })
   if (identity.can('backups.read')) items.push({ label: 'Backup copies', icon: 'archive', to: '/backups' })
   return items

@@ -17,11 +17,12 @@ import (
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
-	nodeoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/nodes"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
 	phpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/php"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+	servicesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/services"
+	sftpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sftp"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 	"github.com/nexa-panel/nexa-panel/internal/platform/version"
@@ -31,17 +32,12 @@ func runAgent(args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet("agent", flag.ContinueOnError)
 	socket := flags.String("socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "Unix socket path")
 	tokenPath := flags.String("token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
-	probePath := flags.String("probe-path", envOrDefault("NEXA_AGENT_PROBE_PATH", "/tmp/nexa-panel/probe.conf"), "fixed managed probe path")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	token, err := agentauth.OpenOrCreate(*tokenPath)
 	if err != nil {
 		return fmt.Errorf("open agent credential: %w", err)
-	}
-	operator, err := nodeoperator.NewFileOperator(*probePath)
-	if err != nil {
-		return fmt.Errorf("create node operator: %w", err)
 	}
 	siteOperator, err := siteoperator.NewHostOperator(siteoperator.Renderer{}, "/etc/nginx/sites-enabled", siteoperator.NewHostSystem())
 	if err != nil {
@@ -87,10 +83,18 @@ func runAgent(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create backups operator: %w", err)
 	}
+	servicesOperator, err := servicesoperator.NewHostOperator(nil)
+	if err != nil {
+		return fmt.Errorf("create services operator: %w", err)
+	}
+	sftpOperator, err := sftpoperator.NewHostOperator(nil)
+	if err != nil {
+		return fmt.Errorf("create SFTP operator: %w", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	server := agent.New(*socket, version.Version, token, operator, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithPHPOperator(phpOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator))
+	server := agent.New(*socket, version.Version, token, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithPHPOperator(phpOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator), agent.WithServicesOperator(servicesOperator), agent.WithSFTPOperator(sftpOperator))
 	return server.Serve(ctx)
 }

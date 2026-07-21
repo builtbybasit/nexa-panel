@@ -40,16 +40,20 @@ func newVerifySystem(t *testing.T, timeout time.Duration, handler http.HandlerFu
 	}
 }
 
+// The site root doubles as an OpenSSH chroot, so PrepareSite must never accept
+// a symlink in its place: following one would let a swap repoint the jail (and
+// the privileged chown behind it) at an attacker-chosen directory. The root is
+// the first managed directory prepared, so a symlink there is rejected before
+// any chown runs — which also keeps this test meaningful without root, where a
+// chown to uid 0 on a real directory would otherwise fail first.
 func TestPrepareSiteRejectsManagedDirectorySymlink(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "site")
-	if err := os.MkdirAll(root, 0o750); err != nil {
-		t.Fatal(err)
-	}
+	parent := t.TempDir()
+	root := filepath.Join(parent, "site")
 	victim := filepath.Join(t.TempDir(), "victim")
 	if err := os.Mkdir(victim, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(victim, filepath.Join(root, "logs")); err != nil {
+	if err := os.Symlink(victim, root); err != nil {
 		t.Fatal(err)
 	}
 

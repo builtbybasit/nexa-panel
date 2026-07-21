@@ -15,7 +15,7 @@ export interface FileEntry {
 }
 
 export interface FileListing {
-  items: FileEntry[]
+  entries: FileEntry[]
   /** True when the server capped the listing (5000 entries). */
   truncated: boolean
 }
