@@ -456,14 +456,26 @@ func TestAuthenticatedDiagnosticsHTTPAndEventStream(t *testing.T) {
 	}
 
 	bootstrapRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap",
-		strings.NewReader(`{"username":"admin","password":"a-strong-password"}`))
+		strings.NewReader(`{"username":"admin","password":"Str0ng-Console-Pass"}`))
 	bootstrapRequest.RemoteAddr = "127.0.0.1:12345"
 	bootstrapResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(bootstrapResponse, bootstrapRequest)
 	if bootstrapResponse.Code != http.StatusCreated {
 		t.Fatalf("bootstrap = %d %s", bootstrapResponse.Code, bootstrapResponse.Body.String())
 	}
-	cookie := bootstrapResponse.Result().Cookies()[0]
+	var cookie *http.Cookie
+	csrfToken := ""
+	for _, issued := range bootstrapResponse.Result().Cookies() {
+		switch issued.Name {
+		case "nexa_session":
+			cookie = issued
+		case "nexa_csrf":
+			csrfToken = issued.Value
+		}
+	}
+	if cookie == nil || csrfToken == "" {
+		t.Fatalf("bootstrap did not issue both session and csrf cookies")
+	}
 	now := time.Now().UTC()
 	if _, err := database.ExecContext(ctx, "UPDATE identity_users SET totp_confirmed_at = ?", now); err != nil {
 		t.Fatalf("mark test MFA enrollment: %v", err)
@@ -475,6 +487,8 @@ func TestAuthenticatedDiagnosticsHTTPAndEventStream(t *testing.T) {
 	diagnosticsRequest := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/diagnostics",
 		strings.NewReader(`{"delayMilliseconds":10}`))
 	diagnosticsRequest.RemoteAddr = "127.0.0.1:12345"
+	diagnosticsRequest.Header.Set("Origin", "http://"+diagnosticsRequest.Host)
+	diagnosticsRequest.Header.Set("X-CSRF-Token", csrfToken)
 	diagnosticsRequest.AddCookie(cookie)
 	diagnosticsResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(diagnosticsResponse, diagnosticsRequest)

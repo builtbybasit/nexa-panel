@@ -19,6 +19,11 @@ import (
 
 const (
 	cookieName = "nexa_session"
+	// csrfCookieName is readable by the UI on purpose; csrfHeaderName is where the
+	// UI must echo it back. Only a header can carry the second half of the double
+	// submit, because a cross-site form can send cookies but never a header.
+	csrfCookieName = "nexa_csrf"
+	csrfHeaderName = "X-CSRF-Token"
 )
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$`)
@@ -26,7 +31,12 @@ var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$`)
 var errAlreadyBootstrapped = errors.New("identity is already bootstrapped")
 
 type Config struct {
-	SessionTTL         time.Duration
+	SessionTTL time.Duration
+	// IdleTimeout ends a session that has gone unused for this long, well before
+	// SessionTTL's absolute cap expires it. An unattended browser on a shared
+	// machine is the threat: last_seen_at is bumped on every authenticated
+	// request, so an actively used session slides forward and never notices.
+	IdleTimeout        time.Duration
 	PasswordMemoryKiB  uint32
 	PasswordIterations uint32
 	PasswordThreads    uint8
@@ -44,6 +54,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		SessionTTL:         24 * time.Hour,
+		IdleTimeout:        2 * time.Hour,
 		PasswordMemoryKiB:  defaultPasswordParameters.memory,
 		PasswordIterations: defaultPasswordParameters.iterations,
 		PasswordThreads:    defaultPasswordParameters.parallelism,
@@ -85,12 +96,16 @@ type sessionModel struct {
 	RemoteAddress string    `bun:",notnull"`
 	UserAgent     string    `bun:",notnull"`
 	MFAVerifiedAt *time.Time
+	// CSRFTokenHash binds the double-submit cookie to this session, so a token
+	// minted for one session cannot be replayed against another.
+	CSRFTokenHash []byte
 }
 
 type principal struct {
 	User
 	SessionID       string
 	TokenHash       []byte
+	CSRFTokenHash   []byte
 	MFAVerifiedAt   *time.Time
 	TOTPConfirmedAt *time.Time
 }
@@ -173,7 +188,10 @@ func NewWithConfig(_ context.Context, database *bun.DB, recorder audit.Recorder,
 	if config.MFALockoutWindow == 0 {
 		config.MFALockoutWindow = DefaultConfig().MFALockoutWindow
 	}
-	if config.SessionTTL <= 0 || config.PasswordMemoryKiB == 0 || config.PasswordIterations == 0 || config.PasswordThreads == 0 || config.AttemptLimit <= 0 || config.AttemptWindow <= 0 || config.MFALockoutLimit <= 0 || config.MFALockoutWindow <= 0 {
+	if config.IdleTimeout == 0 {
+		config.IdleTimeout = DefaultConfig().IdleTimeout
+	}
+	if config.SessionTTL <= 0 || config.IdleTimeout <= 0 || config.PasswordMemoryKiB == 0 || config.PasswordIterations == 0 || config.PasswordThreads == 0 || config.AttemptLimit <= 0 || config.AttemptWindow <= 0 || config.MFALockoutLimit <= 0 || config.MFALockoutWindow <= 0 {
 		return nil, errors.New("identity configuration values must be positive")
 	}
 	return &Module{
@@ -270,6 +288,11 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 		}
 		if !validRequestOrigin(r) {
 			writeError(w, http.StatusForbidden, "invalid_origin", "The request origin is not allowed.")
+			return
+		}
+		if !validCSRFToken(r, person) {
+			m.logger.Warn("rejected request without a valid CSRF token", "user", person.Username, "path", r.URL.Path, "remote", remoteAddress(r))
+			writeError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, person)))

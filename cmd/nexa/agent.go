@@ -27,6 +27,7 @@ import (
 	sftpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sftp"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 	"github.com/nexa-panel/nexa-panel/internal/platform/version"
 )
 
@@ -81,7 +82,9 @@ func runAgent(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create schedules operator: %w", err)
 	}
-	backupOperator, err := backupoperator.NewHostOperator(nil)
+	// The panel-state backup snapshots the master key, which no longer sits
+	// beside control.db, so the agent has to be told where it moved to.
+	backupOperator, err := backupoperator.NewHostOperator(nil, backupoperator.HostConfig{MasterKeyPath: envOrDefault("NEXA_MASTER_KEY", secrets.DefaultKeyPath)})
 	if err != nil {
 		return fmt.Errorf("create backups operator: %w", err)
 	}

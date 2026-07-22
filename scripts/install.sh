@@ -22,6 +22,8 @@ START=1
 PANEL_HOSTNAME=""
 TLS_EMAIL=""
 ALLOW_INSECURE=0
+ALLOW_EXISTING=0
+SKIP_PREFLIGHT="${NEXA_SKIP_PREFLIGHT:-0}"
 
 usage() {
   cat <<'EOF'
@@ -46,6 +48,12 @@ Usage: install.sh [options]
                   Permit publishing --panel-hostname over plaintext HTTP without
                   TLS. Unsafe: authentication crosses the network in cleartext.
                   Only for deployments that terminate TLS in front of this node.
+  --allow-existing
+                  Upgrade a node whose panel is currently running. Without it
+                  the preflight refuses to install over a live install.
+  --skip-preflight
+                  Do not run `nexa doctor --preflight` before changing the
+                  machine. Also settable as NEXA_SKIP_PREFLIGHT=1.
   -h, --help      Show this message.
 EOF
 }
@@ -57,6 +65,8 @@ while [[ $# -gt 0 ]]; do
     --panel-hostname) PANEL_HOSTNAME="${2:-}"; [[ -n "$PANEL_HOSTNAME" ]] || { echo "error: --panel-hostname needs a host" >&2; exit 2; }; shift 2 ;;
     --tls-email) TLS_EMAIL="${2:-}"; [[ -n "$TLS_EMAIL" ]] || { echo "error: --tls-email needs an address" >&2; exit 2; }; shift 2 ;;
     --allow-insecure-http) ALLOW_INSECURE=1; shift ;;
+    --allow-existing) ALLOW_EXISTING=1; shift ;;
+    --skip-preflight) SKIP_PREFLIGHT=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -111,6 +121,47 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 log "Installing Nexa Panel on Ubuntu ${VERSION_ID:-?} (${VERSION_CODENAME}), $(dpkg --print-architecture)"
+
+# --- binary -----------------------------------------------------------------
+# Installed before anything else is touched so the preflight below can run: the
+# checks live in the binary, and everything after them mutates the machine.
+# Placing /usr/bin/nexa is the one change that has to happen first, and it is
+# also the most reversible.
+if [[ -n "$BINARY" ]]; then
+  [[ -f "$BINARY" ]] || die "no binary at $BINARY"
+  log "Validating and installing $BINARY as /usr/bin/nexa"
+  install -m 0755 "$BINARY" /usr/bin/nexa.new
+  if ! /usr/bin/nexa.new version >/dev/null 2>&1; then
+    rm -f /usr/bin/nexa.new
+    die "$BINARY is not an executable Nexa Panel binary for this node"
+  fi
+  mv -f /usr/bin/nexa.new /usr/bin/nexa
+elif [[ ! -x /usr/bin/nexa ]]; then
+  [[ "$START" -eq 0 || ! -d /run/systemd/system ]] || die "no Nexa Panel binary to start; pass --binary PATH"
+  warn "no nexa binary at /usr/bin/nexa — install one before starting the enabled services"
+fi
+
+# --- preflight --------------------------------------------------------------
+# Last chance to abort cleanly: from the next section on, this script adds
+# repositories, installs packages and rewrites system configuration, none of
+# which is undone by aborting half way. `nexa doctor --preflight` reports the
+# conflicts a shell check cannot see — bound ports and their owners, a live
+# panel, another control panel, free space, reachable package sources — and
+# exits non-zero when any of them is a blocker.
+if [[ "$SKIP_PREFLIGHT" == "1" ]]; then
+  warn "skipping the preflight checks (--skip-preflight); conflicts on this host will surface as install failures instead"
+elif [[ ! -x /usr/bin/nexa ]]; then
+  warn "no nexa binary yet, so the preflight checks cannot run; pass --binary PATH to have them checked"
+else
+  log "Running preflight checks"
+  PREFLIGHT_ARGS=(doctor --preflight)
+  if [[ "$ALLOW_EXISTING" -eq 1 ]]; then
+    PREFLIGHT_ARGS+=(--allow-existing)
+  fi
+  if ! /usr/bin/nexa "${PREFLIGHT_ARGS[@]}"; then
+    die "preflight found blockers; resolve them and re-run, or pass --skip-preflight to install anyway"
+  fi
+fi
 
 # --- prerequisites ----------------------------------------------------------
 # The set the operators shell out to; see packaging/REQUIREMENTS.md. postgresql-common
@@ -190,21 +241,6 @@ log "Configuring the PostgreSQL repository (PGDG)"
 # truncated catalog until the next install.
 log "Refreshing the package index"
 apt-get update -qq
-
-# --- binary -----------------------------------------------------------------
-if [[ -n "$BINARY" ]]; then
-  [[ -f "$BINARY" ]] || die "no binary at $BINARY"
-  log "Validating and installing $BINARY as /usr/bin/nexa"
-  install -m 0755 "$BINARY" /usr/bin/nexa.new
-  if ! /usr/bin/nexa.new version >/dev/null 2>&1; then
-    rm -f /usr/bin/nexa.new
-    die "$BINARY is not an executable Nexa Panel binary for this node"
-  fi
-  mv -f /usr/bin/nexa.new /usr/bin/nexa
-elif [[ ! -x /usr/bin/nexa ]]; then
-  [[ "$START" -eq 0 || ! -d /run/systemd/system ]] || die "no Nexa Panel binary to start; pass --binary PATH"
-  warn "no nexa binary at /usr/bin/nexa — install one before starting the enabled services"
-fi
 
 # --- packaged units and configuration ---------------------------------------
 log "Installing the packaged units, service account, and directories"

@@ -1,8 +1,10 @@
 package firewall
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
@@ -52,7 +54,11 @@ func (m *Module) actionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	job, err := m.Submit(r.Context(), firewalloperator.Change{Action: request.Action, Rule: request.Rule}, actor)
+	job, err := m.Submit(r.Context(), firewalloperator.Change{Action: request.Action, Rule: request.Rule}, actor, httpapi.RemoteAddress(r))
+	if errors.Is(err, audit.ErrUnauditable) {
+		writeError(w, http.StatusServiceUnavailable, "audit_unavailable", "The change was refused because it could not be recorded in the audit log.")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "firewall_action_invalid", err.Error())
 		return

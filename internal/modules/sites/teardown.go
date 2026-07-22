@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 
 	"github.com/uptrace/bun"
@@ -54,6 +56,22 @@ func (m *Module) deleteHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := deletePayload{SiteID: site.ID, TeardownHost: site.Status == StatusActive}
+	// Fail-closed, and ahead of the submit: a teardown destroys the site's files,
+	// system user, and Nginx configuration, so it must not be queued at all if it
+	// cannot be attributed in the audit log.
+	if err := m.jobs.Audit().RecordSensitive(r.Context(), audit.Entry{
+		ActorUserID: &user.ID, Action: "site.deleted", Subject: "site:" + site.ID,
+		RemoteAddress: httpapi.RemoteAddress(r),
+		Metadata: map[string]any{
+			"slug": site.Slug, "displayName": site.DisplayName, "primaryDomain": site.PrimaryDomain,
+			"teardownHost": payload.TeardownHost,
+			"before":       map[string]any{"status": string(site.Status)},
+			"after":        map[string]any{"status": string(StatusDeleting)},
+		},
+	}); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "audit_unavailable", "The removal was refused because it could not be recorded in the audit log.")
+		return
+	}
 	job, err := m.jobs.SubmitTitled(r.Context(), "site.delete", "Delete site "+site.DisplayName, payload, &user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "Site removal could not be queued.")

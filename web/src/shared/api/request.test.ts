@@ -1,11 +1,20 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { apiRequest } from './request'
 import { registerMFAStepUpHandler } from './mfaStepUp'
 
+// Spelled out rather than imported from the modules under test: these are the
+// wire contract the server matches on, so a rename has to fail here.
+const csrfHeaderName = 'X-CSRF-Token'
+const backgroundHeaderName = 'X-Nexa-Background'
+
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
+
+const headersOf = (fetchMock: Mock, call: number): Record<string, string> =>
+  (fetchMock.mock.calls[call]?.[1] as RequestInit).headers as Record<string, string>
 
 describe('apiRequest', () => {
   it.each([204, 205])('accepts a successful %i response without a body', async (status) => {
@@ -32,6 +41,42 @@ describe('apiRequest', () => {
       message: 'The resource is locked.',
       status: 409,
     })
+  })
+
+  it('attaches the double-submit CSRF token to unsafe methods only', async () => {
+    vi.stubGlobal('document', { cookie: 'theme=dark; nexa_csrf=token-abc; nexa_other=x' })
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await apiRequest<void>('/api/v1/resource', { method: 'POST', body: '{}' })
+    await apiRequest<void>('/api/v1/resource')
+
+    expect(headersOf(fetchMock, 0)[csrfHeaderName]).toBe('token-abc')
+    expect(headersOf(fetchMock, 1)).not.toHaveProperty(csrfHeaderName)
+  })
+
+  it('sends no CSRF header when no session has issued a token', async () => {
+    vi.stubGlobal('document', { cookie: 'theme=dark' })
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await apiRequest<void>('/api/v1/resource', { method: 'DELETE' })
+
+    expect(headersOf(fetchMock, 0)).not.toHaveProperty(csrfHeaderName)
+  })
+
+  it('marks a request as background only once the user has stopped interacting', async () => {
+    vi.stubGlobal('document', { cookie: '' })
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await apiRequest<void>('/api/v1/resource')
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.now() + 10 * 60_000)
+    await apiRequest<void>('/api/v1/resource')
+
+    expect(headersOf(fetchMock, 0)).not.toHaveProperty(backgroundHeaderName)
+    expect(headersOf(fetchMock, 1)[backgroundHeaderName]).toBe('1')
   })
 
   it('retries a protected request after the session completes MFA step-up', async () => {

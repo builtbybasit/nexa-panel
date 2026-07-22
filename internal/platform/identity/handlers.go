@@ -22,6 +22,10 @@ func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 	response := map[string]any{
 		"bootstrapRequired": bootstrapRequired, "authenticated": false,
 		"mfaEnabled": false, "mfaChallengeRequired": false, "mfaEnrollmentRequired": false,
+		// The bootstrap and password-change forms render the policy as
+		// requirements, so it rides along on the status the UI already fetches
+		// before anyone is signed in.
+		"passwordPolicy": passwordPolicy(),
 	}
 	// Tell the setup UI whether this caller must present the out-of-band bootstrap
 	// token: a loopback operator may bootstrap directly, a remote one must supply
@@ -219,7 +223,7 @@ func (m *Module) changePasswordHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Your current password is required.")
 		return
 	}
-	if err := validatePassword(input.NewPassword); err != nil {
+	if err := validatePassword(input.NewPassword, person.Username); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_credentials", err.Error())
 		return
 	}
@@ -269,6 +273,11 @@ func (m *Module) changePasswordHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (m *Module) logoutHTTP(w http.ResponseWriter, r *http.Request) {
 	person, err := m.requireSession(r)
+	if errors.Is(err, errCSRFRejected) {
+		m.logger.Warn("rejected sign-out without a valid CSRF token", "path", r.URL.Path, "remote", remoteAddress(r))
+		writeError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return

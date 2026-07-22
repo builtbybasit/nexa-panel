@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
@@ -57,6 +58,17 @@ func (m *Module) Create(ctx context.Context, request CreateRequest, actorUserID 
 	if err != nil {
 		return Site{}, jobs.Job{}, fmt.Errorf("attach planning job: %w", err)
 	}
+	// Recorded here rather than on the worker: this is where a human's create
+	// intent is accepted and where the actor is known. Creation is additive, so
+	// losing the entry must not fail the request — but it is never dropped
+	// silently.
+	m.jobs.Audit().RecordBestEffort(ctx, audit.Entry{
+		ActorUserID: actorUserID, Action: "site.created", Subject: "site:" + model.ID,
+		Metadata: map[string]any{
+			"slug": model.Slug, "displayName": model.DisplayName,
+			"primaryDomain": model.PrimaryDomain, "phpVersion": model.PHPVersion, "unixUser": model.UnixUser,
+		},
+	})
 	return model.toSite(), job, nil
 }
 

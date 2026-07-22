@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 )
@@ -31,6 +32,11 @@ func (m *Module) DropDatabase(ctx context.Context, databaseID string, actor *str
 	if err := ensureRemovable(Status(database.Status)); err != nil {
 		return jobs.Job{}, err
 	}
+	if err := m.recordDropIntent(ctx, actor, "mysql.database_dropped", "mysql-database:"+database.ID, Status(database.Status), map[string]any{
+		"name": database.Name, "engineId": database.EngineID, "ownerAccountId": database.OwnerAccountID,
+	}); err != nil {
+		return jobs.Job{}, err
+	}
 	return m.beginDrop(ctx, resourceDatabase, database.ID, mysqloperator.ActionDropDatabase, actor)
 }
 
@@ -48,6 +54,11 @@ func (m *Module) DropAccount(ctx context.Context, accountID string, actor *strin
 	if err := m.guardAccountRemovable(ctx, account.ID, account.Name); err != nil {
 		return jobs.Job{}, err
 	}
+	if err := m.recordDropIntent(ctx, actor, "mysql.account_dropped", "mysql-account:"+account.ID, Status(account.Status), map[string]any{
+		"name": account.Name, "host": account.Host, "engineId": account.EngineID,
+	}); err != nil {
+		return jobs.Job{}, err
+	}
 	return m.beginDrop(ctx, resourceAccount, account.ID, mysqloperator.ActionDropAccount, actor)
 }
 
@@ -60,7 +71,25 @@ func (m *Module) DropGrant(ctx context.Context, grantID string, actor *string) (
 	if err := ensureRemovable(Status(grant.Status)); err != nil {
 		return jobs.Job{}, err
 	}
+	if err := m.recordDropIntent(ctx, actor, "mysql.grant_revoked", "mysql-grant:"+grant.ID, Status(grant.Status), map[string]any{
+		"databaseId": grant.DatabaseID, "accountId": grant.AccountID, "access": grant.Access,
+	}); err != nil {
+		return jobs.Job{}, err
+	}
 	return m.beginDrop(ctx, resourceGrant, grant.ID, mysqloperator.ActionRevokeGrant, actor)
+}
+
+// recordDropIntent audits a destructive change fail-closed, before the plan job
+// is queued. This is the point the human's intent is accepted — the plan and
+// apply jobs run later on a worker with no actor of their own — so it is where
+// the delete is attributable, and a delete that cannot be attributed is refused
+// rather than performed.
+func (m *Module) recordDropIntent(ctx context.Context, actor *string, action, subject string, before Status, metadata map[string]any) error {
+	metadata["before"] = map[string]any{"status": string(before)}
+	metadata["after"] = map[string]any{"status": "dropped"}
+	return m.jobs.Audit().RecordSensitive(ctx, audit.Entry{
+		ActorUserID: actor, Action: action, Subject: subject, Metadata: metadata,
+	})
 }
 
 // beginDrop transitions a resource into planning and submits the drop plan,

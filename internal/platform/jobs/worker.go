@@ -329,8 +329,9 @@ func (m *Module) wake() {
 	}
 }
 
+// recordAudit writes the generic queue bookkeeping entry. Job lifecycle events
+// are high-volume and are not the security record of a change — the modules
+// record their own targeted entry — so they stay best-effort.
 func (m *Module) recordAudit(ctx context.Context, entry audit.Entry) {
-	if err := m.audit.Record(ctx, entry); err != nil {
-		m.logger.Error("record job audit event", "action", entry.Action, "error", err)
-	}
+	m.Audit().RecordBestEffort(ctx, entry)
 }

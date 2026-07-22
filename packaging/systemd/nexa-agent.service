@@ -3,18 +3,36 @@ Description=Nexa Panel privileged node agent
 Documentation=https://github.com/nexa-panel/nexa-panel
 After=local-fs.target network.target
 Before=nexa-api.service
+# Same budget as the control plane: ten restarts at RestartSec=3s ride out a
+# transient boot-order or socket-teardown flap, and a genuine crash loop stops
+# rather than restarting the privileged agent forever.
+StartLimitIntervalSec=300s
+StartLimitBurst=10
 
 [Service]
 Type=simple
 User=root
 Group=nexa
 UMask=0177
+Environment=NEXA_LOG_LEVEL=info
 ExecStartPre=/usr/bin/nexa agent-token --path /etc/nexa-panel/agent.token
 ExecStart=/usr/bin/nexa agent --socket /run/nexa-panel/agent.sock --token /etc/nexa-panel/agent.token
 Restart=on-failure
 RestartSec=3s
 ConfigurationDirectory=nexa-panel
 ConfigurationDirectoryMode=0711
+# apt, dpkg and podman run inside this cgroup, so the ceiling has to clear their
+# real peaks: an unpack plus a container image pull sits in the low hundreds of
+# megabytes. 1G soft-throttles into reclaim before the node starts swapping,
+# 1536M leaves a 2 GiB host (capacity.ProfileCompact, the advertised minimum)
+# room for the kernel and the control plane while still killing a runaway.
+MemoryHigh=1G
+MemoryMax=1536M
+# Two cores' worth: dpkg unpacking and image builds stay responsive on a
+# multi-core VPS without the agent monopolising a busy node.
+CPUQuota=200%
+TasksMax=4096
+LimitNOFILE=65536
 NoNewPrivileges=true
 PrivateTmp=true
 # Package and service operators need these host trees writable. Everything else

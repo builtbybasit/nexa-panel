@@ -405,7 +405,7 @@ func TestUpdateSettingsHTTPLifecycle(t *testing.T) {
 		encoded, _ := json.Marshal(body)
 		request := httptest.NewRequest(http.MethodPatch, "/api/v1/sites/"+site.ID+"/settings", bytes.NewReader(encoded))
 		request.Header.Set("Content-Type", "application/json")
-		request.AddCookie(cookie)
+		authenticate(request, cookie)
 		response := httptest.NewRecorder()
 		mux.ServeHTTP(response, request)
 		return response

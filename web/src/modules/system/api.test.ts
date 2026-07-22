@@ -21,7 +21,12 @@ const overview: SystemOverview = {
   warnings: [],
 }
 
+// Spelled out rather than imported: this is the wire contract the server
+// matches on, and the point of the assertion is that the call reaches it.
+const backgroundHeaderName = 'X-Nexa-Background'
+
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -37,6 +42,7 @@ describe('getSystemOverview', () => {
 
     await expect(getSystemOverview()).resolves.toEqual(overview)
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/system/overview', {
+      credentials: 'same-origin',
       headers: { Accept: 'application/json' },
     })
   })
@@ -45,6 +51,21 @@ describe('getSystemOverview', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 503 })))
 
     await expect(getSystemOverview()).rejects.toThrow('status 503')
+  })
+
+  // The top bar and the sidebar both poll this every 15s, so a raw fetch here
+  // would renew the session's idle timeout on every authenticated page.
+  it('goes through the shared helper, so the poll carries the background marker', async () => {
+    vi.stubGlobal('document', { cookie: '' })
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(overview))
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.now() + 10 * 60_000)
+
+    await getSystemOverview()
+
+    const headers = (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>
+    expect(headers[backgroundHeaderName]).toBe('1')
   })
 })
 

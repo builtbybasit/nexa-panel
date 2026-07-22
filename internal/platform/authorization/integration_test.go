@@ -51,14 +51,14 @@ func TestViewerCannotReadAuditButAdminCan(t *testing.T) {
 	}
 
 	bootstrap := httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap",
-		strings.NewReader(`{"username":"admin","password":"a-strong-password"}`))
+		strings.NewReader(`{"username":"admin","password":"Str0ng-Console-Pass"}`))
 	bootstrap.RemoteAddr = "127.0.0.1:12345"
 	bootstrapResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(bootstrapResponse, bootstrap)
 	if bootstrapResponse.Code != http.StatusCreated {
 		t.Fatalf("bootstrap = %d %s", bootstrapResponse.Code, bootstrapResponse.Body.String())
 	}
-	cookie := bootstrapResponse.Result().Cookies()[0]
+	cookie, csrfToken := sessionCredentials(t, bootstrapResponse.Result().Cookies())
 	tokenHash := sha256.Sum256([]byte(cookie.Value))
 	now := time.Now().UTC()
 	if _, err := database.ExecContext(ctx, "UPDATE identity_users SET totp_confirmed_at = ?", now); err != nil {
@@ -71,14 +71,14 @@ func TestViewerCannotReadAuditButAdminCan(t *testing.T) {
 	if status := requestAudit(server.Handler(), cookie); status != http.StatusOK {
 		t.Fatalf("admin audit status = %d", status)
 	}
-	fresh := requestSensitiveAction(server.Handler(), cookie)
+	fresh := requestSensitiveAction(server.Handler(), cookie, csrfToken)
 	if fresh.Code != http.StatusNoContent {
 		t.Fatalf("fresh sensitive action = %d %s", fresh.Code, fresh.Body.String())
 	}
 	if _, err := database.ExecContext(ctx, "UPDATE identity_sessions SET mfa_verified_at = ? WHERE token_hash = ?", now.Add(-20*time.Minute), tokenHash[:]); err != nil {
 		t.Fatalf("age MFA verification: %v", err)
 	}
-	stale := requestSensitiveAction(server.Handler(), cookie)
+	stale := requestSensitiveAction(server.Handler(), cookie, csrfToken)
 	if stale.Code != http.StatusForbidden || !strings.Contains(stale.Body.String(), `"mfa_step_up_required"`) {
 		t.Fatalf("stale sensitive action = %d %s", stale.Code, stale.Body.String())
 	}
@@ -102,9 +102,32 @@ func (sensitiveActionModule) Register(registry module.Registry) error {
 	}))
 }
 
-func requestSensitiveAction(handler http.Handler, cookie *http.Cookie) *httptest.ResponseRecorder {
+// sessionCredentials splits the pair of cookies a sign-in issues: the session
+// cookie is presented as-is, while the CSRF cookie's value has to be echoed
+// back in a header for the double submit to pass.
+func sessionCredentials(t *testing.T, cookies []*http.Cookie) (*http.Cookie, string) {
+	t.Helper()
+	var session *http.Cookie
+	csrfToken := ""
+	for _, cookie := range cookies {
+		switch cookie.Name {
+		case "nexa_session":
+			session = cookie
+		case "nexa_csrf":
+			csrfToken = cookie.Value
+		}
+	}
+	if session == nil || csrfToken == "" {
+		t.Fatalf("bootstrap did not issue both session and csrf cookies: %v", cookies)
+	}
+	return session, csrfToken
+}
+
+func requestSensitiveAction(handler http.Handler, cookie *http.Cookie, csrfToken string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/sensitive-test", nil)
 	request.RemoteAddr = "127.0.0.1:12345"
+	request.Header.Set("Origin", "http://"+request.Host)
+	request.Header.Set("X-CSRF-Token", csrfToken)
 	request.AddCookie(cookie)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

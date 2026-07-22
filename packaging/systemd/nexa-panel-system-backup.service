@@ -9,12 +9,17 @@ Requires=nexa-api.service
 # (systemd records a skipped, not failed, start), so a fresh node never spams
 # failures for a backup destination the operator has not chosen yet.
 ConditionPathExists=/etc/nexa-panel/system-backup.env
+# No Restart= on a timer-driven oneshot, so there is no crash loop to guard
+# against; a start limit here would only disable scheduled backups after a run
+# of transient failures, which is exactly when they matter most.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 User=nexa
 Group=nexa
 UMask=0077
+Environment=NEXA_LOG_LEVEL=info
 # Names the backup storage account (rclone remote) to ship the panel state to.
 EnvironmentFile=/etc/nexa-panel/system-backup.env
 # Enqueues a durable backup.system job into control.db; the running nexa-api
@@ -23,6 +28,13 @@ EnvironmentFile=/etc/nexa-panel/system-backup.env
 ExecStart=/usr/bin/nexa backup system --account ${NEXA_SYSTEM_BACKUP_ACCOUNT} --state /var/lib/nexa-panel/control.db
 StateDirectory=nexa-panel
 StateDirectoryMode=0700
+# This process only opens control.db and inserts one job row; the archiving is
+# done by the nexa-api worker under its own limits.
+MemoryHigh=128M
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=4096
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true

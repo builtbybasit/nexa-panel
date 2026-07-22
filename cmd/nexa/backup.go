@@ -14,6 +14,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 )
 
 const backupUsage = "usage: nexa backup <trigger|system|system-restore> ..."
@@ -158,7 +159,7 @@ func runBackupSystemRestore(args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet("backup system-restore", flag.ContinueOnError)
 	archive := flags.String("archive", "", "path to a local nexa-panel-system.tar.gz archive")
 	statePath := flags.String("state", "/var/lib/nexa-panel/control.db", "destination path for control.db")
-	masterKeyPath := flags.String("master-key", "/var/lib/nexa-panel/master.key", "destination path for master.key")
+	masterKeyPath := flags.String("master-key", envOrDefault("NEXA_MASTER_KEY", secrets.DefaultKeyPath), "destination path for master.key")
 	force := flags.Bool("force", false, "overwrite an existing non-empty control.db")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err

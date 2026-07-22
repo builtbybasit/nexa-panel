@@ -102,18 +102,18 @@ function beginUpload(siteId: string, input: { path: string; size: number; overwr
   return request(`${base(siteId)}/uploads`, { method: 'POST', body: JSON.stringify(input) })
 }
 
-/** Append one raw chunk at `offset`; the server verifies the offset matches the staged size. */
-async function uploadChunk(siteId: string, uploadId: string, offset: number, chunk: Blob): Promise<void> {
-  const response = await fetch(`${base(siteId)}/uploads/${encodeURIComponent(uploadId)}?offset=${offset}`, {
+/**
+ * Append one raw chunk at `offset`; the server verifies the offset matches the
+ * staged size. It goes through the shared helper like every other call here so
+ * the unsafe method carries the double-submit CSRF token; a hand-rolled fetch
+ * omits it and the server rejects the PUT.
+ */
+function uploadChunk(siteId: string, uploadId: string, offset: number, chunk: Blob): Promise<void> {
+  return request(`${base(siteId)}/uploads/${encodeURIComponent(uploadId)}?offset=${offset}`, {
     method: 'PUT',
-    credentials: 'same-origin',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/octet-stream' },
+    headers: { 'Content-Type': 'application/octet-stream' },
     body: chunk,
   })
-  if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as { code?: string; message?: string } | null
-    throw new FilesRequestError(error?.message ?? `Files upload failed with status ${response.status}`, response.status, error?.code)
-  }
 }
 
 function commitUpload(siteId: string, uploadId: string): Promise<FileEntry> {

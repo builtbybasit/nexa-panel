@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
@@ -39,6 +40,13 @@ type Recorder interface {
 type Module struct {
 	database *bun.DB
 	now      func() time.Time
+	// chainMu serialises the tail-hash read and the insert that follows it, so
+	// two concurrent Record calls cannot both chain from the same predecessor and
+	// fork the chain. The transaction alone would already serialise them under
+	// persistence.Open's single-connection pool, but the mutex keeps the
+	// invariant independent of that pool setting; the control plane is one
+	// process, so an in-process lock is sufficient.
+	chainMu sync.Mutex
 }
 
 type eventModel struct {
@@ -50,6 +58,8 @@ type eventModel struct {
 	Subject       string `bun:",notnull"`
 	RemoteAddress string `bun:",notnull"`
 	Metadata      string `bun:",notnull"`
+	PrevHash      string `bun:",notnull"`
+	Hash          string `bun:",notnull"`
 }
 
 // New builds the audit module. Its schema is applied centrally by
@@ -72,7 +82,19 @@ func (m *Module) Descriptor() module.Descriptor {
 }
 
 func (m *Module) Register(registry module.Registry) error {
-	return registry.HandleAuthorized("GET /api/v1/audit/events", "audit.read", http.HandlerFunc(m.listHTTP))
+	routes := []struct {
+		pattern, permission string
+		handler             http.Handler
+	}{
+		{"GET /api/v1/audit/events", "audit.read", http.HandlerFunc(m.listHTTP)},
+		{"GET /api/v1/audit/verify", "audit.read", http.HandlerFunc(m.verifyHTTP)},
+	}
+	for _, route := range routes {
+		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Module) Record(ctx context.Context, entry Entry) error {
@@ -87,11 +109,43 @@ func (m *Module) Record(ctx context.Context, entry Entry) error {
 	if err != nil {
 		return fmt.Errorf("encode audit metadata: %w", err)
 	}
+	// SQLite stores this column with microsecond precision, so hashing the
+	// nanosecond-precision clock reading would digest a timestamp the row can
+	// never carry: Verify would then recompute a different hash for every row and
+	// report an untouched log as tampered with. Truncating before the hash keeps
+	// the digested value and the stored value identical. macOS reads the clock at
+	// microsecond granularity already, which is why this only ever surfaced on a
+	// Linux node.
 	model := &eventModel{
-		OccurredAt: m.now().UTC(), ActorUserID: entry.ActorUserID, Action: entry.Action,
+		OccurredAt: m.now().UTC().Truncate(time.Microsecond), ActorUserID: entry.ActorUserID, Action: entry.Action,
 		Subject: entry.Subject, RemoteAddress: entry.RemoteAddress, Metadata: string(encoded),
 	}
-	_, err = m.database.NewInsert().Model(model).Exec(ctx)
+	m.chainMu.Lock()
+	defer m.chainMu.Unlock()
+	err = m.database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// RunInTx opens a DEFERRED transaction, so reading first would take a WAL
+		// read snapshot and the insert that follows would upgrade to a write — and
+		// SQLite fails that upgrade with SQLITE_BUSY_SNAPSHOT the instant another
+		// process has committed in between, without ever consulting busy_timeout.
+		// Touching the chain state first makes this a write transaction up front,
+		// where a competing writer is waited out by busy_timeout instead.
+		if _, err := tx.NewUpdate().Model((*chainStateModel)(nil)).
+			Set("watermark = watermark").Where("id = ?", 1).Exec(ctx); err != nil {
+			return fmt.Errorf("claim the audit chain for writing: %w", err)
+		}
+		watermark, err := chainWatermark(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("read audit chain start: %w", err)
+		}
+		previous, err := tailHash(ctx, tx, watermark)
+		if err != nil {
+			return err
+		}
+		model.PrevHash = previous
+		model.Hash = chainHash(previous, model)
+		_, err = tx.NewInsert().Model(model).Exec(ctx)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("record audit event: %w", err)
 	}
@@ -138,6 +192,15 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": events})
+}
+
+func (m *Module) verifyHTTP(w http.ResponseWriter, r *http.Request) {
+	result, err := m.Verify(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "audit_unavailable", "The audit chain could not be verified.")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 var (

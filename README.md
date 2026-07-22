@@ -60,7 +60,7 @@ make build
 ```
 
 ```bash
-./bin/nexa api
+NEXA_MASTER_KEY=/tmp/nexa-panel/master.key ./bin/nexa api
 ```
 
 Then start Vite in a third terminal:
@@ -70,8 +70,11 @@ make web-dev
 ```
 
 Vite serves `http://127.0.0.1:5173` and proxies `/api` to
-`http://127.0.0.1:8080`. Development state, the master key, the agent token,
-and Unix sockets default to `/tmp/nexa-panel/`.
+`http://127.0.0.1:8080`. Development state, the agent token, and Unix sockets
+default to `/tmp/nexa-panel/`. The master key defaults to the production path
+`/etc/nexa-panel/master.key`, so an unprivileged local run has to point
+`NEXA_MASTER_KEY` somewhere writable, as above. Raise log verbosity on either
+process with `--log-level debug` before the subcommand, or `NEXA_LOG_LEVEL`.
 
 The opt-in MySQL 8.4 and MariaDB 11.8 destructive restore acceptance test needs
 Docker:
@@ -145,11 +148,33 @@ systemd preflight creates or validates that credential before startup, and the
 unprivileged API reads it through the dedicated `nexa` group. Role and site-scope checks are
 enforced server-side; sensitive operations additionally require recent MFA.
 
-Persistent state is stored in `/var/lib/nexa-panel/control.db`, and encrypted
-secrets depend on `/var/lib/nexa-panel/master.key`. Back up both on the same
-recovery cadence, store the key in a separate restricted location, and never
-commit or expose either file. Encrypted TOTP seeds and managed database
-credentials cannot be recovered without the master key.
+### Backing up the state and the master key
+
+Persistent state is stored in `/var/lib/nexa-panel/control.db`. The key that
+encrypts the secrets inside it lives separately, in
+`/etc/nexa-panel/master.key`; a node installed before that split keeps its key
+in `/var/lib/nexa-panel/master.key` and the panel moves it to the new location
+on the first start after the upgrade, logging the move to the journal.
+
+Back both up, on the same recovery cadence, to two destinations with separate
+access. A backup that carries `control.db` and `master.key` together is worth
+exactly as much as the plaintext: whoever takes that one archive — or the disk
+image it came from — holds every managed database credential, TOTP seed and
+remote-storage token the panel has ever stored. Splitting them means a single
+stolen archive or a single compromised backup account yields nothing usable.
+
+The two losses are not symmetrical, so plan for both:
+
+- Lose `master.key` and keep `control.db`: the panel's own records survive, but
+  every encrypted secret in it — TOTP seeds, managed database credentials,
+  storage-account tokens — is unrecoverable and has to be reissued by hand.
+- Lose `control.db` and keep `master.key`: restore the state from your last
+  backup; the key still opens it.
+- Leak both together: full compromise of everything the panel manages. Rotate
+  every credential it holds.
+
+Never commit or expose either file, and keep the key out of the same object
+store bucket, tarball or snapshot schedule as the state.
 
 The HTTP contract is documented in
 [openapi/openapi.yaml](./openapi/openapi.yaml), host-level dependencies in

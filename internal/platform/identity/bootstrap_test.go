@@ -113,14 +113,14 @@ func TestBootstrapRemoteRequiresToken(t *testing.T) {
 
 	// A remote client with no token cannot claim the admin account.
 	noToken := remoteRequest(handler, http.MethodPost, "/api/v1/auth/bootstrap",
-		`{"username":"admin","password":"a-strong-password"}`, "", nil)
+		`{"username":"admin","password":"a-Str0ng-password"}`, "", nil)
 	if noToken.Code != http.StatusForbidden || !strings.Contains(noToken.Body.String(), `"bootstrap_forbidden"`) {
 		t.Fatalf("remote bootstrap without token = %d %s", noToken.Code, noToken.Body.String())
 	}
 
 	// A wrong token is likewise rejected.
 	wrongToken := remoteRequest(handler, http.MethodPost, "/api/v1/auth/bootstrap",
-		`{"username":"admin","password":"a-strong-password"}`, "deadbeef", nil)
+		`{"username":"admin","password":"a-Str0ng-password"}`, "deadbeef", nil)
 	if wrongToken.Code != http.StatusForbidden {
 		t.Fatalf("remote bootstrap with wrong token = %d %s", wrongToken.Code, wrongToken.Body.String())
 	}
@@ -132,7 +132,7 @@ func TestBootstrapRemoteRequiresToken(t *testing.T) {
 
 	// The correct token lets the operator claim admin exactly once.
 	ok := remoteRequest(handler, http.MethodPost, "/api/v1/auth/bootstrap",
-		`{"username":"admin","password":"a-strong-password"}`, token, nil)
+		`{"username":"admin","password":"a-Str0ng-password"}`, token, nil)
 	if ok.Code != http.StatusCreated {
 		t.Fatalf("remote bootstrap with token = %d %s", ok.Code, ok.Body.String())
 	}
@@ -145,7 +145,7 @@ func TestBootstrapRemoteRequiresToken(t *testing.T) {
 	// A remote caller replaying the now-stale token is rejected before it can even
 	// reach the account check: the in-memory secret was wiped on success.
 	stale := remoteRequest(handler, http.MethodPost, "/api/v1/auth/bootstrap",
-		`{"username":"other","password":"another-password"}`, token, nil)
+		`{"username":"other","password":"an0ther-P4ssword"}`, token, nil)
 	if stale.Code != http.StatusForbidden {
 		t.Fatalf("remote bootstrap with stale token = %d %s", stale.Code, stale.Body.String())
 	}
@@ -153,7 +153,7 @@ func TestBootstrapRemoteRequiresToken(t *testing.T) {
 	// A loopback caller passes the local-access gate but still hits the closed
 	// window: the existing already_bootstrapped conflict is preserved.
 	closed := performRequest(handler, http.MethodPost, "/api/v1/auth/bootstrap",
-		`{"username":"other","password":"another-password"}`, nil)
+		`{"username":"other","password":"an0ther-P4ssword"}`, nil)
 	if closed.Code != http.StatusConflict || !strings.Contains(closed.Body.String(), `"already_bootstrapped"`) {
 		t.Fatalf("loopback bootstrap after admin exists = %d %s", closed.Code, closed.Body.String())
 	}
@@ -170,7 +170,7 @@ func TestBootstrapLoopbackAllowedWithoutToken(t *testing.T) {
 		t.Fatalf("ensure bootstrap token: %v", err)
 	}
 	loopback := performRequest(handler, http.MethodPost, "/api/v1/auth/bootstrap",
-		`{"username":"admin","password":"a-strong-password"}`, nil)
+		`{"username":"admin","password":"a-Str0ng-password"}`, nil)
 	if loopback.Code != http.StatusCreated {
 		t.Fatalf("loopback bootstrap without token = %d %s", loopback.Code, loopback.Body.String())
 	}
@@ -210,13 +210,13 @@ func TestMFAVerifyLockoutIsUserKeyedAndPersistsAcrossSessions(t *testing.T) {
 
 	// Bootstrap (loopback) and enroll MFA to reach an enrolled admin.
 	if resp := performRequest(handler, http.MethodPost, "/api/v1/auth/bootstrap",
-		`{"username":"admin","password":"a-strong-password"}`, nil); resp.Code != http.StatusCreated {
+		`{"username":"admin","password":"a-Str0ng-password"}`, nil); resp.Code != http.StatusCreated {
 		t.Fatalf("bootstrap = %d %s", resp.Code, resp.Body.String())
 	}
 	loginA := performRequest(handler, http.MethodPost, "/api/v1/auth/login",
-		`{"username":"admin","password":"a-strong-password"}`, nil)
-	sessionCookie := loginA.Result().Cookies()[0]
-	enroll := performRequest(handler, http.MethodPost, "/api/v1/auth/mfa/enroll", "", sessionCookie)
+		`{"username":"admin","password":"a-Str0ng-password"}`, nil)
+	sessionCookies := loginA.Result().Cookies()
+	enroll := performRequest(handler, http.MethodPost, "/api/v1/auth/mfa/enroll", "", sessionCookies...)
 	var enrollBody struct {
 		Secret string `json:"secret"`
 	}
@@ -229,20 +229,20 @@ func TestMFAVerifyLockoutIsUserKeyedAndPersistsAcrossSessions(t *testing.T) {
 	}
 	confirmCode := generateTOTP(decodedSecret, clock.Unix()/totpPeriodSeconds, totpDigits)
 	if resp := performRequest(handler, http.MethodPost, "/api/v1/auth/mfa/confirm",
-		`{"code":"`+confirmCode+`"}`, sessionCookie); resp.Code != http.StatusOK {
+		`{"code":"`+confirmCode+`"}`, sessionCookies...); resp.Code != http.StatusOK {
 		t.Fatalf("confirm = %d %s", resp.Code, resp.Body.String())
 	}
-	performRequest(handler, http.MethodPost, "/api/v1/auth/logout", "", sessionCookie)
+	performRequest(handler, http.MethodPost, "/api/v1/auth/logout", "", sessionCookies...)
 
 	badCode := invalidTOTP(decodedSecret, *clock)
 	body := `{"code":"` + badCode + `"}`
 
 	// Fresh session; exhaust the burst limit (5) with wrong codes.
 	firstLogin := performRequest(handler, http.MethodPost, "/api/v1/auth/login",
-		`{"username":"admin","password":"a-strong-password"}`, nil)
-	firstCookie := firstLogin.Result().Cookies()[0]
+		`{"username":"admin","password":"a-Str0ng-password"}`, nil)
+	firstCookies := firstLogin.Result().Cookies()
 	for i := 0; i < 5; i++ {
-		resp := performRequest(handler, http.MethodPost, "/api/v1/auth/mfa/verify", body, firstCookie)
+		resp := performRequest(handler, http.MethodPost, "/api/v1/auth/mfa/verify", body, firstCookies...)
 		if resp.Code != http.StatusUnauthorized {
 			t.Fatalf("verify attempt %d = %d %s, want 401", i, resp.Code, resp.Body.String())
 		}
@@ -251,9 +251,9 @@ func TestMFAVerifyLockoutIsUserKeyedAndPersistsAcrossSessions(t *testing.T) {
 	// A brand-new session must NOT reset the counter: this is the core fix. Before
 	// it, re-logging-in minted a fresh session id and reset the 5-attempt bucket.
 	secondLogin := performRequest(handler, http.MethodPost, "/api/v1/auth/login",
-		`{"username":"admin","password":"a-strong-password"}`, nil)
-	secondCookie := secondLogin.Result().Cookies()[0]
-	persisted := performRequest(handler, http.MethodPost, "/api/v1/auth/mfa/verify", body, secondCookie)
+		`{"username":"admin","password":"a-Str0ng-password"}`, nil)
+	secondCookies := secondLogin.Result().Cookies()
+	persisted := performRequest(handler, http.MethodPost, "/api/v1/auth/mfa/verify", body, secondCookies...)
 	if persisted.Code != http.StatusTooManyRequests {
 		t.Fatalf("verify on new session = %d %s, want 429 (counter must survive re-login)", persisted.Code, persisted.Body.String())
 	}
@@ -261,7 +261,7 @@ func TestMFAVerifyLockoutIsUserKeyedAndPersistsAcrossSessions(t *testing.T) {
 	// Continued hammering trips the hard lockout with a distinct message.
 	locked := false
 	for i := 0; i < 6; i++ {
-		resp := performRequest(handler, http.MethodPost, "/api/v1/auth/mfa/verify", body, secondCookie)
+		resp := performRequest(handler, http.MethodPost, "/api/v1/auth/mfa/verify", body, secondCookies...)
 		if resp.Code != http.StatusTooManyRequests {
 			t.Fatalf("verify while limited = %d %s, want 429", resp.Code, resp.Body.String())
 		}

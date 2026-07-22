@@ -67,7 +67,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 	unixSocket := flags.String("unix-socket", envOrDefault("NEXA_API_UNIX_SOCKET", ""), "Unix socket for a trusted local reverse proxy (disables TCP listener)")
 	allowInsecureHTTP := flags.Bool("allow-insecure-http", envBool("NEXA_ALLOW_INSECURE_HTTP"), "serve authenticated traffic over plaintext HTTP on a non-loopback bind (unsafe; TLS should front the panel)")
 	state := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/tmp/nexa-panel/control.db"), "SQLite control-plane state path")
-	masterKey := flags.String("master-key", envOrDefault("NEXA_MASTER_KEY", "/tmp/nexa-panel/master.key"), "AES master key path")
+	masterKey := flags.String("master-key", envOrDefault("NEXA_MASTER_KEY", secrets.DefaultKeyPath), "AES master key path")
 	agentSocket := flags.String("agent-socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
 	agentToken := flags.String("agent-token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
 	bootstrapToken := flags.String("bootstrap-token", envOrDefault("NEXA_BOOTSTRAP_TOKEN", "/tmp/nexa-panel/bootstrap.token"), "first-run bootstrap token path (owner-only; gates admin creation on a public bind)")
@@ -83,7 +83,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		return fmt.Errorf("open control-plane state: %w", err)
 	}
 	defer database.Close()
-	secretBox, err := secrets.OpenKeyFile(*masterKey)
+	secretBox, err := secrets.OpenDefaultKeyFile(*masterKey, logger)
 	if err != nil {
 		return fmt.Errorf("open control-plane master key: %w", err)
 	}

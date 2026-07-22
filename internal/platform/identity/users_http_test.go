@@ -85,7 +85,7 @@ func newUsersHarness(t *testing.T) *usersHarness {
 
 func (h *usersHarness) seedUser(t *testing.T, username, role string) User {
 	t.Helper()
-	hash, err := hashPassword("a-strong-password", h.module.parameters)
+	hash, err := hashPassword("a-Str0ng-password", h.module.parameters)
 	if err != nil {
 		t.Fatalf("hash password: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestUserCRUDHandlers(t *testing.T) {
 	h := newUsersHarness(t)
 	h.actor = h.seedUser(t, "root", "admin")
 
-	created := h.do(http.MethodPost, "/api/v1/users", `{"username":"dev-anna","password":"a-strong-password","role":"developer"}`)
+	created := h.do(http.MethodPost, "/api/v1/users", `{"username":"dev-anna","password":"a-Str0ng-password","role":"developer"}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s", created.Code, created.Body.String())
 	}
@@ -156,11 +156,11 @@ func TestUserCRUDHandlers(t *testing.T) {
 		t.Fatalf("unexpected created user: %+v", developer)
 	}
 
-	duplicate := h.do(http.MethodPost, "/api/v1/users", `{"username":"dev-anna","password":"a-strong-password","role":"viewer"}`)
+	duplicate := h.do(http.MethodPost, "/api/v1/users", `{"username":"dev-anna","password":"a-Str0ng-password","role":"viewer"}`)
 	if duplicate.Code != http.StatusConflict {
 		t.Fatalf("duplicate username = %d %s", duplicate.Code, duplicate.Body.String())
 	}
-	badRole := h.do(http.MethodPost, "/api/v1/users", `{"username":"other","password":"a-strong-password","role":"superuser"}`)
+	badRole := h.do(http.MethodPost, "/api/v1/users", `{"username":"other","password":"a-Str0ng-password","role":"superuser"}`)
 	if badRole.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid role = %d %s", badRole.Code, badRole.Body.String())
 	}
@@ -204,7 +204,7 @@ func TestUserCRUDHandlers(t *testing.T) {
 
 	// A new user has no second factor, so login signs straight in; MFA can be
 	// enabled later from account security.
-	login := h.do(http.MethodPost, "/api/v1/auth/login", `{"username":"dev-anna","password":"a-strong-password"}`)
+	login := h.do(http.MethodPost, "/api/v1/auth/login", `{"username":"dev-anna","password":"a-Str0ng-password"}`)
 	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), `"next":"authenticated"`) {
 		t.Fatalf("new user login = %d %s", login.Code, login.Body.String())
 	}
@@ -270,7 +270,7 @@ func TestUserGuards(t *testing.T) {
 	if count := h.sessionCount(t, target.ID); count != 2 {
 		t.Fatalf("seeded session count = %d", count)
 	}
-	password := h.do(http.MethodPatch, "/api/v1/users/"+target.ID, `{"password":"another-strong-password"}`)
+	password := h.do(http.MethodPatch, "/api/v1/users/"+target.ID, `{"password":"another-Str0ng-password"}`)
 	if password.Code != http.StatusOK {
 		t.Fatalf("password update = %d %s", password.Code, password.Body.String())
 	}

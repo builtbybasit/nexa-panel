@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
@@ -42,6 +43,10 @@ func (m *Module) Create(ctx context.Context, request CreateRequest, actor *strin
 	}
 	model.LastJobID = &job.ID
 	_, err = m.database.NewUpdate().Model(model).Column("last_job_id").WherePK().Exec(ctx)
+	m.jobs.Audit().RecordBestEffort(ctx, audit.Entry{
+		ActorUserID: actor, Action: "certificate.created", Subject: "certificate:" + model.ID,
+		Metadata: map[string]any{"siteId": model.SiteID, "primaryDomain": model.PrimaryDomain, "email": model.Email},
+	})
 	return model.toCertificate(now), job, err
 }
 

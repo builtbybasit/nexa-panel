@@ -30,6 +30,10 @@ const entry = {
 const getInit = { credentials: 'same-origin', headers: { Accept: 'application/json' } }
 const uploadChunkSize = 4 * 1024 * 1024
 
+// Spelled out rather than imported from the shared helper: this is the wire
+// contract the server matches on, so a rename has to fail here.
+const csrfHeaderName = 'X-CSRF-Token'
+
 function jsonInit(method: string, body: unknown) {
   return {
     method,
@@ -151,6 +155,30 @@ describe('files API', () => {
     expect((fetchMock.mock.calls[1]?.[1]?.body as Blob).size).toBe(uploadChunkSize)
     expect((fetchMock.mock.calls[2]?.[1]?.body as Blob).size).toBe(1024)
     expect(fetchMock.mock.calls[3]?.[0]).toBe('/api/v1/sites/site_1/files/uploads/up_2/commit')
+  })
+
+  // The chunk PUT is the one upload call that does not send JSON, which is what
+  // makes hand-rolling it tempting; the server rejects it without the token.
+  // Uploading is user-initiated, so it must also stay unmarked as background.
+  it('sends the chunk PUT through the shared helper with the CSRF token', async () => {
+    vi.stubGlobal('document', { cookie: 'nexa_csrf=token-abc' })
+    const file = new File([new Uint8Array(8)], 'small.bin')
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ uploadId: 'up_4' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(Response.json(entry))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(uploadFile('site_1', file, 'public/small.bin', false)).resolves.toEqual(entry)
+
+    const chunkInit = fetchMock.mock.calls[1]?.[1] as RequestInit
+    expect(chunkInit.credentials).toBe('same-origin')
+    expect(chunkInit.headers).toEqual({
+      Accept: 'application/json',
+      'Content-Type': 'application/octet-stream',
+      [csrfHeaderName]: 'token-abc',
+    })
   })
 
   it('aborts the staged upload when a chunk is rejected', async () => {

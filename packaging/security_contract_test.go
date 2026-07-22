@@ -9,7 +9,10 @@ import (
 
 type unitDirectives map[string][]string
 
-func readServiceDirectives(t *testing.T, path string) unitDirectives {
+// readUnitSections keys every section of a unit file, because the crash-loop
+// guards live in [Unit] while the sandbox and resource limits live in [Service]
+// and systemd silently ignores either one placed in the other section.
+func readUnitSections(t *testing.T, path string) map[string]unitDirectives {
 	t.Helper()
 	file, err := os.Open(path)
 	if err != nil {
@@ -17,7 +20,7 @@ func readServiceDirectives(t *testing.T, path string) unitDirectives {
 	}
 	defer file.Close()
 
-	directives := unitDirectives{}
+	sections := map[string]unitDirectives{}
 	section := ""
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -26,20 +29,33 @@ func readServiceDirectives(t *testing.T, path string) unitDirectives {
 			section = strings.Trim(line, "[]")
 			continue
 		}
-		if section != "Service" || line == "" || strings.HasPrefix(line, "#") {
+		if section == "" || line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		key, value, found := strings.Cut(line, "=")
 		if !found {
-			t.Fatalf("%s contains an invalid service directive %q", path, line)
+			t.Fatalf("%s contains an invalid %s directive %q", path, section, line)
+		}
+		if sections[section] == nil {
+			sections[section] = unitDirectives{}
 		}
 		key = strings.TrimSpace(key)
-		directives[key] = append(directives[key], strings.TrimSpace(value))
+		sections[section][key] = append(sections[section][key], strings.TrimSpace(value))
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	return directives
+	return sections
+}
+
+func readServiceDirectives(t *testing.T, path string) unitDirectives {
+	t.Helper()
+	return readUnitSections(t, path)["Service"]
+}
+
+func readUnitDirectives(t *testing.T, path string) unitDirectives {
+	t.Helper()
+	return readUnitSections(t, path)["Unit"]
 }
 
 func requireDirective(t *testing.T, directives unitDirectives, key, wanted string) {
@@ -51,6 +67,16 @@ func requireDirective(t *testing.T, directives unitDirectives, key, wanted strin
 	if got := values[len(values)-1]; got != wanted {
 		t.Fatalf("%s = %q, want %q", key, got, wanted)
 	}
+}
+
+func requireDirectiveValue(t *testing.T, directives unitDirectives, key, wanted string) {
+	t.Helper()
+	for _, value := range directives[key] {
+		if value == wanted {
+			return
+		}
+	}
+	t.Fatalf("service contract is missing %s=%s, got %q", key, wanted, directives[key])
 }
 
 func requireEmptyDirective(t *testing.T, directives unitDirectives, key string) {
@@ -144,16 +170,89 @@ func TestControlPlaneUsesPrivateStateAndSharedAgentCredential(t *testing.T) {
 	if len(execStart) != 1 || !strings.Contains(execStart[0], "--unix-socket /run/nexa-panel/api.sock") || !strings.Contains(execStart[0], "--agent-token /etc/nexa-panel/agent.token") {
 		t.Fatalf("control plane must use the local API socket and shared group-scoped credential, got %q", execStart)
 	}
+	if strings.Contains(execStart[0], "--master-key") {
+		t.Fatalf("pinning --master-key suppresses the relocation out of the state directory, got %q", execStart[0])
+	}
+	if paths, ok := directives["ReadWritePaths"]; ok {
+		t.Fatalf("the control plane only reads the master key, so /etc must stay read-only, found ReadWritePaths=%q", paths)
+	}
+	provision := directives["ExecStartPre"]
+	if len(provision) != 1 || !strings.HasPrefix(provision[0], "+") {
+		t.Fatalf("the master key must be provisioned by one privileged pre-start command, got %q", provision)
+	}
+	if !strings.Contains(provision[0], "chown nexa:nexa /etc/nexa-panel/master.key") || !strings.Contains(provision[0], "chmod 0600 /etc/nexa-panel/master.key") {
+		t.Fatalf("the provisioned master key must end up owner-only and readable by the control plane, got %q", provision[0])
+	}
+	if !strings.Contains(provision[0], "mv -- /var/lib/nexa-panel/master.key /etc/nexa-panel/master.key") {
+		t.Fatalf("an existing key must move out of the state directory rather than be left beside control.db, got %q", provision[0])
+	}
 	for _, environment := range directives["Environment"] {
 		if strings.HasPrefix(environment, "NEXA_AGENT_TOKEN=") {
 			t.Fatalf("agent token source must not be exposed directly to the web-facing service: %q", environment)
 		}
 	}
+	requireDirectiveValue(t, directives, "Environment", "NEXA_LOG_LEVEL=info")
 	addressFamilies := directives["RestrictAddressFamilies"]
 	if len(addressFamilies) != 1 {
 		t.Fatalf("control plane address-family contract = %q", addressFamilies)
 	}
 	requireWordSet(t, addressFamilies[0], "AF_UNIX", "AF_INET", "AF_INET6")
+}
+
+func TestLongRunningUnitsBoundRestartsAndResources(t *testing.T) {
+	for _, unit := range []string{"systemd/nexa-api.service", "systemd/nexa-agent.service"} {
+		unitSection := readUnitDirectives(t, unit)
+		requireDirective(t, unitSection, "StartLimitIntervalSec", "300s")
+		requireDirective(t, unitSection, "StartLimitBurst", "10")
+
+		directives := readServiceDirectives(t, unit)
+		requireDirective(t, directives, "Restart", "on-failure")
+		requireDirective(t, directives, "RestartSec", "3s")
+		requireDirectiveValue(t, directives, "Environment", "NEXA_LOG_LEVEL=info")
+		for _, key := range []string{"MemoryHigh", "MemoryMax", "CPUQuota", "TasksMax", "LimitNOFILE"} {
+			if values := directives[key]; len(values) != 1 || values[0] == "" {
+				t.Fatalf("%s must bound %s exactly once, got %q", unit, key, values)
+			}
+		}
+		// A start limit only takes effect in [Unit]; systemd parses these keys
+		// nowhere else and would silently drop them from [Service].
+		for _, key := range []string{"StartLimitIntervalSec", "StartLimitBurst"} {
+			if values, ok := directives[key]; ok {
+				t.Fatalf("%s puts %s in [Service] where systemd ignores it, got %q", unit, key, values)
+			}
+		}
+	}
+
+	api := readServiceDirectives(t, "systemd/nexa-api.service")
+	requireDirective(t, api, "MemoryHigh", "256M")
+	requireDirective(t, api, "MemoryMax", "512M")
+	requireDirective(t, api, "TasksMax", "512")
+
+	// The agent's ceiling covers apt, dpkg and podman running in its cgroup, so
+	// it must stay well clear of the control plane's, or a legitimate package
+	// install is killed by the limit meant to catch a leak.
+	agent := readServiceDirectives(t, "systemd/nexa-agent.service")
+	requireDirective(t, agent, "MemoryHigh", "1G")
+	requireDirective(t, agent, "MemoryMax", "1536M")
+	requireDirective(t, agent, "TasksMax", "4096")
+}
+
+func TestTimerDrivenBackupIsBoundedButNeverRateLimitedOut(t *testing.T) {
+	unitSection := readUnitDirectives(t, "systemd/nexa-panel-system-backup.service")
+	requireDirective(t, unitSection, "ConditionPathExists", "/etc/nexa-panel/system-backup.env")
+	// A start limit would disable scheduled backups after a streak of transient
+	// failures, and the oneshot has no Restart= to loop on in the first place.
+	requireDirective(t, unitSection, "StartLimitIntervalSec", "0")
+
+	directives := readServiceDirectives(t, "systemd/nexa-panel-system-backup.service")
+	if values, ok := directives["Restart"]; ok {
+		t.Fatalf("the backup oneshot must not restart itself; the timer is the retry, got Restart=%q", values)
+	}
+	requireDirective(t, directives, "MemoryMax", "256M")
+	requireDirective(t, directives, "TasksMax", "64")
+	requireDirectiveValue(t, directives, "Environment", "NEXA_LOG_LEVEL=info")
+	requireEmptyDirective(t, directives, "CapabilityBoundingSet")
+	requireDirective(t, directives, "ProtectSystem", "strict")
 }
 
 type tmpfilesEntry struct {
