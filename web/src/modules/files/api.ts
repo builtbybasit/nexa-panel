@@ -1,7 +1,7 @@
 import type { Job } from '../jobs/api'
 import { apiRequest } from '@/shared/api/request'
 
-export type EntryKind = 'file' | 'dir' | 'symlink' | 'other'
+type EntryKind = 'file' | 'dir' | 'symlink' | 'other'
 
 export interface FileEntry {
   name: string
