@@ -21,6 +21,7 @@ BINARY=""
 START=1
 PANEL_HOSTNAME=""
 TLS_EMAIL=""
+ALLOW_INSECURE=0
 
 usage() {
   cat <<'EOF'
@@ -35,6 +36,10 @@ Usage: install.sh [options]
                   Without it, Nginx exposes a local bootstrap listener only.
   --tls-email EMAIL
                   Obtain and renew a Let's Encrypt certificate for --panel-hostname.
+  --allow-insecure-http
+                  Permit publishing --panel-hostname over plaintext HTTP without
+                  TLS. Unsafe: authentication crosses the network in cleartext.
+                  Only for deployments that terminate TLS in front of this node.
   -h, --help      Show this message.
 EOF
 }
@@ -45,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --no-start) START=0; shift ;;
     --panel-hostname) PANEL_HOSTNAME="${2:-}"; [[ -n "$PANEL_HOSTNAME" ]] || { echo "error: --panel-hostname needs a host" >&2; exit 2; }; shift 2 ;;
     --tls-email) TLS_EMAIL="${2:-}"; [[ -n "$TLS_EMAIL" ]] || { echo "error: --tls-email needs an address" >&2; exit 2; }; shift 2 ;;
+    --allow-insecure-http) ALLOW_INSECURE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -79,6 +85,13 @@ if [[ -n "$PANEL_HOSTNAME" ]] && ! valid_hostname "$PANEL_HOSTNAME"; then
   die "--panel-hostname must be a valid DNS hostname"
 fi
 [[ -z "$TLS_EMAIL" || -n "$PANEL_HOSTNAME" ]] || die "--tls-email requires --panel-hostname"
+# Publishing on a public hostname exposes the login and session cookie to the
+# network. Default to safe-by-default: require TLS unless the operator explicitly
+# accepts cleartext (e.g. TLS terminates on a load balancer in front of this
+# node). The loopback-only bootstrap listener is unaffected.
+if [[ -n "$PANEL_HOSTNAME" && -z "$TLS_EMAIL" && "$ALLOW_INSECURE" -eq 0 ]]; then
+  die "refusing to publish $PANEL_HOSTNAME over plaintext HTTP: pass --tls-email EMAIL to provision TLS, or --allow-insecure-http to accept cleartext authentication (only safe when TLS terminates in front of this node)"
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 log "Installing Nexa Panel on Ubuntu ${VERSION_ID:-?} (${VERSION_CODENAME}), $(dpkg --print-architecture)"
@@ -96,6 +109,7 @@ apt-get install -y --no-install-recommends \
   nginx cron certbot python3-certbot-nginx \
   postgresql-common libjson-perl \
   passwd util-linux \
+  ufw \
   rclone \
   openssh-server \
   podman fuse-overlayfs \
@@ -183,6 +197,24 @@ install -m 0644 "$ROOT_DIR/packaging/systemd/nexa-api.service" /usr/lib/systemd/
 install -m 0644 "$ROOT_DIR/packaging/sysusers/nexa-panel.conf" /usr/lib/sysusers.d/nexa-panel.conf
 install -m 0644 "$ROOT_DIR/packaging/tmpfiles/nexa-panel.conf" /usr/lib/tmpfiles.d/nexa-panel.conf
 
+# The control plane refuses to serve authenticated traffic over non-loopback
+# plaintext HTTP unless NEXA_ALLOW_INSECURE_HTTP is set. Manage that opt-in as a
+# drop-in so it is applied when --allow-insecure-http was requested and removed
+# otherwise — a later safe re-install must not silently retain the override.
+NEXA_API_DROPIN_DIR="/etc/systemd/system/nexa-api.service.d"
+NEXA_API_INSECURE_DROPIN="$NEXA_API_DROPIN_DIR/10-insecure-http.conf"
+if [[ "$ALLOW_INSECURE" -eq 1 ]]; then
+  warn "publishing over plaintext HTTP (--allow-insecure-http): authentication and the session cookie cross the network in cleartext; only do this when TLS terminates in front of this node"
+  install -d -m 0755 "$NEXA_API_DROPIN_DIR"
+  cat > "$NEXA_API_INSECURE_DROPIN" <<'EOF'
+[Service]
+Environment=NEXA_ALLOW_INSECURE_HTTP=1
+EOF
+  chmod 0644 "$NEXA_API_INSECURE_DROPIN"
+else
+  rm -f "$NEXA_API_INSECURE_DROPIN"
+fi
+
 # Create the account and the managed tree now rather than waiting for the next
 # boot, so the services can start at the end of this script.
 systemd-sysusers
@@ -199,7 +231,7 @@ if [[ -n "$PANEL_HOSTNAME" ]]; then
   PANEL_LISTEN="80"
   PANEL_SERVER_NAME="$PANEL_HOSTNAME"
 else
-  PANEL_LISTEN="127.0.0.1:8080"
+  PANEL_LISTEN="127.0.0.1:8888"
   PANEL_SERVER_NAME="localhost"
 fi
 sed -e "s/__LISTEN__/$PANEL_LISTEN/g" -e "s/__SERVER_NAME__/$PANEL_SERVER_NAME/g" \
@@ -253,6 +285,6 @@ else
   if [[ -n "$PANEL_HOSTNAME" ]]; then
     log "Nexa Panel is available at http${TLS_EMAIL:+s}://$PANEL_HOSTNAME/"
   else
-    log "Nexa Panel bootstrap listener is available locally at http://127.0.0.1:8080/. Re-run with --panel-hostname to publish it."
+    log "Nexa Panel bootstrap listener is available locally at http://127.0.0.1:8888/. Re-run with --panel-hostname to publish it."
   fi
 fi

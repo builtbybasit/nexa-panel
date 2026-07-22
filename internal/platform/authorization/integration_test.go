@@ -52,6 +52,7 @@ func TestViewerCannotReadAuditButAdminCan(t *testing.T) {
 
 	bootstrap := httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap",
 		strings.NewReader(`{"username":"admin","password":"a-strong-password"}`))
+	bootstrap.RemoteAddr = "127.0.0.1:12345"
 	bootstrapResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(bootstrapResponse, bootstrap)
 	if bootstrapResponse.Code != http.StatusCreated {
@@ -103,6 +104,7 @@ func (sensitiveActionModule) Register(registry module.Registry) error {
 
 func requestSensitiveAction(handler http.Handler, cookie *http.Cookie) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/sensitive-test", nil)
+	request.RemoteAddr = "127.0.0.1:12345"
 	request.AddCookie(cookie)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -111,6 +113,7 @@ func requestSensitiveAction(handler http.Handler, cookie *http.Cookie) *httptest
 
 func requestAudit(handler http.Handler, cookie *http.Cookie) int {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/audit/events", nil)
+	request.RemoteAddr = "127.0.0.1:12345"
 	request.AddCookie(cookie)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

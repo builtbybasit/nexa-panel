@@ -87,6 +87,16 @@ func IsHTTPS(r *http.Request) bool {
 	return r.TLS != nil || (IsTrustedProxy(r.Context()) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
 }
 
+// IsLoopback reports whether the real client is a loopback address. It reuses
+// the trusted-proxy-aware RemoteAddress, so a direct TCP peer is judged by its
+// actual socket address while a request through the trusted Unix socket is
+// judged by the forwarded client address nginx supplies. A non-loopback or
+// unparseable address is never treated as loopback.
+func IsLoopback(r *http.Request) bool {
+	ip := net.ParseIP(RemoteAddress(r))
+	return ip != nil && ip.IsLoopback()
+}
+
 func firstForwardedAddress(value string) string {
 	first, _, _ := strings.Cut(value, ",")
 	first = strings.TrimSpace(first)

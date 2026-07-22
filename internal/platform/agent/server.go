@@ -4,16 +4,21 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
+	firewalloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/firewall"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
@@ -44,8 +49,15 @@ type Server struct {
 	schedules    scheduleoperator.Operator
 	backups      backupoperator.Operator
 	services     servicesoperator.Operator
+	firewall     firewalloperator.Operator
 	selfUpdate   selfupdateoperator.Operator
 	logger       *slog.Logger
+
+	startedAt     time.Time
+	requests      atomic.Uint64
+	inFlight      atomic.Int64
+	durationNanos atomic.Uint64
+	panics        atomic.Uint64
 }
 
 type Option func(*Server)
@@ -54,7 +66,7 @@ func New(socketPath, version, token string, logger *slog.Logger, options ...Opti
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	server := &Server{socketPath: socketPath, version: version, token: token, logger: logger}
+	server := &Server{socketPath: socketPath, version: version, token: token, logger: logger, startedAt: time.Now().UTC()}
 	for _, option := range options {
 		option(server)
 	}
@@ -73,6 +85,10 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.healthHTTP)
+	// Registered on the mux so it inherits the bearer-token auth; the socket is
+	// only reachable by the unprivileged API process, so there is no separate
+	// local-surface gate as on the control plane's /metrics.
+	mux.HandleFunc("GET /v1/metrics", s.metricsHTTP)
 	if s.sites != nil {
 		mux.HandleFunc("POST /v1/sites/plan", s.sitePlanHTTP)
 		mux.HandleFunc("POST /v1/sites/apply", s.siteApplyHTTP)
@@ -149,6 +165,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.backups != nil {
 		mux.HandleFunc("POST /v1/backups/accounts/test", s.backupTestAccountHTTP)
 		mux.HandleFunc("POST /v1/backups/run", s.backupRunHTTP)
+		mux.HandleFunc("POST /v1/backups/system/run", s.backupRunSystemHTTP)
 		mux.HandleFunc("POST /v1/backups/restore", s.backupRestoreHTTP)
 		mux.HandleFunc("POST /v1/backups/copies/delete", s.backupDeleteCopyHTTP)
 		mux.HandleFunc("POST /v1/backups/schedules/install", s.backupInstallScheduleHTTP)
@@ -159,12 +176,20 @@ func (s *Server) Serve(ctx context.Context) error {
 		mux.HandleFunc("POST /v1/services/plan", s.servicesPlanHTTP)
 		mux.HandleFunc("POST /v1/services/apply", s.servicesApplyHTTP)
 	}
+	if s.firewall != nil {
+		mux.HandleFunc("GET /v1/firewall/status", s.firewallStatusHTTP)
+		mux.HandleFunc("POST /v1/firewall/apply", s.firewallApplyHTTP)
+	}
 	if s.selfUpdate != nil {
 		mux.HandleFunc("GET /v1/self-update/latest", s.selfUpdateLatestHTTP)
 		mux.HandleFunc("POST /v1/self-update/apply", s.selfUpdateApplyHTTP)
+		mux.HandleFunc("POST /v1/self-update/rollback", s.selfUpdateRollbackHTTP)
 	}
 	httpServer := &http.Server{
-		Handler:           s.authenticate(mux),
+		// Auth stays innermost so authentication failures are still logged,
+		// counted, and panic-guarded; metrics is outermost so it counts every
+		// request including rejected ones.
+		Handler:           s.observeMetrics(s.logRequests(s.recoverPanic(s.authenticate(mux)))),
 		ReadHeaderTimeout: 2 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		// Package installs and verified database/backup restores legitimately
@@ -206,4 +231,85 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 
 func (s *Server) healthHTTP(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": s.version})
+}
+
+// recoverPanic turns a handler panic into a clean JSON 500 with a stack logged
+// via slog, and bumps the panic counter — mirroring the control plane so the
+// root agent process is no less observable than the API. The 500 is only
+// written when the response is still uncommitted, so a partially-streamed
+// download or log tail is not corrupted with a trailing error body.
+func (s *Server) recoverPanic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				s.panics.Add(1)
+				s.logger.Error("panic recovered", "request_id", r.Header.Get("X-Request-ID"), "error", recovered, "stack", string(debug.Stack()))
+				if observed, ok := w.(*responseObserver); !ok || !observed.Committed() {
+					writeJSON(w, http.StatusInternalServerError, map[string]any{
+						"code":    "internal_error",
+						"message": "An internal error occurred.",
+					})
+				}
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// logRequests emits one structured line per request (method, path, status,
+// bytes, duration, and any forwarded request id). The response observer it
+// builds is what recoverPanic type-asserts to decide whether a response was
+// already committed, so this middleware must sit outside recoverPanic.
+func (s *Server) logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		observed := newResponseObserver(w)
+		defer func() {
+			s.logger.Info(
+				"agent request",
+				"request_id", r.Header.Get("X-Request-ID"),
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", observed.StatusCode(),
+				"bytes", observed.BytesWritten(),
+				"duration", time.Since(started),
+			)
+		}()
+		next.ServeHTTP(observed, r)
+	})
+}
+
+func (s *Server) observeMetrics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		s.requests.Add(1)
+		s.inFlight.Add(1)
+		defer func() {
+			s.inFlight.Add(-1)
+			s.durationNanos.Add(uint64(time.Since(started)))
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) metricsHTTP(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	uptime := time.Since(s.startedAt).Seconds()
+	duration := float64(s.durationNanos.Load()) / float64(time.Second)
+	_, _ = fmt.Fprintf(
+		w,
+		"# TYPE nexa_agent_build_info gauge\n"+
+			"nexa_agent_build_info{version=%s} 1\n"+
+			"# TYPE nexa_agent_process_uptime_seconds gauge\n"+
+			"nexa_agent_process_uptime_seconds %.6f\n"+
+			"# TYPE nexa_agent_http_requests_total counter\n"+
+			"nexa_agent_http_requests_total %d\n"+
+			"# TYPE nexa_agent_http_requests_in_flight gauge\n"+
+			"nexa_agent_http_requests_in_flight %d\n"+
+			"# TYPE nexa_agent_http_request_duration_seconds_total counter\n"+
+			"nexa_agent_http_request_duration_seconds_total %.6f\n"+
+			"# TYPE nexa_agent_http_panics_total counter\n"+
+			"nexa_agent_http_panics_total %d\n",
+		strconv.Quote(s.version), uptime, s.requests.Load(), s.inFlight.Load(), duration, s.panics.Load(),
+	)
 }

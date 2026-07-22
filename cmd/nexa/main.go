@@ -60,10 +60,13 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `Nexa Panel - Modern Server Management Platform
 
 Usage:
-  nexa api [--address 127.0.0.1:8080 | --unix-socket /run/nexa-panel/api.sock] [--state /var/lib/nexa-panel/control.db] [--master-key /var/lib/nexa-panel/master.key]
+  nexa api [--address 127.0.0.1:8888 | --unix-socket /run/nexa-panel/api.sock] [--state /var/lib/nexa-panel/control.db] [--master-key /var/lib/nexa-panel/master.key]
   nexa agent [--socket /run/nexa-panel/agent.sock] [--token /run/nexa-panel/agent.token]
   nexa agent-token [--path /etc/nexa-panel/agent.token]
   nexa self-update [--check | --version X.Y.Z | --binary /path/to/nexa-linux-ARCH] [--socket /run/nexa-panel/agent.sock] [--token /run/nexa-panel/agent.token]
+  nexa self-update rollback [--socket /run/nexa-panel/agent.sock] [--token /run/nexa-panel/agent.token]
+  nexa backup system --account <id|name> [--state /var/lib/nexa-panel/control.db]
+  nexa backup system-restore --archive nexa-panel-system.tar.gz [--state /var/lib/nexa-panel/control.db] [--master-key /var/lib/nexa-panel/master.key] [--force]
   nexa doctor
   nexa version`)
 }

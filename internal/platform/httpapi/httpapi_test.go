@@ -67,3 +67,39 @@ func TestForwardedMetadataRequiresTrustedProxy(t *testing.T) {
 		t.Fatal("direct TLS connection was not recognized")
 	}
 }
+
+func TestIsLoopback(t *testing.T) {
+	// A direct TCP peer is judged by its socket address, ignoring forwarded
+	// headers it may try to spoof.
+	direct := httptest.NewRequest(http.MethodGet, "http://panel.example/", nil)
+	direct.RemoteAddr = "127.0.0.1:5000"
+	direct.Header.Set("X-Forwarded-For", "198.51.100.8")
+	if !IsLoopback(direct) {
+		t.Fatal("direct loopback peer was not recognized")
+	}
+
+	// An untrusted client cannot forge a loopback client via X-Forwarded-For:
+	// the real peer wins.
+	spoofed := httptest.NewRequest(http.MethodGet, "http://panel.example/", nil)
+	spoofed.RemoteAddr = "198.51.100.8:5000"
+	spoofed.Header.Set("X-Forwarded-For", "127.0.0.1")
+	if IsLoopback(spoofed) {
+		t.Fatal("untrusted forwarded loopback address was accepted")
+	}
+
+	// Through the trusted proxy, the forwarded loopback client is honored (nginx
+	// on 127.0.0.1 or an SSH tunnel).
+	trustedLoopback := spoofed.WithContext(WithTrustedProxy(spoofed.Context()))
+	if !IsLoopback(trustedLoopback) {
+		t.Fatal("trusted forwarded loopback client was rejected")
+	}
+
+	// Through the trusted proxy, a forwarded public client is not loopback.
+	trustedPublic := httptest.NewRequest(http.MethodGet, "http://panel.example/", nil)
+	trustedPublic.RemoteAddr = "127.0.0.1:5000"
+	trustedPublic.Header.Set("X-Forwarded-For", "198.51.100.8")
+	trustedPublic = trustedPublic.WithContext(WithTrustedProxy(trustedPublic.Context()))
+	if IsLoopback(trustedPublic) {
+		t.Fatal("trusted forwarded public client was treated as loopback")
+	}
+}

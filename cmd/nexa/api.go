@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/modules/certificates"
 	"github.com/nexa-panel/nexa-panel/internal/modules/domains"
 	"github.com/nexa-panel/nexa-panel/internal/modules/files"
+	"github.com/nexa-panel/nexa-panel/internal/modules/firewall"
 	"github.com/nexa-panel/nexa-panel/internal/modules/logs"
 	"github.com/nexa-panel/nexa-panel/internal/modules/mysql"
 	"github.com/nexa-panel/nexa-panel/internal/modules/php"
@@ -42,6 +45,7 @@ import (
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
+	firewalloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/firewall"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
@@ -59,14 +63,18 @@ import (
 
 func runAPI(args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet("api", flag.ContinueOnError)
-	address := flags.String("address", envOrDefault("NEXA_API_ADDRESS", "127.0.0.1:8080"), "HTTP listen address")
+	address := flags.String("address", envOrDefault("NEXA_API_ADDRESS", "127.0.0.1:8888"), "HTTP listen address")
 	unixSocket := flags.String("unix-socket", envOrDefault("NEXA_API_UNIX_SOCKET", ""), "Unix socket for a trusted local reverse proxy (disables TCP listener)")
+	allowInsecureHTTP := flags.Bool("allow-insecure-http", envBool("NEXA_ALLOW_INSECURE_HTTP"), "serve authenticated traffic over plaintext HTTP on a non-loopback bind (unsafe; TLS should front the panel)")
 	state := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/tmp/nexa-panel/control.db"), "SQLite control-plane state path")
 	masterKey := flags.String("master-key", envOrDefault("NEXA_MASTER_KEY", "/tmp/nexa-panel/master.key"), "AES master key path")
 	agentSocket := flags.String("agent-socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
 	agentToken := flags.String("agent-token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *allowInsecureHTTP {
+		logger.Warn("insecure HTTP is allowed (NEXA_ALLOW_INSECURE_HTTP): authenticated traffic and the session cookie may cross the network as cleartext; front the panel with TLS instead")
 	}
 
 	database, err := persistence.Open(*state)
@@ -79,11 +87,18 @@ func runAPI(args []string, logger *slog.Logger) error {
 		return fmt.Errorf("open control-plane master key: %w", err)
 	}
 
-	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancelSetup()
-	if err := persistence.RunMigrations(setupCtx, database); err != nil {
+	// Migrations run under their own generous budget rather than the tight 10s
+	// module-init budget below: a pre-migration snapshot plus a large upgrade
+	// must not deadline out, and neither should starve the module constructors.
+	migrateCtx, cancelMigrate := context.WithTimeout(context.Background(), 2*time.Minute)
+	if err := persistence.RunMigrations(migrateCtx, database, persistence.WithPreMigrationSnapshot(*state, logger)); err != nil {
+		cancelMigrate()
 		return fmt.Errorf("run control-plane migrations: %w", err)
 	}
+	cancelMigrate()
+
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelSetup()
 	auditModule, err := audit.New(setupCtx, database)
 	if err != nil {
 		return fmt.Errorf("initialize audit module: %w", err)
@@ -168,6 +183,10 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize SFTP module: %w", err)
 	}
+	firewallModule, err := firewall.New(jobsModule, firewalloperator.NewUnixClient(*agentSocket, *agentToken))
+	if err != nil {
+		return fmt.Errorf("initialize firewall module: %w", err)
+	}
 	backupsModule, err := backups.New(setupCtx, backups.Dependencies{
 		Database: database, Jobs: jobsModule, Cipher: secretBox,
 		Operator:     backupoperator.NewUnixClient(*agentSocket, *agentToken),
@@ -200,6 +219,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		phpModule,
 		servicesModule,
 		sftpModule,
+		firewallModule,
 		backupsModule,
 		system.New(capacity.NewProcReader(), podman.NewInspector(), system.WithUpdates(jobsModule, selfupdateoperator.NewUnixClient(*agentSocket, *agentToken))),
 	}
@@ -209,6 +229,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		controlplane.WithAuthentication(identityModule),
 		controlplane.WithAuthorization(authorization.New()),
 		controlplane.WithReadiness(apiReadiness(database, authenticatedAgentReadiness(*agentSocket, *agentToken))),
+		controlplane.WithInsecureHTTPAllowed(*allowInsecureHTTP),
 	)
 	if err != nil {
 		return fmt.Errorf("create control plane: %w", err)
@@ -237,7 +258,44 @@ func runAPI(args []string, logger *slog.Logger) error {
 		defer cleanup()
 		return serveHTTPListener(server, listener, logger)
 	}
+	if err := insecureTCPBindAllowed(*address, *allowInsecureHTTP); err != nil {
+		return err
+	}
 	return serveHTTP(server, logger)
+}
+
+func envBool(name string) bool {
+	value, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(name)))
+	return err == nil && value
+}
+
+// insecureTCPBindAllowed refuses a direct TCP listener on a non-loopback
+// address unless insecure HTTP is explicitly allowed. Production binds a Unix
+// socket behind nginx and never reaches this; it guards the direct
+// `nexa api --address` path so a public bind cannot silently serve
+// authentication (and the session cookie) over cleartext HTTP. The request-time
+// guard in the control plane covers the socket topology.
+func insecureTCPBindAllowed(address string, allowInsecure bool) error {
+	if allowInsecure || bindIsLoopback(address) {
+		return nil
+	}
+	return fmt.Errorf("refusing to bind %q: authenticated traffic would cross the network as plaintext HTTP; bind a loopback address such as 127.0.0.1, front the panel with TLS, or set NEXA_ALLOW_INSECURE_HTTP=1 to override", address)
+}
+
+// bindIsLoopback fails closed: only literal loopback IPs and the name
+// "localhost" count as loopback. An empty host, a wildcard bind (0.0.0.0 or ::),
+// any routable IP, or an unparseable/DNS host is treated as non-loopback so a
+// publicly-resolving hostname is never mistaken for a safe local bind.
+func bindIsLoopback(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil || host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func serveHTTP(server *http.Server, logger *slog.Logger) error {
