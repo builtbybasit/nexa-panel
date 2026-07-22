@@ -21,6 +21,7 @@ func TestEmbeddedFrontendServesVueRoutes(t *testing.T) {
 	for _, route := range []string{"/", "/system", "/unknown/vue/route"} {
 		t.Run(route, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, route, nil)
+			request.RemoteAddr = "127.0.0.1:12345"
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)
 
