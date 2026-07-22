@@ -86,6 +86,42 @@ func TestDurableWorkerStoresFailure(t *testing.T) {
 	}
 }
 
+func TestDurableWorkerRecoversFromHandlerPanic(t *testing.T) {
+	module, _ := newTestModule(t)
+	if err := module.RegisterHandler("test.panic", func(context.Context, json.RawMessage, func(int, string) error) (any, error) {
+		panic("boom")
+	}); err != nil {
+		t.Fatalf("register panic handler: %v", err)
+	}
+	if err := module.RegisterHandler("test.after", func(context.Context, json.RawMessage, func(int, string) error) (any, error) {
+		return map[string]bool{"ok": true}, nil
+	}); err != nil {
+		t.Fatalf("register after handler: %v", err)
+	}
+
+	panicJob, err := module.Submit(context.Background(), "test.panic", struct{}{}, nil)
+	if err != nil {
+		t.Fatalf("Submit panic job: %v", err)
+	}
+	module.Start(context.Background())
+
+	failed := waitForState(t, module, panicJob.ID, StateFailed)
+	if !strings.Contains(failed.Failure, "job handler panicked") || !strings.Contains(failed.Failure, "boom") {
+		t.Fatalf("failure = %q, want it to mention the recovered panic", failed.Failure)
+	}
+	if got := module.PanicCount(); got != 1 {
+		t.Fatalf("PanicCount() = %d, want 1", got)
+	}
+
+	// The worker goroutine must survive the panic and keep processing jobs.
+	afterJob, err := module.Submit(context.Background(), "test.after", struct{}{}, nil)
+	if err != nil {
+		t.Fatalf("Submit after job: %v", err)
+	}
+	module.wake()
+	waitForState(t, module, afterJob.ID, StateSucceeded)
+}
+
 func TestHeartbeatKeepsLongRunningJobLeaseActive(t *testing.T) {
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
@@ -421,6 +457,7 @@ func TestAuthenticatedDiagnosticsHTTPAndEventStream(t *testing.T) {
 
 	bootstrapRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap",
 		strings.NewReader(`{"username":"admin","password":"a-strong-password"}`))
+	bootstrapRequest.RemoteAddr = "127.0.0.1:12345"
 	bootstrapResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(bootstrapResponse, bootstrapRequest)
 	if bootstrapResponse.Code != http.StatusCreated {
@@ -437,6 +474,7 @@ func TestAuthenticatedDiagnosticsHTTPAndEventStream(t *testing.T) {
 
 	diagnosticsRequest := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/diagnostics",
 		strings.NewReader(`{"delayMilliseconds":10}`))
+	diagnosticsRequest.RemoteAddr = "127.0.0.1:12345"
 	diagnosticsRequest.AddCookie(cookie)
 	diagnosticsResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(diagnosticsResponse, diagnosticsRequest)
@@ -450,6 +488,7 @@ func TestAuthenticatedDiagnosticsHTTPAndEventStream(t *testing.T) {
 	waitForState(t, jobsModule, submitted.ID, StateSucceeded)
 
 	eventsRequest := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/jobs/%d/events", submitted.ID), nil)
+	eventsRequest.RemoteAddr = "127.0.0.1:12345"
 	eventsRequest.AddCookie(cookie)
 	eventsResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(eventsResponse, eventsRequest)
