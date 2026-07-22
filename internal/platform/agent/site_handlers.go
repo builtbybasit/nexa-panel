@@ -25,6 +25,24 @@ func (s *Server) sitePlanHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, plan)
 }
 
+// siteTeardownPlanHTTP issues the plan that strips a site from the node. The
+// control plane must not build this shape itself: the signature covers the whole
+// plan, so any post-signing edit makes the agent reject it as unissued.
+func (s *Server) siteTeardownPlanHTTP(w http.ResponseWriter, r *http.Request) {
+	var site siteoperator.Site
+	if err := decodeJSON(w, r, &site); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	plan, err := s.sites.PlanTeardown(r.Context(), site)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "site_plan_failed", err.Error())
+		return
+	}
+	plan.Signature = s.signSitePlan(plan)
+	writeJSON(w, http.StatusOK, plan)
+}
+
 func (s *Server) siteApplyHTTP(w http.ResponseWriter, r *http.Request) {
 	s.sitePlanMutation(w, r, false)
 }

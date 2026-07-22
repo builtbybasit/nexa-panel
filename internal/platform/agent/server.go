@@ -91,6 +91,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/metrics", s.metricsHTTP)
 	if s.sites != nil {
 		mux.HandleFunc("POST /v1/sites/plan", s.sitePlanHTTP)
+		mux.HandleFunc("POST /v1/sites/teardown-plan", s.siteTeardownPlanHTTP)
 		mux.HandleFunc("POST /v1/sites/apply", s.siteApplyHTTP)
 		mux.HandleFunc("POST /v1/sites/rollback", s.siteRollbackHTTP)
 	}

@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
-	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 
 	"github.com/uptrace/bun"
 )
@@ -93,7 +92,7 @@ func (m *Module) dependentBlocker(ctx context.Context, siteID string) (string, e
 		return "", err
 	}
 	certificates, err := m.database.NewSelect().TableExpr("certificates").
-		Where("site_id = ?", siteID).Where("status NOT IN (?)", bun.In([]string{"revoked", "failed"})).Count(ctx)
+		Where("site_id = ?", siteID).Where("status NOT IN (?)", bun.List([]string{"revoked", "failed"})).Count(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -156,18 +155,22 @@ func (m *Module) deleteJob(ctx context.Context, request json.RawMessage, report 
 // the Nginx site atomically, refusing (rather than half-applying) if the managed
 // configuration has drifted since it was activated.
 func (m *Module) teardownHost(ctx context.Context, site Site) error {
-	plan, err := m.operator.Plan(ctx, siteoperator.Site{
-		ID: site.ID, Slug: site.Slug, PrimaryDomain: site.PrimaryDomain, PHPVersion: site.PHPVersion,
-		UnixUser: site.UnixUser, RootPath: site.RootPath, SocketPath: site.SocketPath,
-	})
+	// Definition threads the persisted settings, so the teardown plan renders the
+	// same conditional artifacts (htpasswd, rate-limit zone) the site activated
+	// with — and the synthetic rollback below removes every one of them, not just
+	// the three core files.
+	definition, err := m.Definition(ctx, site.ID, nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("assemble site teardown definition: %w", err)
+	}
+	// The agent issues the synthetic plan and signs it. Building this shape here
+	// by editing an activation plan is what used to break teardown: the signature
+	// covers the whole plan, so the agent rejected the edited copy with "The site
+	// plan was not issued by this agent." Send back exactly what was issued.
+	plan, err := m.operator.PlanTeardown(ctx, definition)
 	if err != nil {
 		return fmt.Errorf("plan site teardown: %w", err)
 	}
-	plan.Before = make([]siteoperator.Snapshot, len(plan.Artifacts))
-	for index := range plan.Artifacts {
-		plan.Before[index] = siteoperator.Snapshot{Path: plan.Artifacts[index].Path}
-	}
-	plan.EnabledBefore = false
 	if _, err := m.operator.Rollback(ctx, plan); err != nil {
 		return fmt.Errorf("remove managed site configuration: %w", err)
 	}
