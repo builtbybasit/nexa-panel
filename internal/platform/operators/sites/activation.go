@@ -72,10 +72,43 @@ func (o *HostOperator) Plan(_ context.Context, site Site) (Plan, error) {
 		filtered = append(filtered, artifact)
 	}
 	plan.Artifacts = filtered
+	// Snapshot the retired paths too, so restore() can put back a stanza that a
+	// failed activation had already removed.
+	plan.RetiredBefore = make([]Snapshot, 0, len(plan.Retired))
+	for _, path := range plan.Retired {
+		before, err := readSnapshot(path)
+		if err != nil {
+			return Plan{}, err
+		}
+		plan.RetiredBefore = append(plan.RetiredBefore, before)
+	}
 	plan.EnabledBefore, err = o.enabled(site.Slug)
 	if err != nil {
 		return Plan{}, err
 	}
+	return plan, nil
+}
+
+// PlanTeardown renders the site exactly as Plan does — validatePlan re-renders
+// and demands byte-exact equality, so the artifacts must still be the real ones —
+// but reports an empty before-state for every managed path. Rolling this plan
+// back therefore removes each artifact and leaves the vhost disabled. The
+// retired paths are blanked the same way, so a conditional artifact is removed
+// whether or not its setting happened to be on when the site was torn down.
+func (o *HostOperator) PlanTeardown(ctx context.Context, site Site) (Plan, error) {
+	plan, err := o.Plan(ctx, site)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan.Before = make([]Snapshot, len(plan.Artifacts))
+	for index := range plan.Artifacts {
+		plan.Before[index] = Snapshot{Path: plan.Artifacts[index].Path}
+	}
+	plan.RetiredBefore = make([]Snapshot, len(plan.Retired))
+	for index, path := range plan.Retired {
+		plan.RetiredBefore[index] = Snapshot{Path: path}
+	}
+	plan.EnabledBefore = false
 	return plan, nil
 }
 
@@ -93,6 +126,9 @@ func (o *HostOperator) Apply(ctx context.Context, plan Plan) (Observation, error
 		return Observation{}, fmt.Errorf("prepare site identity and directories: %w", err)
 	}
 	if err := o.writeArtifacts(plan.Artifacts); err != nil {
+		return Observation{}, o.rollbackFailure(ctx, plan, err)
+	}
+	if err := o.removeRetired(plan); err != nil {
 		return Observation{}, o.rollbackFailure(ctx, plan, err)
 	}
 	if err := o.system.SecureArtifacts(ctx, plan.Site, plan.Artifacts); err != nil {

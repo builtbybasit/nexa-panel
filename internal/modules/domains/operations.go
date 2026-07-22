@@ -7,7 +7,6 @@ import (
 	"sort"
 	"time"
 
-	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 	"github.com/uptrace/bun"
 )
 
@@ -49,7 +48,12 @@ func (m *Module) planJob(ctx context.Context, raw json.RawMessage, report func(i
 	if err != nil {
 		return nil, err
 	}
-	nodePlan, err := m.operator.Plan(ctx, siteoperator.Site{ID: site.ID, Slug: site.Slug, PrimaryDomain: site.PrimaryDomain, PHPVersion: site.PHPVersion, UnixUser: site.UnixUser, RootPath: site.RootPath, SocketPath: site.SocketPath, Routes: routes, TLS: tls, TLSDomains: tlsDomains})
+	definition, err := m.sites.Definition(ctx, site.ID, routes, tls, tlsDomains)
+	if err != nil {
+		m.fail(context.WithoutCancel(ctx), domain.ID, err)
+		return nil, err
+	}
+	nodePlan, err := m.operator.Plan(ctx, definition)
 	if err != nil {
 		m.fail(context.WithoutCancel(ctx), domain.ID, err)
 		return nil, err

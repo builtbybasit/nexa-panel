@@ -24,7 +24,16 @@ import {
   StatusPill,
 } from '@/shared/ui'
 
-import { activateSite, deleteSite, getSitePlan, listSites, prepareSitePlan, rollbackSite, type SitePlan } from '../api'
+import {
+  activateSite,
+  deleteSite,
+  getSitePlan,
+  listSites,
+  prepareSitePlan,
+  rollbackSite,
+  type Site,
+  type SitePlan,
+} from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -129,6 +138,7 @@ const tiles = computed<ManageTile[]>(() => {
   if (identity.can('operations.apply')) items.push({ label: 'SFTP access', icon: 'server', to: `/sftp?site=${id}` })
   if (identity.can('logs.read')) items.push({ label: 'Logs', icon: 'file-text', to: `/logs?site=${id}` })
   if (identity.can('backups.read')) items.push({ label: 'Backup copies', icon: 'archive', to: '/backups' })
+  items.push({ label: 'Settings', icon: 'settings-2', to: `/sites/${id}/settings` })
   return items
 })
 
@@ -308,6 +318,7 @@ async function preparePlan() {
     failureMessage: 'Site planning failed',
   })
 }
+
 
 // On arrival: bring the plan into view, or pick up a job that is already running.
 watch(

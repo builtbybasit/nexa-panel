@@ -2,7 +2,9 @@ package sites
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
@@ -144,6 +146,92 @@ func (m *Module) replanHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", StatusPlanning).Set("last_job_id = ?", job.ID).Set("updated_at = ?", m.now().UTC()).Where("id = ?", site.ID).Exec(r.Context())
+	writeJSON(w, http.StatusAccepted, job)
+}
+
+// updateSettingsHTTP persists a site's per-site Nginx/PHP-FPM settings and then
+// re-renders the node to match. It is the one sanctioned self-service mutation of
+// an active site (replanHTTP still refuses those) precisely because the settings
+// job re-assembles the *full* definition — routes and TLS included — via
+// Definition, so it can never strip a site's domains or certificate the way a
+// bare re-plan would. The lifecycle depends on the site's current state:
+//   - active     -> persist, enqueue site.settings, 202 + Job (one-shot apply)
+//   - plan_ready -> persist, re-plan so the stored plan can't go stale, 202 + Job
+//   - other settled states -> persist only, 200 + Site (next plan picks it up)
+func (m *Module) updateSettingsHTTP(w http.ResponseWriter, r *http.Request) {
+	site, err := m.Get(r.Context(), r.PathValue("id"))
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
+		return
+	}
+	if !settingsEditable(site.Status) {
+		writeError(w, http.StatusConflict, "site_busy", "The site is mid-operation; wait for the current job to finish before changing settings.")
+		return
+	}
+	user, ok := identity.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		return
+	}
+	var request SettingsRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	current, err := m.loadSettings(r.Context(), site.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "site_unavailable", "The current settings could not be loaded.")
+		return
+	}
+	settings, err := normalizeSettings(current, request)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "settings_invalid", err.Error())
+		return
+	}
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "settings_invalid", "The settings could not be stored.")
+		return
+	}
+	stored := string(encoded)
+	if _, err := m.database.NewUpdate().Model((*siteModel)(nil)).Set("settings_json = ?", stored).Set("updated_at = ?", m.now().UTC()).Where("id = ?", site.ID).Exec(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "settings_update_failed", "The settings could not be saved.")
+		return
+	}
+
+	switch site.Status {
+	case StatusActive:
+		m.enqueueSettingsFollowup(w, r, site, "site.settings", "Apply settings to "+site.PrimaryDomain, StatusActivating, &user.ID)
+	case StatusPlanReady:
+		m.enqueueSettingsFollowup(w, r, site, "site.plan", "Plan site "+site.DisplayName, StatusPlanning, &user.ID)
+	default:
+		refreshed, err := m.Get(r.Context(), site.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be reloaded.")
+			return
+		}
+		writeJSON(w, http.StatusOK, refreshed)
+	}
+}
+
+// enqueueSettingsFollowup queues the job that re-renders the node after a settings
+// change and attaches it to the site, keeping the persisted settings and the job
+// atomic from the caller's perspective.
+func (m *Module) enqueueSettingsFollowup(w http.ResponseWriter, r *http.Request, site Site, kind, title string, status Status, actorUserID *string) {
+	job, err := m.jobs.SubmitTitled(r.Context(), kind, title, map[string]string{"siteId": site.ID}, actorUserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The settings change could not be queued.")
+		return
+	}
+	if _, err := m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", status).Set("last_job_id = ?", job.ID).Set("failure = NULL").Set("updated_at = ?", m.now().UTC()).Where("id = ?", site.ID).Exec(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "site_update_failed", "The queued operation could not be attached to the site.")
+		return
+	}
+	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
 	writeJSON(w, http.StatusAccepted, job)
 }
 

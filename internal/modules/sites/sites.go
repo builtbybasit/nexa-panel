@@ -36,19 +36,20 @@ const (
 )
 
 type Site struct {
-	ID            string    `json:"id"`
-	Slug          string    `json:"slug"`
-	DisplayName   string    `json:"displayName"`
-	PrimaryDomain string    `json:"primaryDomain"`
-	PHPVersion    string    `json:"phpVersion"`
-	UnixUser      string    `json:"unixUser"`
-	RootPath      string    `json:"rootPath"`
-	SocketPath    string    `json:"socketPath"`
-	Status        Status    `json:"status"`
-	LastJobID     *int64    `json:"lastJobId,omitempty"`
-	Failure       string    `json:"failure,omitempty"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID            string                `json:"id"`
+	Slug          string                `json:"slug"`
+	DisplayName   string                `json:"displayName"`
+	PrimaryDomain string                `json:"primaryDomain"`
+	PHPVersion    string                `json:"phpVersion"`
+	UnixUser      string                `json:"unixUser"`
+	RootPath      string                `json:"rootPath"`
+	SocketPath    string                `json:"socketPath"`
+	Status        Status                `json:"status"`
+	Settings      siteoperator.Settings `json:"settings"`
+	LastJobID     *int64                `json:"lastJobId,omitempty"`
+	Failure       string                `json:"failure,omitempty"`
+	CreatedAt     time.Time             `json:"createdAt"`
+	UpdatedAt     time.Time             `json:"updatedAt"`
 }
 
 type CreateRequest struct {
@@ -69,16 +70,38 @@ type AccessPolicy interface {
 	AccessibleSiteIDs(ctx context.Context, user identity.User) (bool, []string, error)
 }
 
+// RouteSource and TLSProvider let a settings change on an already-active site
+// re-assemble the *complete* node definition — the extra domains and the TLS
+// certificate — instead of the bare primary-domain view the sites module holds
+// on its own. They are satisfied by the domains and certificates modules and
+// wired in after construction, mirroring how those modules already depend on the
+// sites catalog. When unset (e.g. in tests), settingsJob simply plans the bare
+// site, which is still safe because a bare re-render only drops customizations,
+// never corrupts the vhost.
+type RouteSource interface {
+	Routing(ctx context.Context, siteID, includeID string) ([]siteoperator.Route, error)
+}
+
+type TLSProvider interface {
+	TLSForSite(ctx context.Context, siteID string) (*siteoperator.TLS, []string, error)
+}
+
 type Module struct {
-	database *bun.DB
-	jobs     *jobs.Module
-	runtimes RuntimeCatalog
-	operator siteoperator.Operator
-	access   AccessPolicy
-	now      func() time.Time
+	database    *bun.DB
+	jobs        *jobs.Module
+	runtimes    RuntimeCatalog
+	operator    siteoperator.Operator
+	access      AccessPolicy
+	routeSource RouteSource
+	tls         TLSProvider
+	now         func() time.Time
 }
 
 func (m *Module) SetAccessPolicy(policy AccessPolicy) { m.access = policy }
+
+func (m *Module) SetRouteSource(source RouteSource) { m.routeSource = source }
+
+func (m *Module) SetTLSProvider(provider TLSProvider) { m.tls = provider }
 
 type siteModel struct {
 	bun.BaseModel `bun:"table:sites,alias:site"`
@@ -91,6 +114,7 @@ type siteModel struct {
 	RootPath      string
 	SocketPath    string
 	Status        string
+	SettingsJSON  *string
 	LastJobID     *int64
 	Failure       *string
 	CreatedAt     time.Time
@@ -122,6 +146,9 @@ func New(_ context.Context, database *bun.DB, jobQueue *jobs.Module, runtimeCata
 	if err := jobQueue.RegisterHandler("site.delete", m.deleteJob); err != nil {
 		return nil, err
 	}
+	if err := jobQueue.RegisterHandler("site.settings", m.settingsJob); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -142,6 +169,7 @@ func (m *Module) Register(registry module.Registry) error {
 		{"GET /api/v1/sites", "sites.read", http.HandlerFunc(m.listHTTP)},
 		{"POST /api/v1/sites", "sites.write", http.HandlerFunc(m.createHTTP)},
 		{"GET /api/v1/sites/{id}", "sites.read", http.HandlerFunc(m.getHTTP)},
+		{"PATCH /api/v1/sites/{id}/settings", "sites.write", http.HandlerFunc(m.updateSettingsHTTP)},
 		{"GET /api/v1/sites/{id}/plan", "sites.read", http.HandlerFunc(m.planHTTP)},
 		{"POST /api/v1/sites/{id}/plan", "sites.write", http.HandlerFunc(m.replanHTTP)},
 		{"POST /api/v1/sites/{id}/activate", "operations.apply", http.HandlerFunc(m.activateHTTP)},

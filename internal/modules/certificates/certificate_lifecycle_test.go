@@ -22,6 +22,14 @@ type fakeSites struct{ site sites.Site }
 
 func (f fakeSites) Get(context.Context, string) (sites.Site, error) { return f.site, nil }
 
+func (f fakeSites) Definition(_ context.Context, _ string, routes []siteoperator.Route, tls *siteoperator.TLS, tlsDomains []string) (siteoperator.Site, error) {
+	return siteoperator.Site{
+		ID: f.site.ID, Slug: f.site.Slug, PrimaryDomain: f.site.PrimaryDomain, PHPVersion: f.site.PHPVersion,
+		UnixUser: f.site.UnixUser, RootPath: f.site.RootPath, SocketPath: f.site.SocketPath,
+		Routes: routes, TLS: tls, TLSDomains: tlsDomains, Settings: f.site.Settings,
+	}, nil
+}
+
 type fakeDomains struct{}
 
 func (fakeDomains) List(context.Context, string) ([]domains.Domain, error) {
@@ -58,6 +66,25 @@ func (fakeCertificateOperator) Execute(_ context.Context, plan certificateoperat
 
 type fakeSiteOperator struct{}
 
+// PlanTeardown mirrors the real operator: the same rendered plan, but with an
+// empty before-state so a rollback removes every managed path.
+func (s fakeSiteOperator) PlanTeardown(ctx context.Context, site siteoperator.Site) (siteoperator.Plan, error) {
+	plan, err := s.Plan(ctx, site)
+	if err != nil {
+		return siteoperator.Plan{}, err
+	}
+	plan.Before = make([]siteoperator.Snapshot, len(plan.Artifacts))
+	for index := range plan.Artifacts {
+		plan.Before[index] = siteoperator.Snapshot{Path: plan.Artifacts[index].Path}
+	}
+	plan.RetiredBefore = make([]siteoperator.Snapshot, len(plan.Retired))
+	for index, path := range plan.Retired {
+		plan.RetiredBefore[index] = siteoperator.Snapshot{Path: path}
+	}
+	plan.EnabledBefore = false
+	return plan, nil
+}
+
 func (fakeSiteOperator) Plan(_ context.Context, site siteoperator.Site) (siteoperator.Plan, error) {
 	now := time.Now()
 	return siteoperator.Plan{ID: "site-plan", Kind: siteoperator.PlanKind, Site: site, PlannedAt: now, ExpiresAt: now.Add(time.Hour), Signature: "signed"}, nil
@@ -65,6 +92,25 @@ func (fakeSiteOperator) Plan(_ context.Context, site siteoperator.Site) (siteope
 
 type recordingSiteOperator struct {
 	applied []siteoperator.Site
+}
+
+// PlanTeardown mirrors the real operator: the same rendered plan, but with an
+// empty before-state so a rollback removes every managed path.
+func (r *recordingSiteOperator) PlanTeardown(ctx context.Context, site siteoperator.Site) (siteoperator.Plan, error) {
+	plan, err := r.Plan(ctx, site)
+	if err != nil {
+		return siteoperator.Plan{}, err
+	}
+	plan.Before = make([]siteoperator.Snapshot, len(plan.Artifacts))
+	for index := range plan.Artifacts {
+		plan.Before[index] = siteoperator.Snapshot{Path: plan.Artifacts[index].Path}
+	}
+	plan.RetiredBefore = make([]siteoperator.Snapshot, len(plan.Retired))
+	for index, path := range plan.Retired {
+		plan.RetiredBefore[index] = siteoperator.Snapshot{Path: path}
+	}
+	plan.EnabledBefore = false
+	return plan, nil
 }
 
 func (r *recordingSiteOperator) Plan(_ context.Context, site siteoperator.Site) (siteoperator.Plan, error) {

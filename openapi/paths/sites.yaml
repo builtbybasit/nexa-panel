@@ -78,6 +78,101 @@ sites_id:
               $ref: ../components/schemas/sites.yaml#/Site
       '404':
         description: The site does not exist.
+  delete:
+    operationId: deleteSite
+    summary: Delete Site
+    tags:
+    - Sites
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Signed site teardown was queued.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+      '404':
+        description: The site does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The site has dependents (site_has_dependents) or is busy (site_busy).
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+sites_id_settings:
+  patch:
+    operationId: updateSiteSettings
+    summary: Update Site Settings
+    tags:
+    - Sites
+    x-permission: sites.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/sites.yaml#/SiteSettings
+    responses:
+      '200':
+        description: >-
+          The settings were persisted for a settled non-active site; no job was
+          queued.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/sites.yaml#/Site
+      '202':
+        description: >-
+          The site was active or plan_ready, so a re-apply/re-plan job was
+          queued to render the new settings.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/jobs.yaml#/Job
+      '401':
+        description: The request was unauthenticated.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '404':
+        description: The site does not exist (site_not_found).
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The site is busy with another operation (site_busy).
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The submitted settings failed validation (settings_invalid).
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
 sites_id_plan:
   get:
     operationId: getSitePlan

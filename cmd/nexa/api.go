@@ -139,6 +139,11 @@ func runAPI(args []string, logger *slog.Logger) error {
 		return fmt.Errorf("initialize certificates module: %w", err)
 	}
 	domainsModule.SetTLSProvider(certificatesModule)
+	// A settings change on an active site re-derives its full definition; the
+	// sites module borrows the domains and certificates modules to reload the
+	// site's routes and certificate so the re-render never drops them.
+	sitesModule.SetRouteSource(domainsModule)
+	sitesModule.SetTLSProvider(certificatesModule)
 	postgresDatabasesModule, err := postgres.New(setupCtx, database, jobsModule, secretBox, postgresoperator.NewUnixClient(*agentSocket, *agentToken))
 	if err != nil {
 		return fmt.Errorf("initialize PostgreSQL databases module: %w", err)

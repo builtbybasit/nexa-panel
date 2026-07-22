@@ -24,5 +24,11 @@ export const sitesModule: FeatureModule = {
       component: () => import('./views/SiteDetailView.vue'),
       meta: { moduleId: 'sites' },
     },
+    {
+      path: '/sites/:siteId/settings',
+      name: 'site-settings',
+      component: () => import('./views/SiteSettingsView.vue'),
+      meta: { moduleId: 'sites' },
+    },
   ],
 }

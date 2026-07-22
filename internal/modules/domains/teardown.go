@@ -131,11 +131,11 @@ func (m *Module) reactivateWithout(ctx context.Context, site sites.Site, exclude
 		return err
 	}
 	tlsDomains = clampTLSDomains(site.PrimaryDomain, routes, tlsDomains)
-	nodePlan, err := m.operator.Plan(ctx, siteoperator.Site{
-		ID: site.ID, Slug: site.Slug, PrimaryDomain: site.PrimaryDomain, PHPVersion: site.PHPVersion,
-		UnixUser: site.UnixUser, RootPath: site.RootPath, SocketPath: site.SocketPath,
-		Routes: routes, TLS: tls, TLSDomains: tlsDomains,
-	})
+	definition, err := m.sites.Definition(ctx, site.ID, routes, tls, tlsDomains)
+	if err != nil {
+		return fmt.Errorf("assemble routing without removed domain: %w", err)
+	}
+	nodePlan, err := m.operator.Plan(ctx, definition)
 	if err != nil {
 		return fmt.Errorf("plan routing without removed domain: %w", err)
 	}

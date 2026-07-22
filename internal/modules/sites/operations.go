@@ -27,10 +27,12 @@ func (m *Module) planJob(ctx context.Context, request json.RawMessage, report fu
 	if err := report(45, "Rendering confined Nginx and PHP-FPM configuration."); err != nil {
 		return nil, err
 	}
-	plan, err := m.operator.Plan(ctx, siteoperator.Site{
-		ID: site.ID, Slug: site.Slug, PrimaryDomain: site.PrimaryDomain, PHPVersion: site.PHPVersion,
-		UnixUser: site.UnixUser, RootPath: site.RootPath, SocketPath: site.SocketPath,
-	})
+	definition, err := m.Definition(ctx, site.ID, nil, nil, nil)
+	if err != nil {
+		m.markFailed(context.WithoutCancel(ctx), site.ID, err)
+		return nil, err
+	}
+	plan, err := m.operator.Plan(ctx, definition)
 	if err != nil {
 		m.markFailed(context.WithoutCancel(ctx), site.ID, err)
 		return nil, err
@@ -86,6 +88,76 @@ func (m *Module) activateJob(ctx context.Context, request json.RawMessage, repor
 	now := m.now().UTC()
 	_, err = m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", StatusActive).Set("failure = NULL").Set("updated_at = ?", now).Where("id = ?", plan.Site.ID).Exec(ctx)
 	if err != nil {
+		return nil, err
+	}
+	return observation, nil
+}
+
+// settingsJob re-renders and re-applies an active site after a settings change.
+// Unlike site.plan (which sends the bare primary-domain definition), it must
+// re-derive the site's extra routes and TLS so the re-render is the *complete*
+// vhost, then apply it in one shot — the operator's Apply validates byte-exact,
+// reloads, and auto-rolls-back on any failure, so a bad settings blob can never
+// leave the live site broken. This is why settings edits are allowed on active
+// sites while a bare replan is not.
+func (m *Module) settingsJob(ctx context.Context, request json.RawMessage, report func(int, string) error) (any, error) {
+	var payload struct {
+		SiteID string `json:"siteId"`
+	}
+	if err := json.Unmarshal(request, &payload); err != nil || payload.SiteID == "" {
+		return nil, errors.New("invalid persisted site settings request")
+	}
+	if err := report(20, "Loading site routing and certificate state."); err != nil {
+		return nil, err
+	}
+	var (
+		routes     []siteoperator.Route
+		tls        *siteoperator.TLS
+		tlsDomains []string
+		err        error
+	)
+	if m.routeSource != nil {
+		if routes, err = m.routeSource.Routing(ctx, payload.SiteID, ""); err != nil {
+			m.markFailed(context.WithoutCancel(ctx), payload.SiteID, err)
+			return nil, err
+		}
+	}
+	if m.tls != nil {
+		if tls, tlsDomains, err = m.tls.TLSForSite(ctx, payload.SiteID); err != nil {
+			m.markFailed(context.WithoutCancel(ctx), payload.SiteID, err)
+			return nil, err
+		}
+	}
+	// The certificate's stored SAN list can outlive a removed domain, so clamp it
+	// to the hostnames the site still serves before re-rendering.
+	site, err := m.Get(ctx, payload.SiteID)
+	if err != nil {
+		m.markFailed(context.WithoutCancel(ctx), payload.SiteID, err)
+		return nil, err
+	}
+	definition, err := m.Definition(ctx, payload.SiteID, routes, tls, clampTLSDomains(site.PrimaryDomain, routes, tlsDomains))
+	if err != nil {
+		m.markFailed(context.WithoutCancel(ctx), payload.SiteID, err)
+		return nil, err
+	}
+	if err := report(45, "Rendering the updated Nginx and PHP-FPM configuration."); err != nil {
+		return nil, err
+	}
+	plan, err := m.operator.Plan(ctx, definition)
+	if err != nil {
+		m.markFailed(context.WithoutCancel(ctx), payload.SiteID, err)
+		return nil, err
+	}
+	if err := report(70, "Applying and verifying the updated configuration."); err != nil {
+		return nil, err
+	}
+	observation, err := m.operator.Apply(ctx, plan)
+	if err != nil {
+		m.markFailed(context.WithoutCancel(ctx), payload.SiteID, err)
+		return nil, err
+	}
+	now := m.now().UTC()
+	if _, err := m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", StatusActive).Set("failure = NULL").Set("updated_at = ?", now).Where("id = ?", payload.SiteID).Exec(ctx); err != nil {
 		return nil, err
 	}
 	return observation, nil

@@ -68,6 +68,8 @@ paths:
     $ref: ./paths/sites.yaml#/sites
   /sites/{id}:
     $ref: ./paths/sites.yaml#/sites_id
+  /sites/{id}/settings:
+    $ref: ./paths/sites.yaml#/sites_id_settings
   /sites/{id}/plan:
     $ref: ./paths/sites.yaml#/sites_id_plan
   /sites/{id}/activate:
@@ -301,6 +303,12 @@ components:
       $ref: ./components/schemas/sites.yaml#/SitePlanTarget
     SiteRoute:
       $ref: ./components/schemas/sites.yaml#/SiteRoute
+    SiteSettings:
+      $ref: ./components/schemas/sites.yaml#/SiteSettings
+    SiteBasicAuth:
+      $ref: ./components/schemas/sites.yaml#/SiteBasicAuth
+    SiteRateLimit:
+      $ref: ./components/schemas/sites.yaml#/SiteRateLimit
     CreateDomain:
       $ref: ./components/schemas/domains.yaml#/CreateDomain
     Domain:

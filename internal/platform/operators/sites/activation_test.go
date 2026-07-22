@@ -38,10 +38,16 @@ func (s *fakeNodeSystem) VerifyHost(context.Context, Site) error  { return s.cal
 func testHostOperator(t *testing.T, system NodeSystem) (*HostOperator, Site) {
 	t.Helper()
 	root := t.TempDir()
+	// Every root is pinned inside the temp dir, including the conditional-artifact
+	// ones: a test that enables rate limiting, basic auth, or log rotation would
+	// otherwise write to (and, on retirement, delete from) the real /etc.
 	renderer := Renderer{
 		NginxAvailableRoot: filepath.Join(root, "nginx", "available"),
 		PHPConfigRoot:      filepath.Join(root, "php"),
 		SiteRoot:           filepath.Join(root, "sites"), SocketRoot: filepath.Join(root, "run", "php"),
+		NginxConfDRoot:    filepath.Join(root, "nginx", "conf.d"),
+		NginxIncludesRoot: filepath.Join(root, "nginx", "includes"),
+		LogrotateRoot:     filepath.Join(root, "logrotate.d"),
 	}
 	operator, err := NewHostOperator(renderer, filepath.Join(root, "nginx", "enabled"), system)
 	if err != nil {
@@ -142,5 +148,79 @@ func TestHostOperatorRejectsEnabledSymlinkToUnmanagedDefinition(t *testing.T) {
 	}
 	if _, err := operator.Plan(context.Background(), site); err == nil || !strings.Contains(err.Error(), "outside its managed definition") {
 		t.Fatalf("Plan() error = %v, want an unmanaged enabled-symlink error", err)
+	}
+}
+
+// Turning a conditional setting off must actually remove its file from the node.
+// Apply only writes the artifacts a plan carries, so a stanza written by an
+// earlier activation would otherwise survive indefinitely — and a stale logrotate
+// stanza is not inert: it keeps rotating the site's logs while the panel reports
+// rotation off.
+func TestHostOperatorRemovesRetiredArtifactOnDisable(t *testing.T) {
+	operator, site := testHostOperator(t, new(fakeNodeSystem))
+	stanza := filepath.Join(operator.renderer.LogrotateRoot, "nexa-demo-site")
+
+	site.Settings.LogRotation = LogRotation{Enabled: true, KeepFiles: 7, Frequency: "daily"}
+	plan, err := operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatalf("apply with rotation enabled: %v", err)
+	}
+	if _, err := os.Stat(stanza); err != nil {
+		t.Fatalf("stanza missing after enabling rotation: %v", err)
+	}
+
+	site.Settings.LogRotation = LogRotation{}
+	plan, err = operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatalf("apply with rotation disabled: %v", err)
+	}
+	if _, err := os.Stat(stanza); !os.IsNotExist(err) {
+		t.Fatalf("stanza survived disabling; logs would keep rotating (stat err = %v)", err)
+	}
+}
+
+// A rollback has to put back what the removal took away, or disabling a setting
+// and then failing verification would silently lose the previous stanza.
+func TestHostOperatorRestoresRetiredArtifactOnRollback(t *testing.T) {
+	operator, site := testHostOperator(t, new(fakeNodeSystem))
+	stanza := filepath.Join(operator.renderer.LogrotateRoot, "nexa-demo-site")
+
+	site.Settings.LogRotation = LogRotation{Enabled: true, KeepFiles: 7, Frequency: "daily"}
+	plan, err := operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(stanza)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Disable it, but fail the host verification so Apply auto-rolls back.
+	site.Settings.LogRotation = LogRotation{}
+	failing, _ := testHostOperator(t, &fakeNodeSystem{fail: "verify-host"})
+	failing.renderer = operator.renderer
+	failing.enabledRoot = operator.enabledRoot
+	plan, err = failing.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := failing.Apply(context.Background(), plan); err == nil {
+		t.Fatal("apply should have failed on verify-host")
+	}
+	restored, err := os.ReadFile(stanza)
+	if err != nil {
+		t.Fatalf("retired stanza was not restored by the rollback: %v", err)
+	}
+	if string(restored) != string(original) {
+		t.Fatalf("restored stanza differs:\n got: %s\nwant: %s", restored, original)
 	}
 }

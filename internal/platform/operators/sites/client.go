@@ -22,6 +22,12 @@ func (c *UnixClient) Plan(ctx context.Context, site Site) (Plan, error) {
 	return plan, err
 }
 
+func (c *UnixClient) PlanTeardown(ctx context.Context, site Site) (Plan, error) {
+	var plan Plan
+	err := c.call(ctx, http.MethodPost, "/v1/sites/teardown-plan", site, &plan)
+	return plan, err
+}
+
 func (c *UnixClient) Apply(ctx context.Context, plan Plan) (Observation, error) {
 	var observation Observation
 	err := c.call(ctx, http.MethodPost, "/v1/sites/apply", plan, &observation)

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -220,4 +221,87 @@ func TestVerifyHostStopsWhenTheContextIsCancelled(t *testing.T) {
 	if err := system.VerifyHost(ctx, verifySite); err == nil {
 		t.Fatal("VerifyHost() = nil, want an error once the context is cancelled")
 	}
+}
+
+// Nginx workers run as www-data and open auth_basic_user_file at request time,
+// but writeArtifacts leaves the file root:root 0640 — unreadable by the worker,
+// which turns every authenticated request into a 500. SecureArtifacts must hand
+// the password file the web-server group.
+func TestSecureArtifactsGivesTheHtpasswdTheWebServerGroup(t *testing.T) {
+	root := t.TempDir()
+	includes := filepath.Join(root, "includes")
+	if err := os.MkdirAll(includes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "site", "public"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	htpasswd := Artifact{Kind: "nginx-htpasswd", Path: filepath.Join(includes, "nexa-demo.htpasswd"), Mode: 0o640, Content: "demo:$2y$10$abcdefghijklmnopqrstuv\n"}
+	// Written the way writeArtifacts writes it: no ownership, restrictive mode.
+	if err := os.WriteFile(htpasswd.Path, []byte(htpasswd.Content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	system := NewHostSystem()
+	system.lookupUser = func(string) (*user.User, error) {
+		return &user.User{Uid: strconv.Itoa(os.Getuid())}, nil
+	}
+	system.lookupGroup = func(string) (*user.Group, error) {
+		return &user.Group{Gid: strconv.Itoa(os.Getgid())}, nil
+	}
+	site := Site{UnixUser: "nexa_demo", RootPath: filepath.Join(root, "site")}
+	if err := system.SecureArtifacts(context.Background(), site, []Artifact{htpasswd}); err != nil {
+		t.Fatalf("SecureArtifacts() = %v", err)
+	}
+
+	info, err := os.Stat(htpasswd.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode = %o, want 640 (group-readable for the nginx worker)", info.Mode().Perm())
+	}
+	gid, err := fileGID(htpasswd.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gid != os.Getgid() {
+		t.Fatalf("gid = %d, want the web-server group %d", gid, os.Getgid())
+	}
+}
+
+// A tampered artifact must not have ownership widened onto it: the content is
+// re-checked against the plan first, so a swapped file is refused before chmod.
+func TestSecureArtifactsRefusesATamperedHtpasswd(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "site", "public"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	htpasswd := Artifact{Kind: "nginx-htpasswd", Path: filepath.Join(root, "nexa-demo.htpasswd"), Mode: 0o640, Content: "demo:$2y$10$expected\n"}
+	if err := os.WriteFile(htpasswd.Path, []byte("attacker:$2y$10$swapped\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	system := NewHostSystem()
+	system.lookupUser = func(string) (*user.User, error) {
+		return &user.User{Uid: strconv.Itoa(os.Getuid())}, nil
+	}
+	system.lookupGroup = func(string) (*user.Group, error) {
+		return &user.Group{Gid: strconv.Itoa(os.Getgid())}, nil
+	}
+	site := Site{UnixUser: "nexa_demo", RootPath: filepath.Join(root, "site")}
+	if err := system.SecureArtifacts(context.Background(), site, []Artifact{htpasswd}); err == nil {
+		t.Fatal("SecureArtifacts() = nil, want a tampered password file to be refused")
+	}
+}
+
+func fileGID(path string) (int, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, errors.New("unsupported stat")
+	}
+	return int(stat.Gid), nil
 }

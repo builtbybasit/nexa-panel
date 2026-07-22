@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -109,6 +110,35 @@ func (s *HostSystem) PrepareSite(ctx context.Context, site Site) error {
 			return fmt.Errorf("prepare site directory %s: %w", directory.name, err)
 		}
 	}
+	return prepareDocumentRoot(root, site, uid, gid)
+}
+
+// prepareDocumentRoot creates the optional subdirectory the site serves from, so
+// activating a subdirectory override does not leave Nginx pointing at a missing
+// path. Each segment is created through the parent's own descriptor, keeping the
+// same symlink-substitution safety as the fixed directories above.
+func prepareDocumentRoot(root *os.Root, site Site, uid, gid int) error {
+	if site.Settings.Subdirectory == "" {
+		return nil
+	}
+	current, err := root.OpenRoot("public")
+	if err != nil {
+		return fmt.Errorf("open site public directory: %w", err)
+	}
+	// Closed via a closure so the *final* descriptor is released; `defer
+	// current.Close()` would bind the receiver now and double-close public/.
+	defer func() { current.Close() }()
+	for _, segment := range strings.Split(site.Settings.Subdirectory, "/") {
+		if err := prepareOwnedDirectory(current, segment, 0o750, uid, gid); err != nil {
+			return fmt.Errorf("prepare site document root %s: %w", site.Settings.Subdirectory, err)
+		}
+		next, err := current.OpenRoot(segment)
+		if err != nil {
+			return fmt.Errorf("open site document root %s: %w", site.Settings.Subdirectory, err)
+		}
+		current.Close()
+		current = next
+	}
 	return nil
 }
 
@@ -175,18 +205,65 @@ func (s *HostSystem) SecureArtifacts(_ context.Context, site Site, artifacts []A
 	}
 	defer root.Close()
 	for _, artifact := range artifacts {
-		if artifact.Kind != "site-root" {
-			continue
-		}
-		relative, err := filepath.Rel(site.RootPath, artifact.Path)
-		if err != nil || relative == "." || !filepath.IsLocal(relative) {
-			return fmt.Errorf("site artifact %s is outside its managed root", artifact.Path)
-		}
-		if err := secureOwnedArtifact(root, relative, artifact, uid, gid); err != nil {
-			return fmt.Errorf("secure site artifact %s: %w", artifact.Path, err)
+		switch artifact.Kind {
+		case "site-root":
+			relative, err := filepath.Rel(site.RootPath, artifact.Path)
+			if err != nil || relative == "." || !filepath.IsLocal(relative) {
+				return fmt.Errorf("site artifact %s is outside its managed root", artifact.Path)
+			}
+			if err := secureOwnedArtifact(root, relative, artifact, uid, gid); err != nil {
+				return fmt.Errorf("secure site artifact %s: %w", artifact.Path, err)
+			}
+		case "nginx-htpasswd":
+			// The password file is the one managed artifact Nginx itself must read
+			// at request time, and its workers run as www-data. Written by
+			// writeArtifacts it lands root:root 0640, which the worker cannot open,
+			// so auth_basic fails every authenticated request with a 500. Giving it
+			// the www-data group (root-owned, 0640) makes it readable by the worker
+			// and by nobody else — the site account deliberately does not get it,
+			// since a site must not be able to read or rewrite its own hash file.
+			if err := secureGroupReadableArtifact(artifact, -1, gid); err != nil {
+				return fmt.Errorf("secure site artifact %s: %w", artifact.Path, err)
+			}
 		}
 	}
 	return nil
+}
+
+// secureGroupReadableArtifact applies ownership to a managed artifact that lives
+// outside the site root. Unlike secureOwnedArtifact it cannot go through an
+// *os.Root, so it opens with O_NOFOLLOW and verifies the descriptor is a regular
+// file whose content still matches the plan before touching mode or ownership.
+// The containing directories are root-owned, so this is defence in depth rather
+// than a race the site account can currently win.
+//
+// A uid of -1 leaves the owner untouched, which is what the htpasswd case wants:
+// the agent wrote the file as root, only the group needs adjusting, and not
+// re-asserting the owner keeps this usable off the privileged path.
+func secureGroupReadableArtifact(artifact Artifact, uid, gid int) error {
+	file, err := os.OpenFile(artifact.Path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("managed artifact is not a regular file")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, 512*1024+1))
+	if err != nil {
+		return err
+	}
+	if len(content) > 512*1024 || digestBytes(content) != digestString(artifact.Content) {
+		return errors.New("managed artifact content changed before ownership was applied")
+	}
+	if err := file.Chmod(os.FileMode(artifact.Mode)); err != nil {
+		return err
+	}
+	return file.Chown(uid, gid)
 }
 
 // secureOwnedArtifact verifies and changes ownership through the already-opened
