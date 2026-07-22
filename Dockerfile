@@ -21,7 +21,7 @@
 # Run:    docker run -d --name nexa-node --privileged --cgroupns=host \
 #           -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
 #           -v $(pwd)/dist/nexa-linux-amd64:/usr/bin/nexa:ro \
-#           -p 8080:8080 nexa-node
+#           -p 8888:8888 nexa-node
 
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
@@ -50,8 +50,11 @@ RUN apt-get install -y --no-install-recommends php8.3-fpm php8.3-cli && \
 # The installer deliberately exposes only a loopback Nginx bootstrap listener
 # when no hostname is supplied. A published container port needs an all-interface
 # listener, but the API remains confined to its Unix socket exactly as it is on a
-# real host. This keeps the disposable node on the production ingress path.
-RUN sed -i 's/listen 127\.0\.0\.1:8080;/listen 0.0.0.0:8080;/' \
+# real host. This keeps the disposable node on the production ingress path. The
+# installer already binds the panel to 8888 (the published port in compose.yaml);
+# here we only widen the loopback bind to all interfaces so the published port
+# reaches it.
+RUN sed -i 's/listen 127\.0\.0\.1:8888;/listen 0.0.0.0:8888;/' \
       /etc/nginx/sites-available/nexa-panel.conf
 
 # The packaged agent runs under ProtectSystem=strict with a scoped ReadWritePaths
@@ -87,6 +90,6 @@ RUN mkdir -p /etc/systemd/system/nexa-agent.service.d && \
 # installs the same behaviour as a real host.
 RUN rm -f /usr/sbin/policy-rc.d
 
-EXPOSE 8080
+EXPOSE 8888
 STOPSIGNAL SIGRTMIN+3
 CMD ["/lib/systemd/systemd"]
