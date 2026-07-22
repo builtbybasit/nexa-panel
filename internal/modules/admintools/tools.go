@@ -112,14 +112,17 @@ func (m *Module) RequestChange(ctx context.Context, kind admintooloperator.Kind,
 	if err != nil {
 		return Tool{}, jobs.Job{}, err
 	}
-	verb := "Deploy"
+	// Job titles are read in the Applications catalog, which presents both web
+	// clients as ordinary installs. Say Install/Uninstall there and keep
+	// deploy/start/stop as the internal lifecycle vocabulary.
+	verb := "Install"
 	switch action {
 	case admintooloperator.ActionStart:
 		verb = "Start"
 	case admintooloperator.ActionStop:
-		verb = "Stop"
+		verb = "Uninstall"
 	}
-	job, err := m.jobs.SubmitTitled(ctx, "admin-tools.plan", verb+" "+string(kind), map[string]string{"kind": string(kind), "action": string(action)}, actor)
+	job, err := m.jobs.SubmitTitled(ctx, "admin-tools.plan", verb+" "+displayName(kind), map[string]string{"kind": string(kind), "action": string(action)}, actor)
 	if err != nil {
 		return model.toTool(), jobs.Job{}, err
 	}
@@ -149,7 +152,7 @@ func (m *Module) ApplyPlan(ctx context.Context, kind admintooloperator.Kind, act
 	if err != nil || Status(model.Status) != StatusPlanReady {
 		return jobs.Job{}, errors.New("only a plan-ready admin tool can be applied")
 	}
-	job, err := m.jobs.SubmitTitled(ctx, "admin-tools.apply", "Apply "+string(kind)+" change", map[string]string{"planId": plan.ID}, actor)
+	job, err := m.jobs.SubmitTitled(ctx, "admin-tools.apply", "Apply "+displayName(kind)+" change", map[string]string{"planId": plan.ID}, actor)
 	if err != nil {
 		return jobs.Job{}, err
 	}
@@ -243,3 +246,12 @@ func (m *Module) fail(ctx context.Context, kind string, failure error) {
 	_, _ = m.database.NewUpdate().Model((*toolModel)(nil)).Set("status = ?", StatusFailed).Set("failure = ?", message).Set("updated_at = ?", m.now().UTC()).Where("kind = ?", kind).Exec(ctx)
 }
 func randomID() string { return secureid.Hex(16) }
+
+// displayName renders a tool kind the way the product spells it, so job titles
+// read "Install phpMyAdmin" rather than "Install phpmyadmin".
+func displayName(kind admintooloperator.Kind) string {
+	if kind == admintooloperator.PGAdmin {
+		return "pgAdmin"
+	}
+	return "phpMyAdmin"
+}

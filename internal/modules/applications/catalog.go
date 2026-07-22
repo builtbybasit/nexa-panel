@@ -9,8 +9,11 @@ import (
 
 // AdminToolsReader is the narrow view of the admin-tools module the catalog
 // needs to surface phpMyAdmin/pgAdmin status without a second install path.
+// Sync, not List: the admin_tools rows are reconciled from the node rather than
+// seeded by a migration, so a panel that has never opened the Databases page has
+// an empty table and would drop the web-client cards entirely.
 type AdminToolsReader interface {
-	List(context.Context) ([]admintools.Tool, error)
+	Sync(context.Context) ([]admintools.Tool, error)
 }
 
 // catalogID is the stable UI/URL identifier for a catalog entry.

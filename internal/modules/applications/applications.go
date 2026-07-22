@@ -94,7 +94,7 @@ func (m *Module) List(ctx context.Context) ([]Application, error) {
 		apps = append(apps, app)
 	}
 	if m.adminTools != nil {
-		if tools, err := m.adminTools.List(ctx); err == nil {
+		if tools, err := m.adminTools.Sync(ctx); err == nil {
 			for _, tool := range tools {
 				apps = append(apps, webClientApplication(tool))
 			}
