@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { activateSite, createSite, getSitePlan, listRuntimes, listSites, rollbackSite } from './api'
+import { activateSite, createSite, deleteSite, getSitePlan, listRuntimes, listSites, rollbackSite } from './api'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -44,5 +44,27 @@ describe('sites API', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/sites/site_1/rollback', {
       method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' },
     })
+  })
+
+  it('enqueues a delete job and returns it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ id: 11, state: 'queued' }, { status: 202 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(deleteSite('site_1')).resolves.toEqual({ id: 11, state: 'queued' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/sites/site_1', {
+      method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' },
+    })
+  })
+
+  it('surfaces the dependents guard message on a blocked delete', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json(
+          { code: 'site_has_dependents', message: 'Remove www.example.com and its TLS certificate first.' },
+          { status: 409 },
+        ),
+      ),
+    )
+    await expect(deleteSite('site_1')).rejects.toThrow('Remove www.example.com and its TLS certificate first.')
   })
 })

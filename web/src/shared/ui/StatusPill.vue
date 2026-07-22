@@ -41,6 +41,7 @@ const toneByStatus: Record<string, PillTone> = {
   applying: 'info',
   installing: 'info',
   removing: 'info',
+  deleting: 'info',
   verifying: 'info',
   rolling_back: 'info',
   created: 'info',
@@ -72,6 +73,7 @@ const descriptionByStatus: Record<string, string> = {
   applying: 'Making the changes now',
   installing: 'Installing packages now',
   removing: 'Removing packages now',
+  deleting: 'Removing this and its server configuration now',
   verifying: 'Checking that everything works',
   rolling_back: 'Undoing changes after a failure',
   created: 'Created but not started yet',
@@ -84,7 +86,7 @@ const hint = computed(() => props.description ?? descriptionByStatus[props.statu
 const busy = computed(
   () =>
     props.pulse ??
-    ['queued', 'planning', 'running', 'activating', 'applying', 'installing', 'removing', 'verifying', 'rolling_back'].includes(
+    ['queued', 'planning', 'running', 'activating', 'applying', 'installing', 'removing', 'deleting', 'verifying', 'rolling_back'].includes(
       props.status ?? '',
     ),
 )

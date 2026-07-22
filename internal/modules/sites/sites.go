@@ -31,6 +31,7 @@ const (
 	StatusActive      Status = "active"
 	StatusRollingBack Status = "rolling_back"
 	StatusRolledBack  Status = "rolled_back"
+	StatusDeleting    Status = "deleting"
 	StatusFailed      Status = "failed"
 )
 
@@ -118,6 +119,9 @@ func New(_ context.Context, database *bun.DB, jobQueue *jobs.Module, runtimeCata
 	if err := jobQueue.RegisterHandler("site.rollback", m.rollbackJob); err != nil {
 		return nil, err
 	}
+	if err := jobQueue.RegisterHandler("site.delete", m.deleteJob); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -142,6 +146,7 @@ func (m *Module) Register(registry module.Registry) error {
 		{"POST /api/v1/sites/{id}/plan", "sites.write", http.HandlerFunc(m.replanHTTP)},
 		{"POST /api/v1/sites/{id}/activate", "operations.apply", http.HandlerFunc(m.activateHTTP)},
 		{"POST /api/v1/sites/{id}/rollback", "operations.apply", http.HandlerFunc(m.rollbackHTTP)},
+		{"DELETE /api/v1/sites/{id}", "operations.apply", http.HandlerFunc(m.deleteHTTP)},
 	}
 	for _, route := range routes {
 		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {

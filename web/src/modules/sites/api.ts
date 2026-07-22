@@ -2,7 +2,7 @@ import { apiRequest } from '@/shared/api/request'
 
 import type { Job } from '../jobs/api'
 
-export type SiteStatus = 'draft' | 'planning' | 'plan_ready' | 'activating' | 'active' | 'rolling_back' | 'rolled_back' | 'failed'
+export type SiteStatus = 'draft' | 'planning' | 'plan_ready' | 'activating' | 'active' | 'rolling_back' | 'rolled_back' | 'deleting' | 'failed'
 
 export interface Site {
   id: string
@@ -77,4 +77,11 @@ export function rollbackSite(siteId: string): Promise<Job> {
 }
 export function prepareSitePlan(siteId: string): Promise<Job> {
   return request(`/api/v1/sites/${encodeURIComponent(siteId)}/plan`, { method: 'POST' })
+}
+
+// Enqueues a `site.delete` job (202). The 409 guards (site_busy,
+// site_has_dependents) reject before a job is queued, so the caller's
+// runner surfaces the server message as a queue-time failure.
+export function deleteSite(siteId: string): Promise<Job> {
+  return request(`/api/v1/sites/${encodeURIComponent(siteId)}`, { method: 'DELETE' })
 }

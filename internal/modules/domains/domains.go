@@ -34,6 +34,7 @@ const (
 	StatusPlanReady  Status = "plan_ready"
 	StatusActivating Status = "activating"
 	StatusActive     Status = "active"
+	StatusRemoving   Status = "removing"
 	StatusFailed     Status = "failed"
 )
 
@@ -129,6 +130,9 @@ func New(ctx context.Context, database *bun.DB, queue *jobs.Module, siteCatalog 
 	if err := queue.RegisterHandler("domain.activate", m.activateJob); err != nil {
 		return nil, err
 	}
+	if err := queue.RegisterHandler("domain.remove", m.removeJob); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -145,6 +149,7 @@ func (m *Module) Register(registry module.Registry) error {
 		{"POST /api/v1/domains", "domains.write", http.HandlerFunc(m.createHTTP)},
 		{"GET /api/v1/domains/{id}/plan", "domains.read", http.HandlerFunc(m.planHTTP)},
 		{"POST /api/v1/domains/{id}/activate", "operations.apply", http.HandlerFunc(m.activateHTTP)},
+		{"DELETE /api/v1/domains/{id}", "operations.apply", http.HandlerFunc(m.deleteHTTP)},
 	}
 	for _, route := range routes {
 		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
