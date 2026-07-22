@@ -1,9 +1,16 @@
 name: Release
 
-# Publishes the per-architecture Linux binaries and their checksums as GitHub
-# release assets whenever a version tag is pushed. The panel's self-update
-# operator downloads exactly these asset names (nexa-linux-<arch> and
-# nexa-linux-<arch>.sha256) from the release this workflow creates.
+# Publishes the per-architecture Linux release assets whenever a version tag is
+# pushed. Each architecture ships two pairs, and the names are a contract the
+# installer and the self-update operator resolve by hand:
+#
+#   nexa-panel-linux-<arch>.tar.gz(.sha256)  the installable bundle — the binary
+#     plus the packaging tree, scripts/install.sh and scripts/nexa-seed-admin.sh
+#     under a single nexa-panel-<version>-linux-<arch>/ directory. Installing or
+#     self-updating from a bare binary cannot work: install.sh reads packaging/
+#     out of the tree it lives in, and self-update has to re-apply the units.
+#   nexa-linux-<arch>(.sha256)  the bare binary, kept for convenience and for
+#     tooling that already references it.
 on:
   push:
     tags:
@@ -61,9 +68,49 @@ jobs:
           set -euo pipefail
           cd dist
           for arch in amd64 arm64; do
-            test -f "nexa-linux-${arch}" || { echo "missing nexa-linux-${arch}" >&2; exit 1; }
-            test -f "nexa-linux-${arch}.sha256" || { echo "missing nexa-linux-${arch}.sha256" >&2; exit 1; }
-            sha256sum -c "nexa-linux-${arch}.sha256"
+            for asset in "nexa-linux-${arch}" "nexa-panel-linux-${arch}.tar.gz"; do
+              test -f "${asset}" || { echo "missing ${asset}" >&2; exit 1; }
+              test -f "${asset}.sha256" || { echo "missing ${asset}.sha256" >&2; exit 1; }
+              sha256sum -c "${asset}.sha256"
+            done
+          done
+
+          # Extract each bundle and assert the layout install.sh depends on. A
+          # tarball that ships the binary without packaging/ installs cleanly
+          # right up to the point where it cannot, on someone's server; the only
+          # place to catch that is here, before the release exists.
+          for arch in amd64 arm64; do
+            workdir="$(mktemp -d)"
+            tar -xzf "nexa-panel-linux-${arch}.tar.gz" -C "${workdir}"
+            root="$(find "${workdir}" -mindepth 1 -maxdepth 1 -type d)"
+            test -n "${root}" || { echo "${arch}: bundle has no top-level directory" >&2; exit 1; }
+            case "$(basename "${root}")" in
+              nexa-panel-*-linux-"${arch}") ;;
+              *) echo "${arch}: unexpected bundle directory $(basename "${root}")" >&2; exit 1 ;;
+            esac
+            for path in \
+              bin/nexa \
+              packaging/systemd/nexa-agent.service \
+              packaging/systemd/nexa-api.service \
+              packaging/systemd/nexa-panel-system-backup.service \
+              packaging/systemd/nexa-panel-system-backup.timer \
+              packaging/sysusers/nexa-panel.conf \
+              packaging/tmpfiles/nexa-panel.conf \
+              packaging/nginx/nexa-panel.conf.template \
+              scripts/install.sh \
+              scripts/nexa-seed-admin.sh \
+              RELEASE
+            do
+              test -f "${root}/${path}" || { echo "${arch}: bundle is missing ${path}" >&2; exit 1; }
+            done
+            for path in bin/nexa scripts/install.sh scripts/nexa-seed-admin.sh; do
+              test -x "${root}/${path}" || { echo "${arch}: ${path} is not executable" >&2; exit 1; }
+            done
+            grep -q "^arch=${arch}$" "${root}/RELEASE" || { echo "${arch}: RELEASE does not record arch=${arch}" >&2; exit 1; }
+            for key in version commit built_at; do
+              grep -q "^${key}=." "${root}/RELEASE" || { echo "${arch}: RELEASE has no ${key}" >&2; exit 1; }
+            done
+            rm -rf "${workdir}"
           done
 
       - name: Publish GitHub release
@@ -76,6 +123,10 @@ jobs:
             --title "${VERSION}" \
             --generate-notes \
             --verify-tag \
+            dist/nexa-panel-linux-amd64.tar.gz \
+            dist/nexa-panel-linux-amd64.tar.gz.sha256 \
+            dist/nexa-panel-linux-arm64.tar.gz \
+            dist/nexa-panel-linux-arm64.tar.gz.sha256 \
             dist/nexa-linux-amd64 \
             dist/nexa-linux-amd64.sha256 \
             dist/nexa-linux-arm64 \
