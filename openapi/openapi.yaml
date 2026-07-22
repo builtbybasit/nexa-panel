@@ -88,6 +88,8 @@ paths:
     $ref: ./paths/site-files.yaml#/sites_id_files_move
   /sites/{id}/files/copy:
     $ref: ./paths/site-files.yaml#/sites_id_files_copy
+  /sites/{id}/files/chmod:
+    $ref: ./paths/site-files.yaml#/sites_id_files_chmod
   /sites/{id}/files/delete:
     $ref: ./paths/site-files.yaml#/sites_id_files_delete
   /sites/{id}/files/uploads:

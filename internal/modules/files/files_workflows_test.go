@@ -103,6 +103,11 @@ func (o *fakeOperator) Move(_ context.Context, scope sitefs.Scope, from, to stri
 	return filesoperator.Entry{Name: to, Kind: "file"}, o.fail
 }
 
+func (o *fakeOperator) Chmod(_ context.Context, scope sitefs.Scope, path, mode string) (filesoperator.Entry, error) {
+	o.record("Chmod", scope, path, mode)
+	return filesoperator.Entry{Name: path, Kind: "file", Mode: "rwxr-xr-x"}, o.fail
+}
+
 func (o *fakeOperator) Copy(_ context.Context, scope sitefs.Scope, from, to string) (filesoperator.CopyResult, error) {
 	o.record("Copy", scope, from, to)
 	return filesoperator.CopyResult{Copied: 2}, o.fail
@@ -511,5 +516,45 @@ func TestFilesJobsEmbedValidatedScope(t *testing.T) {
 	}
 	if response := h.do(t, http.MethodPost, "/api/v1/sites/"+h.inactive.ID+"/files/archive", `{"paths":["public"],"target":"backups/x.tar.gz"}`, h.dev); response.Code != http.StatusNotFound {
 		t.Fatalf("developer archive on hidden = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestFilesChmodWiringAndAudit(t *testing.T) {
+	h := newHarness(t)
+
+	if response := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/files/chmod", `{"path":"public/script.sh","mode":"755"}`, h.viewer); response.Code != http.StatusForbidden {
+		t.Fatalf("viewer chmod = %d %s", response.Code, response.Body.String())
+	}
+
+	response := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/files/chmod", `{"path":"public/script.sh","mode":"755"}`, h.admin)
+	if response.Code != http.StatusOK {
+		t.Fatalf("chmod = %d %s", response.Code, response.Body.String())
+	}
+	var entry filesoperator.Entry
+	if err := json.Unmarshal(response.Body.Bytes(), &entry); err != nil || entry.Mode != "rwxr-xr-x" {
+		t.Fatalf("chmod shape = %s, %v", response.Body.String(), err)
+	}
+	if call := h.operator.last(); call.method != "Chmod" || call.args[0] != "public/script.sh" || call.args[1] != "755" {
+		t.Fatalf("operator chmod call = %+v", call)
+	}
+
+	events, err := h.audit.List(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Action == "files.chmod" && event.Subject == "site:"+h.site.ID && event.Metadata["path"] == "public/script.sh" && event.Metadata["mode"] == "755" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("files.chmod audit event missing from %+v", events)
+	}
+
+	h.operator.fail = &filesoperator.OperationError{Code: filesoperator.CodeInvalid, Message: "The mode must be three octal digits, such as 755."}
+	invalid := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/files/chmod", `{"path":"public/script.sh","mode":"9999"}`, h.admin)
+	if invalid.Code != http.StatusUnprocessableEntity || errorCode(t, invalid) != filesoperator.CodeInvalid {
+		t.Fatalf("invalid mode passthrough = %d %s", invalid.Code, invalid.Body.String())
 	}
 }

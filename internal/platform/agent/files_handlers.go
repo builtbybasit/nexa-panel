@@ -129,6 +129,20 @@ func (s *Server) filesMoveHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entry)
 }
 
+func (s *Server) filesChmodHTTP(w http.ResponseWriter, r *http.Request) {
+	var request filesoperator.ChmodRequest
+	if err := decodeFilesJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	entry, err := s.files.Chmod(r.Context(), request.Scope, request.Path, request.Mode)
+	if err != nil {
+		writeFilesFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entry)
+}
+
 func (s *Server) filesCopyHTTP(w http.ResponseWriter, r *http.Request) {
 	var request filesoperator.CopyRequest
 	if err := decodeFilesJSON(w, r, &request); err != nil {

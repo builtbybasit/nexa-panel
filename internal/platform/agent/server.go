@@ -139,6 +139,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		mux.HandleFunc("POST /v1/files/write", s.filesWriteHTTP)
 		mux.HandleFunc("POST /v1/files/mkdir", s.filesMkdirHTTP)
 		mux.HandleFunc("POST /v1/files/move", s.filesMoveHTTP)
+		mux.HandleFunc("POST /v1/files/chmod", s.filesChmodHTTP)
 		mux.HandleFunc("POST /v1/files/copy", s.filesCopyHTTP)
 		mux.HandleFunc("POST /v1/files/delete", s.filesDeleteHTTP)
 		mux.HandleFunc("POST /v1/files/archive", s.filesArchiveHTTP)

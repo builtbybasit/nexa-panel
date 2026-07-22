@@ -4,7 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 
-import FileEditorDialog from './FileEditorDialog.vue'
+import EditorPane from './EditorPane.vue'
 
 // Monaco needs a real browser (canvas, layout); stub it with a textarea that
 // still reflects the read-only prop so the authorization contract is testable.
@@ -28,23 +28,30 @@ const DiffStub = defineComponent({
   template: '<div class="diff-stub" :data-original="original" :data-modified="modelValue" />',
 })
 
+type PaneHandle = { open: (path: string) => void }
+
+function mountPane(readOnly: boolean) {
+  return mount(EditorPane, {
+    attachTo: document.body,
+    props: { siteId: 'site-1', isPathReadOnly: () => readOnly },
+    global: { stubs: { MonacoEditor: MonacoStub, DiffEditor: DiffStub } },
+  })
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   document.body.innerHTML = ''
 })
 
-describe('FileEditorDialog authorization', () => {
+describe('EditorPane', () => {
   it('keeps a read-only session from issuing write requests', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       Response.json({ content: 'managed=true\n', etag: 'etag-1', size: 13, truncated: false, binary: false }),
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    const wrapper = mount(FileEditorDialog, {
-      attachTo: document.body,
-      props: { siteId: 'site-1', path: 'public/index.txt', readOnly: true },
-      global: { stubs: { MonacoEditor: MonacoStub } },
-    })
+    const wrapper = mountPane(true)
+    ;(wrapper.vm as unknown as PaneHandle).open('public/index.txt')
     await flushPromises()
 
     expect(document.body.textContent).toContain('can view this file but cannot edit it')
@@ -71,11 +78,8 @@ describe('FileEditorDialog authorization', () => {
       .mockResolvedValueOnce(Response.json({ content: 'server-new\n', etag: 'etag-2', size: 11, truncated: false, binary: false }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const wrapper = mount(FileEditorDialog, {
-      attachTo: document.body,
-      props: { siteId: 'site-1', path: 'public/index.txt' },
-      global: { stubs: { MonacoEditor: MonacoStub, DiffEditor: DiffStub } },
-    })
+    const wrapper = mountPane(false)
+    ;(wrapper.vm as unknown as PaneHandle).open('public/index.txt')
     await flushPromises()
 
     // Edit the file so it is dirty (Save is disabled otherwise), then save.
@@ -95,6 +99,46 @@ describe('FileEditorDialog authorization', () => {
     expect(diff?.dataset.original).toBe('server-new\n')
     expect(diff?.dataset.modified).toBe('local-edit\n')
     expect(fetchMock).toHaveBeenCalledTimes(3)
+
+    wrapper.unmount()
+  })
+
+  it('keeps per-tab buffers when switching between open files', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ content: 'first\n', etag: 'etag-a', size: 6, truncated: false, binary: false }))
+      .mockResolvedValueOnce(Response.json({ content: 'second\n', etag: 'etag-b', size: 7, truncated: false, binary: false }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountPane(false)
+    const pane = wrapper.vm as unknown as PaneHandle
+    pane.open('public/a.txt')
+    await flushPromises()
+    pane.open('public/b.txt')
+    await flushPromises()
+
+    // Both tabs are in the strip; the second is active.
+    const tabButtons = [...document.querySelectorAll('button')].filter((button) => button.textContent?.includes('.txt'))
+    expect(tabButtons.map((button) => button.textContent?.trim())).toEqual(
+      expect.arrayContaining([expect.stringContaining('a.txt'), expect.stringContaining('b.txt')]),
+    )
+    expect((document.querySelector('textarea') as HTMLTextAreaElement).value).toBe('second\n')
+
+    // Dirty the active tab, switch back to the first, then return: edits survive.
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement
+    textarea.value = 'second-edited\n'
+    textarea.dispatchEvent(new Event('input'))
+    await flushPromises()
+
+    pane.open('public/a.txt')
+    await flushPromises()
+    expect((document.querySelector('textarea') as HTMLTextAreaElement).value).toBe('first\n')
+
+    pane.open('public/b.txt')
+    await flushPromises()
+    expect((document.querySelector('textarea') as HTMLTextAreaElement).value).toBe('second-edited\n')
+    // Only the two initial loads hit the network; tab switches reuse buffers.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
 
     wrapper.unmount()
   })

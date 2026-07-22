@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   archiveEntries,
+  changeMode,
   copyEntry,
   deleteEntry,
   directorySize,
@@ -111,6 +112,17 @@ describe('files API', () => {
       4,
       '/api/v1/sites/site_1/files/delete',
       jsonInit('POST', { path: 'tmp/b.txt', recursive: false }),
+    )
+  })
+
+  it('changes permissions with a three-digit octal mode', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ...entry, mode: 'rwxr-xr-x' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(changeMode('site_1', { path: 'public/run.sh', mode: '755' })).resolves.toMatchObject({ mode: 'rwxr-xr-x' })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/sites/site_1/files/chmod',
+      jsonInit('POST', { path: 'public/run.sh', mode: '755' }),
     )
   })
 

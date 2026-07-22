@@ -714,3 +714,39 @@ func TestDirectorySize(t *testing.T) {
 		t.Fatalf("size of missing error = %v, want not found", err)
 	}
 }
+
+func TestChmod(t *testing.T) {
+	operator, scope, _ := newTestOperator(t)
+	ctx := context.Background()
+	seedFile(t, scope, "public/script.sh", "#!/bin/sh\n")
+
+	entry, err := operator.Chmod(ctx, scope, "public/script.sh", "755")
+	if err != nil || entry.Mode != "rwxr-xr-x" {
+		t.Fatalf("Chmod(755) = %+v, %v, want rwxr-xr-x", entry, err)
+	}
+	entry, err = operator.Chmod(ctx, scope, "public/script.sh", "640")
+	if err != nil || entry.Mode != "rw-r-----" {
+		t.Fatalf("Chmod(640) = %+v, %v, want rw-r-----", entry, err)
+	}
+
+	for name, mode := range map[string]string{"empty": "", "short": "75", "long": "4755", "digits": "abc", "high octal": "798"} {
+		if _, err := operator.Chmod(ctx, scope, "public/script.sh", mode); err == nil || operationCode(t, err) != CodeInvalid {
+			t.Errorf("Chmod(%s %q) error = %v, want invalid", name, mode, err)
+		}
+	}
+
+	seedFile(t, scope, "logs/access.log", "line\n")
+	if _, err := operator.Chmod(ctx, scope, "logs/access.log", "600"); err == nil || operationCode(t, err) != CodeInvalid {
+		t.Fatalf("Chmod outside the write zone error = %v, want invalid", err)
+	}
+	if _, err := operator.Chmod(ctx, scope, "public/missing.txt", "600"); err == nil || operationCode(t, err) != CodeNotFound {
+		t.Fatalf("Chmod(missing) error = %v, want not found", err)
+	}
+
+	if err := os.Symlink("script.sh", filepath.Join(scope.RootPath, "public", "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Chmod(ctx, scope, "public/alias", "755"); err == nil || operationCode(t, err) != CodeInvalid {
+		t.Fatalf("Chmod(symlink) error = %v, want invalid", err)
+	}
+}

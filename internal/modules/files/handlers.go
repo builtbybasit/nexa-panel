@@ -188,6 +188,28 @@ func (m *Module) moveHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entry)
 }
 
+func (m *Module) chmodHTTP(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Path string `json:"path"`
+		Mode string `json:"mode"`
+	}
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	site, scope, user, ok := m.resolveSite(w, r)
+	if !ok {
+		return
+	}
+	entry, err := m.operator.Chmod(r.Context(), scope, request.Path, request.Mode)
+	if err != nil {
+		writeOperatorError(w, err)
+		return
+	}
+	m.recordAudit(r, user, "files.chmod", site, map[string]any{"path": request.Path, "mode": request.Mode})
+	writeJSON(w, http.StatusOK, entry)
+}
+
 func (m *Module) copyHTTP(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		From string `json:"from"`

@@ -70,6 +70,7 @@ func (m *Module) Register(registry module.Registry) error {
 		{"POST /api/v1/sites/{id}/files/mkdir", "files.write", http.HandlerFunc(m.mkdirHTTP)},
 		{"POST /api/v1/sites/{id}/files/move", "files.write", http.HandlerFunc(m.moveHTTP)},
 		{"POST /api/v1/sites/{id}/files/copy", "files.write", http.HandlerFunc(m.copyHTTP)},
+		{"POST /api/v1/sites/{id}/files/chmod", "files.write", http.HandlerFunc(m.chmodHTTP)},
 		{"POST /api/v1/sites/{id}/files/delete", "files.write", http.HandlerFunc(m.deleteHTTP)},
 		{"POST /api/v1/sites/{id}/files/uploads", "files.write", http.HandlerFunc(m.uploadBeginHTTP)},
 		{"PUT /api/v1/sites/{id}/files/uploads/{uploadId}", "files.write", http.HandlerFunc(m.uploadChunkHTTP)},

@@ -89,6 +89,11 @@ export function copyEntry(siteId: string, input: { from: string; to: string }): 
   return request(`${base(siteId)}/copy`, { method: 'POST', body: JSON.stringify(input) })
 }
 
+/** Change permissions; `mode` is three octal digits such as `"755"`. Returns the updated entry. */
+export function changeMode(siteId: string, input: { path: string; mode: string }): Promise<FileEntry> {
+  return request(`${base(siteId)}/chmod`, { method: 'POST', body: JSON.stringify(input) })
+}
+
 export function deleteEntry(siteId: string, input: { path: string; recursive: boolean }): Promise<void> {
   return request(`${base(siteId)}/delete`, { method: 'POST', body: JSON.stringify(input) })
 }
