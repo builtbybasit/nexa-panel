@@ -12,6 +12,8 @@ The installer configures and keeps these host capabilities available:
 - Nginx with Ubuntu's `sites-available` and `sites-enabled` layout;
 - systemd, D-Bus, cron, standard account tools, `runuser`, and core utilities;
 - Certbot and its Nginx plugin for public panel TLS;
+- `logrotate`, which reads the per-site stanzas the sites operator writes to
+  `/etc/logrotate.d/` when a site enables log rotation;
 - Podman with Quadlet and `fuse-overlayfs` for isolated pgAdmin
   (Podman 4.5 or newer is required by the generated definition);
 - `rclone` for local, S3-compatible, SFTP, and Google Drive backup accounts;

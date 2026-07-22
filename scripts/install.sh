@@ -123,6 +123,7 @@ log "Installing host prerequisites"
 apt-get install -y --no-install-recommends \
   systemd systemd-sysv dbus \
   nginx cron certbot python3-certbot-nginx \
+  logrotate \
   postgresql-common libjson-perl \
   passwd util-linux \
   ufw \
