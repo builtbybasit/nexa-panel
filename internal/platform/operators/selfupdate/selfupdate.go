@@ -7,15 +7,27 @@
 // The operation is deliberately narrow. The only thing a caller may name is a
 // target version string, gated to a strict semver shape; the release repository,
 // the per-architecture asset names, the download host, and the binary path are
-// all derived here, never taken from the caller. A downloaded binary is only
-// swapped in after its SHA-256 matches the checksum published alongside it and
-// after it validates as a runnable nexa binary reporting the expected version.
+// all derived here, never taken from the caller. A downloaded release is only
+// installed after its SHA-256 matches the checksum published alongside it and
+// after the binary it carries validates as a runnable nexa reporting the
+// expected version.
 //
-// Trust note: the checksum is fetched from the same release as the binary, so it
-// guards integrity (a corrupted or truncated download) rather than authenticity
-// (a compromised release). The release source is a compile-time constant so the
-// download can never be redirected to an arbitrary host; authenticity rests on
-// the trust placed in that repository's releases.
+// A release is a tarball, not a bare binary, because a panel version is more
+// than /usr/bin/nexa: it is also the systemd units, the tmpfiles and sysusers
+// rules, the nginx template, and the host prerequisites. Swapping only the
+// binary half-upgrades a node — a release that adds a tmpfiles directory or
+// widens the agent unit's ReadWritePaths would fail at runtime with no signal.
+// So the tarball is extracted to a staging tree and its own scripts/install.sh
+// re-applies the packaging after the binary swap.
+//
+// Trust note: the checksum is fetched from the same release as the tarball, so
+// it guards integrity (a corrupted or truncated download) rather than
+// authenticity (a compromised release). The release source is a compile-time
+// constant so the download can never be redirected to an arbitrary host;
+// authenticity rests on the trust placed in that repository's releases. The
+// tarball is nonetheless treated as hostile input during extraction — it is
+// unpacked as root — so path traversal, links, and oversized members are all
+// refused rather than trusted.
 package selfupdate
 
 import (
@@ -28,16 +40,57 @@ import (
 	"time"
 )
 
-// Repository is the trusted release source. It is a compile-time constant so a
-// caller can never redirect the download to another host or project.
+// Repository is the trusted release source: github.com/builtbybasit/nexa-panel.
+// These stay untyped constants rather than build-time variables — a constant
+// cannot be rebound by anything, at any layer, so there is no code path (and no
+// ldflags typo) that can point a node's root-privileged download at another
+// project. A fork that needs its own releases forks these two lines.
+//
+// Note this is deliberately not the Go module path, which is a separate
+// placeholder; the module path names the import, this names the release host.
 const (
-	repositoryOwner = "nexa-panel"
+	repositoryOwner = "builtbybasit"
 	repositoryName  = "nexa-panel"
 )
 
 // binaryPath is where the running nexa binary lives on a managed node; the swap
 // writes a sibling ".new" file and renames it over this path.
 const defaultBinaryPath = "/usr/bin/nexa"
+
+// defaultWorkRoot holds the extracted release trees. It is deliberately NOT
+// under /var/lib/nexa-panel: that directory is owned by the unprivileged nexa
+// service account, and this tree contains a scripts/install.sh that the agent
+// executes as root. It is created 0700 root-owned, and /var is already in the
+// agent unit's ReadWritePaths, so no unit change is needed to use it.
+const defaultWorkRoot = "/var/lib/nexa-panel-update"
+
+// currentPackagingDir and previousPackagingDir are the retained release trees
+// inside the work root. "current" is the tree whose packaging was last applied;
+// "previous" is the one it displaced, which is what a rollback re-applies
+// alongside /usr/bin/nexa.prev.
+const (
+	currentPackagingDir  = "current"
+	previousPackagingDir = "previous"
+)
+
+// releaseBinaryEntry, releaseInstallerEntry and releaseInstallerFlag name the
+// pieces of the release tarball this operator depends on. The installer is
+// invoked with --sync-packaging, which re-applies units, tmpfiles, sysusers, the
+// nginx template and host prerequisites without touching the binary this
+// operator has already swapped.
+// The installer is additionally run with --no-start. On its own,
+// --sync-packaging restarts nexa-agent as soon as anything changed — and that
+// restart would tear down the cgroup the installer is running in, killing the
+// agent, the script, and the RPC that is waiting on it, so the update would
+// report a failure it did not have. Restarting is this operator's job: it arms
+// the same detached, delayed systemd-run timer as any other apply, after the
+// packaging has actually landed.
+const (
+	releaseBinaryEntry      = "bin/nexa"
+	releaseInstallerEntry   = "scripts/install.sh"
+	releaseInstallerFlag    = "--sync-packaging"
+	releaseInstallerNoStart = "--no-start"
+)
 
 // restart is fired detached and slightly delayed so the apply RPC can return
 // success to the control plane before the units are bounced out from under it.
@@ -102,6 +155,15 @@ type Result struct {
 	// PreviousBinaryPath is the retained prior binary a rollback would restore,
 	// present only when such a binary exists on disk after the swap.
 	PreviousBinaryPath string `json:"previousBinaryPath,omitempty"`
+	// PackagingSynced reports whether the release's packaging — systemd units,
+	// tmpfiles and sysusers rules, the nginx template, host prerequisites — was
+	// applied alongside the binary. It is false for a local binary push and for
+	// a rollback that had no retained packaging to restore.
+	PackagingSynced bool `json:"packagingSynced"`
+	// PackagingNote states, in the operator's language, why packaging was not
+	// synced. It is the honest half of a binary-only change: a node whose binary
+	// moved but whose units did not is a node someone has to look at.
+	PackagingNote string `json:"packagingNote,omitempty"`
 }
 
 // Operator is the interface the control plane depends on (via a unix-socket
@@ -156,6 +218,7 @@ type HostOperator struct {
 	runner       Runner
 	installed    string
 	binaryPath   string
+	workRoot     string
 	restartDelay time.Duration
 	arch         string
 	now          func() time.Time
@@ -179,6 +242,13 @@ type HostConfig struct {
 	Runner Runner
 	// BinaryPath overrides the swap target (defaults to /usr/bin/nexa).
 	BinaryPath string
+	// WorkRoot overrides where release tarballs are staged and where the applied
+	// and displaced release trees are retained (defaults to
+	// /var/lib/nexa-panel-update).
+	WorkRoot string
+	// ReleaseTokenPath overrides the credential file read for the private
+	// release repository (defaults to /etc/nexa-panel/release.token).
+	ReleaseTokenPath string
 	// RestartDelay overrides how long after a swap the detached restart fires.
 	RestartDelay time.Duration
 	// Arch overrides the detected architecture (defaults to runtime.GOARCH).
@@ -199,13 +269,17 @@ func NewHostOperator(config HostConfig) (*HostOperator, error) {
 	if _, ok := assetArch(arch); !ok {
 		return nil, errors.New("self-update is unsupported on this architecture")
 	}
+	// One token reader is shared by the metadata and asset paths: the private
+	// repository 404s both without a credential, and both must see a rotated
+	// token without an agent restart.
+	tokens := newReleaseTokens(config.ReleaseTokenPath)
 	source := config.Source
 	if source == nil {
-		source = newGitHubSource(nil)
+		source = newGitHubSource(nil, tokens)
 	}
 	downloader := config.Downloader
 	if downloader == nil {
-		downloader = newHTTPDownloader(nil)
+		downloader = newHTTPDownloader(nil, tokens)
 	}
 	runner := config.Runner
 	if runner == nil {
@@ -214,6 +288,10 @@ func NewHostOperator(config HostConfig) (*HostOperator, error) {
 	binaryPath := config.BinaryPath
 	if binaryPath == "" {
 		binaryPath = defaultBinaryPath
+	}
+	workRoot := config.WorkRoot
+	if workRoot == "" {
+		workRoot = defaultWorkRoot
 	}
 	restartDelay := config.RestartDelay
 	if restartDelay <= 0 {
@@ -225,6 +303,7 @@ func NewHostOperator(config HostConfig) (*HostOperator, error) {
 		runner:       runner,
 		installed:    installed,
 		binaryPath:   binaryPath,
+		workRoot:     workRoot,
 		restartDelay: restartDelay,
 		arch:         arch,
 		now:          time.Now,

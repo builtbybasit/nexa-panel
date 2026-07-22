@@ -19,14 +19,20 @@ import (
 // uses, so the download, checksum verification, atomic swap, and detached
 // restart all happen inside nexa-agent — the CLI only issues the request and
 // prints the outcome.
+//
+// The socket and token default to their packaged locations, like every other
+// node-facing command: this is run as `sudo nexa self-update` on a real server,
+// where nothing exports NEXA_AGENT_SOCKET, so a development default here would
+// only ever produce a confusing "connection refused" on the machine it is meant
+// to serve.
 func runSelfUpdate(args []string) error {
 	if len(args) > 0 && args[0] == "rollback" {
 		return runSelfUpdateRollback(args[1:])
 	}
 
 	flags := flag.NewFlagSet("self-update", flag.ContinueOnError)
-	socket := flags.String("socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
-	tokenPath := flags.String("token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
+	socket := flags.String("socket", envOrDefault("NEXA_AGENT_SOCKET", "/run/nexa-panel/agent.sock"), "privileged agent Unix socket")
+	tokenPath := flags.String("token", envOrDefault("NEXA_AGENT_TOKEN", "/etc/nexa-panel/agent.token"), "shared agent credential path")
 	check := flags.Bool("check", false, "report the installed and latest versions without installing")
 	target := flags.String("version", "", "install a specific release version instead of the latest")
 	binary := flags.String("binary", "", "install a binary already staged on this host instead of downloading a release")
@@ -96,8 +102,8 @@ func runSelfUpdate(args []string) error {
 // nexa-agent; the CLI only issues the request and prints the outcome.
 func runSelfUpdateRollback(args []string) error {
 	flags := flag.NewFlagSet("self-update rollback", flag.ContinueOnError)
-	socket := flags.String("socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
-	tokenPath := flags.String("token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
+	socket := flags.String("socket", envOrDefault("NEXA_AGENT_SOCKET", "/run/nexa-panel/agent.sock"), "privileged agent Unix socket")
+	tokenPath := flags.String("token", envOrDefault("NEXA_AGENT_TOKEN", "/etc/nexa-panel/agent.token"), "shared agent credential path")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -119,6 +125,11 @@ func runSelfUpdateRollback(args []string) error {
 }
 
 func printRestart(result selfupdateoperator.Result) {
+	// A change that moved the binary but not the packaging is something the
+	// operator has to know about while they are still at the terminal.
+	if result.PackagingNote != "" {
+		fmt.Printf("Note: %s.\n", result.PackagingNote)
+	}
 	if result.RestartScheduled {
 		fmt.Printf("The panel services will restart automatically in %s.\n", result.RestartDelay)
 	} else {

@@ -3,6 +3,7 @@ package selfupdate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,30 +15,52 @@ import (
 // production never changes it.
 var gitHubAPIBase = "https://api.github.com"
 
+// errReleaseTokenRejected is returned when the release source answers 401 or
+// 403. It is distinct from a 404 on purpose: "no such release" and "this node
+// cannot authenticate to the release repository" need different fixes, and a
+// private repository answers 404 to an anonymous caller too, so the message has
+// to name the credential as the likely cause.
+var errReleaseTokenRejected = errors.New("release token missing or invalid: the node could not authenticate to the release repository")
+
+// errReleaseNotFound is returned when no release matches. On a private
+// repository this is also what an unauthenticated request sees, which is why
+// the message mentions both possibilities.
+var errReleaseNotFound = errors.New("no matching release was published, or this node's release token cannot see it")
+
 // gitHubSource resolves releases from the trusted repository's GitHub Releases.
 type gitHubSource struct {
-	http *http.Client
-	base string
+	http   *http.Client
+	base   string
+	tokens *releaseTokens
 }
 
-func newGitHubSource(client *http.Client) *gitHubSource {
+func newGitHubSource(client *http.Client, tokens *releaseTokens) *gitHubSource {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &gitHubSource{http: client, base: gitHubAPIBase}
+	if tokens == nil {
+		tokens = newReleaseTokens("")
+	}
+	return &gitHubSource{http: client, base: gitHubAPIBase, tokens: tokens}
+}
+
+// gitHubAsset is one published file in a release. URL is the asset's API URL,
+// not its browser_download_url: on a private repository the browser URL serves
+// HTML or a 404 even to a token-bearing client, and only the API URL fetched
+// with Accept: application/octet-stream returns the bytes.
+type gitHubAsset struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 // gitHubRelease is the subset of the release payload the operator relies on.
 type gitHubRelease struct {
-	TagName     string    `json:"tag_name"`
-	Body        string    `json:"body"`
-	Draft       bool      `json:"draft"`
-	Prerelease  bool      `json:"prerelease"`
-	PublishedAt time.Time `json:"published_at"`
-	Assets      []struct {
-		Name string `json:"name"`
-		URL  string `json:"browser_download_url"`
-	} `json:"assets"`
+	TagName     string        `json:"tag_name"`
+	Body        string        `json:"body"`
+	Draft       bool          `json:"draft"`
+	Prerelease  bool          `json:"prerelease"`
+	PublishedAt time.Time     `json:"published_at"`
+	Assets      []gitHubAsset `json:"assets"`
 }
 
 func (s *gitHubSource) Latest(ctx context.Context, arch string) (Release, error) {
@@ -60,16 +83,18 @@ func (s *gitHubSource) fetch(ctx context.Context, arch, url string) (Release, er
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	// The token is optional. A node without one issues exactly the same request
+	// unauthenticated, so nothing here changes if the repository is ever opened.
+	if err := s.tokens.authorize(request); err != nil {
+		return Release{}, err
+	}
 	response, err := s.http.Do(request)
 	if err != nil {
 		return Release{}, fmt.Errorf("query release source: %w", err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode == http.StatusNotFound {
-		return Release{}, fmt.Errorf("no matching release was published")
-	}
-	if response.StatusCode != http.StatusOK {
-		return Release{}, fmt.Errorf("release source returned status %d", response.StatusCode)
+	if err := classifyReleaseStatus(response.StatusCode); err != nil {
+		return Release{}, err
 	}
 	var payload gitHubRelease
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
@@ -78,8 +103,24 @@ func (s *gitHubSource) fetch(ctx context.Context, arch, url string) (Release, er
 	return releaseFromPayload(payload, arch)
 }
 
+// classifyReleaseStatus turns a response status into the actionable error for
+// that failure, or nil for a success. It is shared by the metadata and the asset
+// download so both name the same causes the same way.
+func classifyReleaseStatus(status int) error {
+	switch {
+	case status == http.StatusOK:
+		return nil
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return errReleaseTokenRejected
+	case status == http.StatusNotFound:
+		return errReleaseNotFound
+	default:
+		return fmt.Errorf("release source returned status %d", status)
+	}
+}
+
 // releaseFromPayload validates a release payload and resolves this node's
-// architecture-specific asset and checksum URLs. Drafts and pre-releases are
+// architecture-specific tarball and checksum URLs. Drafts and pre-releases are
 // rejected so a node never updates onto an unfinished build.
 func releaseFromPayload(payload gitHubRelease, arch string) (Release, error) {
 	if payload.Draft || payload.Prerelease {
@@ -93,7 +134,7 @@ func releaseFromPayload(payload gitHubRelease, arch string) (Release, error) {
 	if !ok {
 		return Release{}, fmt.Errorf("self-update is unsupported on this architecture")
 	}
-	assetName := fmt.Sprintf("nexa-linux-%s", suffix)
+	assetName := fmt.Sprintf("nexa-panel-linux-%s.tar.gz", suffix)
 	checksumName := assetName + ".sha256"
 	var assetURL, checksumURL string
 	for _, asset := range payload.Assets {
@@ -105,7 +146,7 @@ func releaseFromPayload(payload gitHubRelease, arch string) (Release, error) {
 		}
 	}
 	if assetURL == "" || checksumURL == "" {
-		return Release{}, fmt.Errorf("release %s has no %s binary and checksum", payload.TagName, suffix)
+		return Release{}, fmt.Errorf("release %s has no %s archive and checksum", payload.TagName, suffix)
 	}
 	return Release{
 		Version:     version,

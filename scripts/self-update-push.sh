@@ -7,6 +7,12 @@
 # No release hosting or download is involved — the operator's own build is the
 # source of truth.
 #
+# This pushes a BINARY, not a release: unlike `nexa self-update`, which unpacks a
+# release tarball and re-applies its packaging, nothing here updates systemd
+# units, tmpfiles rules, sysusers or the nginx template. If the build being
+# pushed changes any of those, run its scripts/install.sh --sync-packaging on the
+# host afterwards. The command prints a reminder to that effect on every run.
+#
 #   scripts/self-update-push.sh root@example.com
 #   scripts/self-update-push.sh --build --arch amd64 deploy@host
 #   scripts/self-update-push.sh --binary dist/nexa-linux-arm64 myhost

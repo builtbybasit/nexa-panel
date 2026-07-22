@@ -8,8 +8,13 @@ import (
 	"time"
 )
 
-// maxBinaryBytes caps a downloaded release binary. It is generous headroom over
-// a real nexa binary while still refusing a runaway or hostile response.
+// maxArchiveBytes caps a downloaded release tarball. It is generous headroom
+// over a real release (a binary plus a small packaging tree) while still
+// refusing a runaway or hostile response.
+const maxArchiveBytes = 256 * 1024 * 1024
+
+// maxBinaryBytes caps a bare nexa binary, whether extracted from a release or
+// staged on the host by an operator.
 const maxBinaryBytes = 256 * 1024 * 1024
 
 // maxChecksumBytes caps the tiny checksum sidecar.
@@ -23,14 +28,18 @@ type Downloader interface {
 }
 
 type httpDownloader struct {
-	http *http.Client
+	http   *http.Client
+	tokens *releaseTokens
 }
 
-func newHTTPDownloader(client *http.Client) *httpDownloader {
+func newHTTPDownloader(client *http.Client, tokens *releaseTokens) *httpDownloader {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Minute}
 	}
-	return &httpDownloader{http: client}
+	if tokens == nil {
+		tokens = newReleaseTokens("")
+	}
+	return &httpDownloader{http: client, tokens: tokens}
 }
 
 func (d *httpDownloader) Fetch(ctx context.Context, url string, limit int64) ([]byte, error) {
@@ -38,13 +47,22 @@ func (d *httpDownloader) Fetch(ctx context.Context, url string, limit int64) ([]
 	if err != nil {
 		return nil, fmt.Errorf("build download request: %w", err)
 	}
+	// Release assets are fetched from their API URL, and that endpoint only
+	// answers with the file itself when asked for octet-stream; with the JSON
+	// Accept it returns the asset's metadata instead. Paired with the bearer
+	// token this is the only combination that works on a private repository.
+	request.Header.Set("Accept", "application/octet-stream")
+	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if err := d.tokens.authorize(request); err != nil {
+		return nil, err
+	}
 	response, err := d.http.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("download release asset: %w", err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("release asset download returned status %d", response.StatusCode)
+	if err := classifyReleaseStatus(response.StatusCode); err != nil {
+		return nil, err
 	}
 	// LimitReader+1 lets an over-limit body be detected rather than silently
 	// truncated into a valid-looking-but-wrong artifact.

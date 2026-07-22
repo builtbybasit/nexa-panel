@@ -29,8 +29,16 @@ func (o *HostOperator) Apply(ctx context.Context, change Change) (Result, error)
 }
 
 // applyRelease resolves, downloads, and verifies a release from the trusted
-// repository, then installs it. Only strictly newer releases are accepted; a
-// download must match its published checksum and report the expected version.
+// repository, then installs it. Only strictly newer releases are accepted; the
+// archive must match its published checksum, and the binary it carries must run
+// and report the expected version.
+//
+// The order matters. The binary is swapped first and the packaging applied
+// second, because the packaging describes the new binary: units, tmpfiles rules
+// and prerequisites for a version that is not on disk yet would be the wrong
+// half of the upgrade to land first. A packaging failure therefore leaves a
+// node whose binary moved and whose units did not — that is reported as an
+// error naming the rollback, not swallowed.
 func (o *HostOperator) applyRelease(ctx context.Context, change Change) (Result, error) {
 	release, err := o.resolve(ctx, change)
 	if err != nil {
@@ -47,17 +55,51 @@ func (o *HostOperator) applyRelease(ctx context.Context, change Change) (Result,
 	if err != nil {
 		return Result{}, err
 	}
-	binary, err := o.downloader.Fetch(ctx, release.AssetURL, maxBinaryBytes)
+	archive, err := o.downloader.Fetch(ctx, release.AssetURL, maxArchiveBytes)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := verifyChecksum(binary, expected); err != nil {
+	if err := verifyChecksum(archive, expected); err != nil {
+		return Result{}, err
+	}
+
+	staging, err := o.stage(archive)
+	if err != nil {
+		return Result{}, err
+	}
+	// The staging tree is only removed on a failure; on success it is retained
+	// as the node's "current" packaging so a later rollback has something to
+	// restore.
+	staged := false
+	defer func() {
+		if !staged {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+
+	binary, err := readStagedBinary(filepath.Join(staging, filepath.FromSlash(releaseBinaryEntry)))
+	if err != nil {
 		return Result{}, err
 	}
 	if _, err := o.installStagedBinary(ctx, binary, release.Version); err != nil {
 		return Result{}, err
 	}
-	return o.finishSwap(ctx, release.Version)
+	if err := o.syncPackaging(ctx, staging); err != nil {
+		return Result{
+			PreviousVersion: o.installed,
+			TargetVersion:   release.Version,
+			Swapped:         true,
+			PackagingNote:   "the binary is now " + release.Version + " but its packaging was not applied; run `nexa self-update rollback` or re-run the release installer by hand",
+		}, err
+	}
+	if err := o.retainPackaging(staging); err != nil {
+		return Result{}, err
+	}
+	staged = true
+
+	result, err := o.finishSwap(ctx, release.Version)
+	result.PackagingSynced = true
+	return result, err
 }
 
 // applyLocalBinary installs a binary an operator has already staged on the host
@@ -91,14 +133,28 @@ func (o *HostOperator) applyLocalBinary(ctx context.Context, path string) (Resul
 	if reported == "" {
 		reported = "the supplied binary"
 	}
-	return o.finishSwap(ctx, reported)
+	result, err := o.finishSwap(ctx, reported)
+	// A local push is a binary, not a release: there is no packaging tree to
+	// apply. Say so rather than let the caller assume a full upgrade.
+	result.PackagingNote = "only the binary was replaced; if this build changes systemd units, tmpfiles rules or the nginx template, run its scripts/install.sh " + releaseInstallerFlag
+	return result, err
 }
 
-// Rollback reinstalls the binary preserved by the previous swap. It validates
-// the preserved binary runs before the atomic replacement — which itself
-// re-preserves the now-current binary as the new .prev, so a rollback can be
-// undone — then arms the same detached restart as a normal apply. It errors when
-// no previous binary is available.
+// Rollback reinstalls the binary preserved by the previous swap, and, when the
+// release that binary came from is still retained, re-applies its packaging too.
+// It validates the preserved binary runs before the atomic replacement — which
+// itself re-preserves the now-current binary as the new .prev, and swaps the two
+// retained packaging trees, so a rollback can be undone — then arms the same
+// detached restart as a normal apply. It errors when no previous binary is
+// available.
+//
+// Packaging is rolled back with the binary rather than left alone because the
+// two are one artifact: reverting only /usr/bin/nexa onto units, tmpfiles rules
+// and an nginx template from the newer release is the same half-upgrade this
+// operator exists to prevent, just in the other direction. When there is no
+// retained previous tree — the node's first self-update, where the packaging it
+// came with was never captured — the binary is still restored, and the Result
+// says plainly that the packaging was not.
 func (o *HostOperator) Rollback(ctx context.Context) (Result, error) {
 	o.applyMu.Lock()
 	defer o.applyMu.Unlock()
@@ -125,7 +181,36 @@ func (o *HostOperator) Rollback(ctx context.Context) (Result, error) {
 	if reported == "" {
 		reported = "the previous binary"
 	}
-	return o.finishSwap(ctx, reported)
+	synced, note, err := o.rollbackPackaging(ctx)
+	if err != nil {
+		return Result{
+			PreviousVersion: o.installed,
+			TargetVersion:   reported,
+			Swapped:         true,
+			PackagingNote:   "the previous binary is back in place but its packaging could not be re-applied; re-run the release installer by hand",
+		}, err
+	}
+	result, err := o.finishSwap(ctx, reported)
+	result.PackagingSynced = synced
+	result.PackagingNote = note
+	return result, err
+}
+
+// rollbackPackaging re-applies the retained previous release tree and swaps it
+// with the current one so the rollback is itself undoable. It reports whether
+// packaging moved, and the note the caller must show when it did not.
+func (o *HostOperator) rollbackPackaging(ctx context.Context) (bool, string, error) {
+	previous := filepath.Join(o.workRoot, previousPackagingDir)
+	if _, err := os.Stat(filepath.Join(previous, filepath.FromSlash(releaseInstallerEntry))); err != nil {
+		return false, "only the binary was rolled back: this node has no retained packaging for the previous version, so its systemd units, tmpfiles rules and nginx template are still the newer release's", nil
+	}
+	if err := o.syncPackaging(ctx, previous); err != nil {
+		return false, "", err
+	}
+	if err := o.swapRetainedPackaging(); err != nil {
+		return false, "", err
+	}
+	return true, "", nil
 }
 
 // finishSwap arms the restart and assembles the Result after a successful swap.
@@ -292,6 +377,127 @@ func (o *HostOperator) preservePreviousBinary() error {
 		return fmt.Errorf("preserve the previous binary: %w", err)
 	}
 	return nil
+}
+
+// stage extracts a verified release archive into a fresh directory under the
+// work root and returns that directory. The work root is created 0700 and
+// root-owned: the tree holds a scripts/install.sh this operator later executes
+// as root, so no other account may be able to reach or rewrite it.
+func (o *HostOperator) stage(archive []byte) (string, error) {
+	if err := os.MkdirAll(o.workRoot, 0o700); err != nil {
+		return "", fmt.Errorf("create the self-update work directory: %w", err)
+	}
+	// MkdirAll honours the umask, and the agent runs with UMask=0177; the mode
+	// is therefore set explicitly rather than assumed.
+	if err := os.Chmod(o.workRoot, 0o700); err != nil {
+		return "", fmt.Errorf("secure the self-update work directory: %w", err)
+	}
+	staging, err := os.MkdirTemp(o.workRoot, "staging-")
+	if err != nil {
+		return "", fmt.Errorf("create the release staging directory: %w", err)
+	}
+	if err := extractRelease(archive, staging); err != nil {
+		_ = os.RemoveAll(staging)
+		return "", err
+	}
+	return staging, nil
+}
+
+// readStagedBinary reads the nexa binary out of an extracted release tree,
+// applying the same size ceiling as a download so a wildly oversized member
+// cannot be loaded whole.
+func readStagedBinary(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("the release archive's %s could not be read: %w", releaseBinaryEntry, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("the release archive's %s is not a regular file", releaseBinaryEntry)
+	}
+	if info.Size() > maxBinaryBytes {
+		return nil, fmt.Errorf("the release archive's %s exceeds the %d byte limit", releaseBinaryEntry, maxBinaryBytes)
+	}
+	binary, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("the release archive's %s could not be read: %w", releaseBinaryEntry, err)
+	}
+	return binary, nil
+}
+
+// syncPackaging runs the release's own installer in its packaging-only mode,
+// which re-applies systemd units, tmpfiles and sysusers rules, the nginx
+// template and any newly required host prerequisites. The binary is already in
+// place by then, so the installer is not asked to touch it, and --no-start
+// keeps it from restarting the agent out from under this very call.
+//
+// It is invoked through bash by path rather than executed directly: the work
+// root lives under /var, which a hardened node may well mount noexec.
+func (o *HostOperator) syncPackaging(ctx context.Context, tree string) error {
+	script := filepath.Join(tree, filepath.FromSlash(releaseInstallerEntry))
+	output, err := o.runner.Run(ctx, Command{Name: "/bin/bash", Args: []string{script, releaseInstallerFlag, releaseInstallerNoStart}})
+	if err != nil {
+		return fmt.Errorf("apply the release packaging: %s: %w", lastLine(string(output)), err)
+	}
+	return nil
+}
+
+// retainPackaging promotes a freshly applied staging tree to "current",
+// demoting whatever was current to "previous" — the tree a rollback re-applies.
+// Only those two generations are kept; anything older is removed.
+func (o *HostOperator) retainPackaging(staging string) error {
+	current := filepath.Join(o.workRoot, currentPackagingDir)
+	previous := filepath.Join(o.workRoot, previousPackagingDir)
+	if err := os.RemoveAll(previous); err != nil {
+		return fmt.Errorf("clear the retained previous packaging: %w", err)
+	}
+	if _, err := os.Stat(current); err == nil {
+		if err := os.Rename(current, previous); err != nil {
+			return fmt.Errorf("retain the displaced packaging: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect the retained packaging: %w", err)
+	}
+	if err := os.Rename(staging, current); err != nil {
+		return fmt.Errorf("retain the applied packaging: %w", err)
+	}
+	return nil
+}
+
+// swapRetainedPackaging exchanges the current and previous trees after a
+// rollback has re-applied the previous one, mirroring how the swap re-preserves
+// the displaced binary as the new .prev: whatever was rolled back to is now
+// current, and what was rolled away from is what a second rollback would
+// restore.
+func (o *HostOperator) swapRetainedPackaging() error {
+	current := filepath.Join(o.workRoot, currentPackagingDir)
+	previous := filepath.Join(o.workRoot, previousPackagingDir)
+	interim := filepath.Join(o.workRoot, ".swapping")
+	if err := os.RemoveAll(interim); err != nil {
+		return fmt.Errorf("clear the packaging swap directory: %w", err)
+	}
+	if err := os.Rename(previous, interim); err != nil {
+		return fmt.Errorf("swap the retained packaging: %w", err)
+	}
+	if err := os.Rename(current, previous); err != nil {
+		return fmt.Errorf("swap the retained packaging: %w", err)
+	}
+	if err := os.Rename(interim, current); err != nil {
+		return fmt.Errorf("swap the retained packaging: %w", err)
+	}
+	return nil
+}
+
+// lastLine returns the final non-empty line of command output, which for a
+// failing shell installer is the message that explains the failure. Full output
+// is not surfaced: it is long, and it is not the operator's error to read.
+func lastLine(output string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		if line := strings.TrimSpace(lines[index]); line != "" {
+			return line
+		}
+	}
+	return "no output"
 }
 
 // firstField returns the first whitespace-delimited token of s, which for the
