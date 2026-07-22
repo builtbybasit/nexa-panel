@@ -12,6 +12,7 @@ import (
 type NodeSystem interface {
 	PrepareSite(ctx context.Context, site Site) error
 	SecureArtifacts(ctx context.Context, site Site, artifacts []Artifact) error
+	VerifyDocumentRoot(ctx context.Context, site Site) error
 	ValidatePHP(ctx context.Context, version string) error
 	ValidateNginx(ctx context.Context) error
 	ReloadPHP(ctx context.Context, version string) error
@@ -136,6 +137,9 @@ func (o *HostOperator) Apply(ctx context.Context, plan Plan) (Observation, error
 	}
 	if err := o.setEnabled(plan.Site.Slug, true); err != nil {
 		return Observation{}, o.rollbackFailure(ctx, plan, err)
+	}
+	if err := o.system.VerifyDocumentRoot(ctx, plan.Site); err != nil {
+		return Observation{}, o.rollbackFailure(ctx, plan, fmt.Errorf("verify site document root: %w", err))
 	}
 	if err := o.system.ValidatePHP(ctx, plan.Site.PHPVersion); err != nil {
 		return Observation{}, o.rollbackFailure(ctx, plan, fmt.Errorf("validate PHP-FPM configuration: %w", err))

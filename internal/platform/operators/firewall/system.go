@@ -32,6 +32,22 @@ func parseStatus(output string) Status {
 	return status
 }
 
+// stripAppProfile drops the "(Profile Name)" suffix `ufw status verbose` appends
+// to a row that was added from an application profile: `ufw allow OpenSSH`
+// lists as "22/tcp (OpenSSH)", and its v6 twin as "22/tcp (OpenSSH (v6))",
+// which the (v6) scrub above leaves as "22/tcp (OpenSSH )". Without this the
+// port/proto split reads the whole trailer as the protocol — "tcp (openssh)" —
+// which no consumer matches: the deploy prepare check reports port 22 closed on
+// a node where SSH is plainly allowed, and the Firewall page lists a protocol
+// that is not one.
+func stripAppProfile(to string) string {
+	open := strings.LastIndex(to, "(")
+	if open <= 0 || !strings.HasSuffix(to, ")") {
+		return to
+	}
+	return strings.TrimSpace(to[:open])
+}
+
 func parseRuleLine(line string) (Rule, bool) {
 	fields := strings.Fields(line)
 	actionIdx := -1
@@ -57,7 +73,7 @@ func parseRuleLine(line string) (Rule, bool) {
 
 	rule := Rule{Action: action}
 	rule.V6 = strings.Contains(to, "(v6)") || strings.Contains(from, "(v6)")
-	to = strings.TrimSpace(strings.ReplaceAll(to, "(v6)", ""))
+	to = stripAppProfile(strings.TrimSpace(strings.ReplaceAll(to, "(v6)", "")))
 
 	// "To" is either a port, a port/proto, a range, or a bare "Anywhere".
 	if portproto := to; !strings.EqualFold(portproto, "Anywhere") {

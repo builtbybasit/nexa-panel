@@ -35,6 +35,14 @@ const (
 	StatusFailed      Status = "failed"
 )
 
+// Deployment modes. Standard is the panel-owned document root every site has
+// today; deployer hands the release tree under {root}/app to an external
+// deployer and points the vhost at its current release.
+const (
+	DeploymentModeStandard = "standard"
+	DeploymentModeDeployer = "deployer"
+)
+
 type Site struct {
 	ID            string                `json:"id"`
 	Slug          string                `json:"slug"`
@@ -46,10 +54,13 @@ type Site struct {
 	SocketPath    string                `json:"socketPath"`
 	Status        Status                `json:"status"`
 	Settings      siteoperator.Settings `json:"settings"`
-	LastJobID     *int64                `json:"lastJobId,omitempty"`
-	Failure       string                `json:"failure,omitempty"`
-	CreatedAt     time.Time             `json:"createdAt"`
-	UpdatedAt     time.Time             `json:"updatedAt"`
+	// DeploymentMode is "standard" (the panel owns the document root) or
+	// "deployer" (a release tree owns it); see validDeploymentMode.
+	DeploymentMode string    `json:"deploymentMode"`
+	LastJobID      *int64    `json:"lastJobId,omitempty"`
+	Failure        string    `json:"failure,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type CreateRequest struct {
@@ -94,8 +105,23 @@ type Module struct {
 	access      AccessPolicy
 	routeSource RouteSource
 	tls         TLSProvider
-	now         func() time.Time
+	// deployTeardown is optional; when unset a teardown simply removes the
+	// sites module's own artifacts, which is the pre-deployer behaviour.
+	deployTeardown DeployTeardown
+	now            func() time.Time
 }
+
+// DeployTeardown withdraws the node-side grants a deploy-side feature installed
+// for a site — today the deployer layout's narrow PHP-FPM reload permission,
+// which lives in /etc/sudoers.d and so outlives the site's own artifacts. The
+// deploy module satisfies it and is wired in after construction, like the other
+// cross-module links here, because it depends on this module in the other
+// direction.
+type DeployTeardown interface {
+	TeardownSiteDeployment(ctx context.Context, siteID string) error
+}
+
+func (m *Module) SetDeployTeardown(teardown DeployTeardown) { m.deployTeardown = teardown }
 
 func (m *Module) SetAccessPolicy(policy AccessPolicy) { m.access = policy }
 
@@ -104,21 +130,22 @@ func (m *Module) SetRouteSource(source RouteSource) { m.routeSource = source }
 func (m *Module) SetTLSProvider(provider TLSProvider) { m.tls = provider }
 
 type siteModel struct {
-	bun.BaseModel `bun:"table:sites,alias:site"`
-	ID            string `bun:",pk"`
-	Slug          string
-	DisplayName   string
-	PrimaryDomain string
-	PHPVersion    string
-	UnixUser      string
-	RootPath      string
-	SocketPath    string
-	Status        string
-	SettingsJSON  *string
-	LastJobID     *int64
-	Failure       *string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	bun.BaseModel  `bun:"table:sites,alias:site"`
+	ID             string `bun:",pk"`
+	Slug           string
+	DisplayName    string
+	PrimaryDomain  string
+	PHPVersion     string
+	UnixUser       string
+	RootPath       string
+	SocketPath     string
+	Status         string
+	SettingsJSON   *string
+	DeploymentMode string
+	LastJobID      *int64
+	Failure        *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type planModel struct {

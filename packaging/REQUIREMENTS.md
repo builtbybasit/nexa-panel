@@ -18,6 +18,10 @@ The installer configures and keeps these host capabilities available:
   (Podman 4.5 or newer is required by the generated definition);
 - `rclone` for local, S3-compatible, SFTP, and Google Drive backup accounts;
 - `postgresql-common` and `libjson-perl` for JSON cluster discovery;
+- `git`, `unzip`, `rsync`, `acl`, and `sudo` for deployment tooling: cloning and
+  updating a site's repository, unpacking downloaded archives, copying release
+  directories, granting the site account access to shared paths, and invoking
+  the single root-owned reload wrapper a deployer-mode site is allowed to run;
 - CA certificates, cURL, GnuPG, and Ubuntu repository-management tools.
 
 The installer also enables the Ondrej PHP PPA and the PostgreSQL PGDG
@@ -37,7 +41,11 @@ repositories rather than requiring every supported version up front:
   including `pg_lsclusters`, `pg_createcluster`, `pg_ctlcluster`, `psql`,
   `createdb`, `dropdb`, `pg_dump`, and `pg_restore`;
 - one native MySQL or MariaDB series offered by the Applications catalog, with
-  its server, client, dump utility, Unix socket, and systemd service.
+  its server, client, dump utility, Unix socket, and systemd service;
+- Composer and the `php<version>-cli` matching a deployer-mode site's PHP
+  branch, installed by the deployment prepare job. Composer is not a foundation
+  package because Ubuntu's archive copy depends on the distro `php-cli`, which
+  the Applications catalog would then report as an installed PHP branch.
 
 Database backup and restore operations require the client major version to
 match the managed server. Site backup creation additionally uses the host

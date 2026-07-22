@@ -228,6 +228,28 @@ paths:
     $ref: ./paths/php.yaml#/php_settings
   /php/sites/{id}/settings:
     $ref: ./paths/php.yaml#/php_sites_id_settings
+  /sites/{id}/ssh:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh
+  /sites/{id}/ssh/enable:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh_enable
+  /sites/{id}/ssh/disable:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh_disable
+  /sites/{id}/ssh/keys:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh_keys
+  /sites/{id}/ssh/keys/generate:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh_keys_generate
+  /sites/{id}/ssh/keys/{keyId}:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh_keys_keyId
+  /sites/{id}/deploy-key:
+    $ref: ./paths/deploy.yaml#/sites_id_deploy-key
+  /sites/{id}/deploy-key/test:
+    $ref: ./paths/deploy.yaml#/sites_id_deploy-key_test
+  /sites/{id}/deployment-mode:
+    $ref: ./paths/deploy.yaml#/sites_id_deployment-mode
+  /sites/{id}/deployment/env:
+    $ref: ./paths/deploy.yaml#/sites_id_deployment_env
+  /sites/{id}/deployment/prepare:
+    $ref: ./paths/deploy.yaml#/sites_id_deployment_prepare
 components:
   responses:
     ClientError:
@@ -391,6 +413,24 @@ components:
       $ref: ./components/schemas/scheduled-tasks.yaml#/SchedulePlan
     ScheduleRunRecord:
       $ref: ./components/schemas/scheduled-tasks.yaml#/ScheduleRunRecord
+    SshAccess:
+      $ref: ./components/schemas/deploy.yaml#/SshAccess
+    SshKey:
+      $ref: ./components/schemas/deploy.yaml#/SshKey
+    GeneratedSshKey:
+      $ref: ./components/schemas/deploy.yaml#/GeneratedSshKey
+    DeployKey:
+      $ref: ./components/schemas/deploy.yaml#/DeployKey
+    DeploymentModeChange:
+      $ref: ./components/schemas/deploy.yaml#/DeploymentModeChange
+    SharedEnv:
+      $ref: ./components/schemas/deploy.yaml#/SharedEnv
+    DeployTool:
+      $ref: ./components/schemas/deploy.yaml#/DeployTool
+    FirewallSshCheck:
+      $ref: ./components/schemas/deploy.yaml#/FirewallSshCheck
+    NodePreparation:
+      $ref: ./components/schemas/deploy.yaml#/NodePreparation
     Job:
       $ref: ./components/schemas/jobs.yaml#/Job
     JobEvent:

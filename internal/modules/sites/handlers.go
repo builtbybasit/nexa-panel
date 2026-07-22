@@ -224,17 +224,13 @@ func (m *Module) updateSettingsHTTP(w http.ResponseWriter, r *http.Request) {
 // change and attaches it to the site, keeping the persisted settings and the job
 // atomic from the caller's perspective.
 func (m *Module) enqueueSettingsFollowup(w http.ResponseWriter, r *http.Request, site Site, kind, title string, status Status, actorUserID *string) {
-	job, err := m.jobs.SubmitTitled(r.Context(), kind, title, map[string]string{"siteId": site.ID}, actorUserID)
+	job, err := m.submitSettingsFollowup(r.Context(), site, kind, title, status, actorUserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The settings change could not be queued.")
 		return
 	}
-	if _, err := m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", status).Set("last_job_id = ?", job.ID).Set("failure = NULL").Set("updated_at = ?", m.now().UTC()).Where("id = ?", site.ID).Exec(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "site_update_failed", "The queued operation could not be attached to the site.")
-		return
-	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, job)
+	writeJSON(w, http.StatusAccepted, *job)
 }
 
 func (m *Module) activateHTTP(w http.ResponseWriter, r *http.Request) {

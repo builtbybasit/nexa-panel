@@ -31,6 +31,7 @@ const (
 // stable.
 type effectiveSettings struct {
 	DocRoot         string
+	SymlinkFrom     string
 	IndexFiles      string
 	FrontController string
 	Gzip            bool
@@ -82,15 +83,55 @@ func zeroOr(value, fallback int) int {
 // permitted in zone identifiers.
 func rateZone(slug string) string { return "nexa_" + strings.ReplaceAll(slug, "-", "_") }
 
-// documentRoot resolves the served root: the site's public/ directory, plus the
-// optional subdirectory beneath it. validateSubdirectory has already refused any
-// traversal, so this can never escape public/.
+// releaseRoot is the release tree a deployer-mode site is served from. It is
+// nested one level below the site root so {root} itself stays root-owned and
+// non-group-writable: sshd refuses a ChrootDirectory it does not own, and the
+// per-site SFTP jail chroots to {root}.
+func releaseRoot(site Site) string { return filepath.Join(site.RootPath, "app") }
+
+// documentRoot resolves the served root: the site's public/ directory — or, in
+// deployer mode, the public/ directory of whichever release {root}/app/current
+// points at — plus the optional subdirectory beneath it. validateSubdirectory
+// has already refused any traversal, so this can never escape public/.
+//
+// See symlinkFrom for why the rendered disable_symlinks prefix is NOT this path
+// in deployer mode.
 func documentRoot(site Site) string {
 	root := filepath.Join(site.RootPath, "public")
+	if deployerLayout(site) {
+		root = filepath.Join(releaseRoot(site), "current", "public")
+	}
 	if site.Settings.Subdirectory == "" {
 		return root
 	}
 	return filepath.Join(root, site.Settings.Subdirectory)
+}
+
+// symlinkFrom is the `disable_symlinks if_not_owner from=` prefix. nginx only
+// ownership-checks the path components that come *after* this prefix, so the
+// prefix decides which links a site can plant and have nginx follow blindly.
+//
+// In standard mode the prefix is the document root itself: {root} is root-owned,
+// so the site account can only plant links below public/, which are all checked.
+//
+// In deployer mode the document root contains `current`, a symlink the site
+// account owns and re-points on every deploy — and {root}/app, the directory
+// holding it, is site-owned by design (prepareDeployerLayout). Anchoring the
+// prefix at the document root would put `current` inside the unchecked region
+// and let the site aim its own vhost at any path on the host: nginx's worker
+// runs as www-data, so it would happily serve another site's tree. The prefix is
+// therefore the release root, which makes `current` an ownership-checked
+// component: a link the site owns pointing at a release the site owns passes,
+// and one pointing at another account's tree is refused with EACCES.
+//
+// This is why prepareCurrentSymlink lchowns the link it seeds to the site
+// account — a root-owned link over a site-owned release would fail the very
+// check this prefix turns on.
+func symlinkFrom(site Site) string {
+	if deployerLayout(site) {
+		return releaseRoot(site)
+	}
+	return documentRoot(site)
 }
 
 // defaultIndexFiles is the historical directory-index list. A zero Settings must
@@ -128,6 +169,7 @@ func effective(site Site, includesRoot string) effectiveSettings {
 	s := site.Settings
 	e := effectiveSettings{
 		DocRoot:         documentRoot(site),
+		SymlinkFrom:     symlinkFrom(site),
 		IndexFiles:      strings.Join(indexFilesOr(s.IndexFiles), " "),
 		FrontController: frontController(s.IndexFiles),
 		Gzip:            boolOr(s.Gzip, true),
@@ -179,10 +221,17 @@ func fpmDataFor(site Site) any {
 	}
 	children := zeroOr(f.PMMaxChildren, defaultFPMMaxChildren)
 	// An empty WorkingDirectory must not go through filepath.Join at all: the
-	// baseline chdir is the site root path exactly as given.
-	chdir := site.RootPath
+	// baseline chdir is the site root path exactly as given. In deployer mode the
+	// base is {root}/app/current instead, so a worker never starts in a directory
+	// that release rotation has left behind; WorkingDirectory stays relative to
+	// that base, which keeps it pointing inside the live release.
+	base := site.RootPath
+	if deployerLayout(site) {
+		base = filepath.Join(releaseRoot(site), "current")
+	}
+	chdir := base
 	if f.WorkingDirectory != "" {
-		chdir = filepath.Join(site.RootPath, f.WorkingDirectory)
+		chdir = filepath.Join(base, f.WorkingDirectory)
 	}
 	start := children / 2
 	if start < 1 {

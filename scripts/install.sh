@@ -167,6 +167,10 @@ fi
 # The set the operators shell out to; see packaging/REQUIREMENTS.md. postgresql-common
 # also creates the `postgres` account that the tmpfiles tree below is owned by,
 # so it has to land before systemd-tmpfiles runs.
+# Composer deliberately stays out of this block: it runs before ppa:ondrej/php is
+# added, and Ubuntu's `composer` pulls the distro `php-cli`, which would make the
+# Applications catalog read that PHP branch as installed forever. The deployment
+# prepare job installs Composer on demand instead.
 log "Refreshing the package index"
 apt-get update -qq
 
@@ -180,6 +184,7 @@ apt-get install -y --no-install-recommends \
   ufw \
   rclone \
   openssh-server \
+  git unzip rsync acl sudo \
   podman fuse-overlayfs \
   ca-certificates curl gnupg software-properties-common
 

@@ -188,3 +188,41 @@ func contains(items []string, want string) bool {
 	}
 	return false
 }
+
+// `ufw allow OpenSSH` — the documented Ubuntu default — lists in
+// `ufw status verbose` with the profile name appended to the port. Read
+// verbatim, the trailer becomes the protocol ("tcp (openssh)"), which nothing
+// matches: the deploy prepare check reports port 22 closed on a node where SSH
+// is plainly allowed, and the Firewall page lists a protocol that is not one.
+func TestParseStatusStripsAppProfileNames(t *testing.T) {
+	output := `Status: active
+
+To                         Action      From
+--                         ------      ----
+22/tcp (OpenSSH)           ALLOW IN    Anywhere
+80,443/tcp (Nginx Full)    ALLOW IN    Anywhere
+22/tcp (OpenSSH (v6))      ALLOW IN    Anywhere (v6)
+`
+	status := parseStatus(output)
+	if len(status.Rules) != 3 {
+		t.Fatalf("expected 3 rules, got %d: %+v", len(status.Rules), status.Rules)
+	}
+	for i, want := range []Rule{
+		{Action: ActionAllow, Port: "22", Protocol: "tcp"},
+		{Action: ActionAllow, Port: "80,443", Protocol: "tcp"},
+		{Action: ActionAllow, Port: "22", Protocol: "tcp", V6: true},
+	} {
+		if status.Rules[i] != want {
+			t.Fatalf("rule %d = %+v, want %+v", i, status.Rules[i], want)
+		}
+	}
+}
+
+// A bare "(v6)" row and a plain numeric row must be untouched by the profile
+// strip.
+func TestParseStatusLeavesPlainRowsAlone(t *testing.T) {
+	status := parseStatus("Status: active\n8080                       ALLOW IN    Anywhere\n")
+	if len(status.Rules) != 1 || status.Rules[0] != (Rule{Action: ActionAllow, Port: "8080"}) {
+		t.Fatalf("rules = %+v", status.Rules)
+	}
+}

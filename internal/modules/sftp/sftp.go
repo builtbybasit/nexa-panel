@@ -8,6 +8,7 @@ package sftp
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"time"
@@ -30,11 +31,20 @@ type AccessPolicy interface {
 	SiteAccessible(ctx context.Context, user identity.User, siteID string) (bool, error)
 }
 
+// SSHAccessState reports the deploy module's per-site SSH login state. The SFTP
+// jail and an SSH login write competing sshd Match blocks for the same account —
+// the access block sorts first and wins every keyword — so enabling SFTP while
+// SSH access is on has to be refused before the node is touched.
+type SSHAccessState interface {
+	AccessEnabled(ctx context.Context, siteID string) (bool, error)
+}
+
 type Module struct {
 	database *bun.DB
 	operator sftpoperator.Operator
 	sites    SiteCatalog
 	access   AccessPolicy
+	ssh      SSHAccessState
 	now      func() time.Time
 }
 
@@ -72,6 +82,27 @@ func (m *Module) Descriptor() module.Descriptor {
 		Dependencies:       []string{"identity", "sites"},
 		EstimatedIdleBytes: 256 * 1024,
 	}
+}
+
+// UseSSHAccessState wires the other half of the SSH/SFTP mutual exclusion. It is
+// a setter rather than a constructor argument because the deploy module already
+// takes this module as a dependency: the two guard each other, so one of the two
+// links has to be made once both exist. Until it is set, enabling SFTP is
+// refused outright — an unguarded enable can silently void the jail it claims.
+func (m *Module) UseSSHAccessState(state SSHAccessState) { m.ssh = state }
+
+// AccessEnabled reports whether per-site SFTP is currently enabled. It exists
+// so the deploy module can refuse to install a conflicting sshd Match block.
+func (m *Module) AccessEnabled(ctx context.Context, siteID string) (bool, error) {
+	row := new(accessModel)
+	err := m.database.NewSelect().Model(row).Where("site_id = ?", siteID).Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return row.Enabled, nil
 }
 
 func (m *Module) Register(registry module.Registry) error {

@@ -4,6 +4,14 @@ import type { Job } from '../jobs/api'
 
 export type SiteStatus = 'draft' | 'planning' | 'plan_ready' | 'activating' | 'active' | 'rolling_back' | 'rolled_back' | 'deleting' | 'failed'
 
+/**
+ * Who owns the served document root: 'standard' is the panel-owned public/,
+ * 'deployer' is the release tree under {root}/app that an external deployer
+ * rotates. Always present on a read — a missing value would be
+ * indistinguishable from standard, and this is a switch the UI renders.
+ */
+export type SiteDeploymentMode = 'standard' | 'deployer'
+
 // These sub-types are structural members of SiteSettings; consumers only ever
 // name SiteSettings itself, so they stay file-local (the deadcode gate rejects
 // exports nothing imports).
@@ -143,6 +151,7 @@ export interface Site {
   // Serialized with omitempty: `{}` (or sparse) for a never-tuned site.
   // Deep-merge over DEFAULT_SITE_SETTINGS before rendering.
   settings: SiteSettings
+  deploymentMode: SiteDeploymentMode
   lastJobId?: number
   failure?: string
   createdAt: string

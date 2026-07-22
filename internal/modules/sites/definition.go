@@ -34,6 +34,7 @@ func (m *Module) Definition(ctx context.Context, siteID string, routes []siteope
 		ID: model.ID, Slug: model.Slug, PrimaryDomain: model.PrimaryDomain, PHPVersion: model.PHPVersion,
 		UnixUser: model.UnixUser, RootPath: model.RootPath, SocketPath: model.SocketPath,
 		Routes: routes, TLS: tls, TLSDomains: tlsDomains, Settings: settings,
+		DeploymentMode: deploymentMode(model.DeploymentMode),
 	}, nil
 }
 

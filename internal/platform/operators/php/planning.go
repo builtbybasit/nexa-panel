@@ -223,8 +223,23 @@ func (o *HostOperator) fingerprintFor(ctx context.Context, change Change) (strin
 	}
 }
 
+// userIniStep narrates where the override is actually written. In deployer mode
+// that is the release the site is serving right now, and a deploy that publishes
+// a new release replaces it — an operator reading the plan should learn that
+// from the plan, not from a setting that stops applying after the next deploy.
+func userIniStep(scope SiteScope) string {
+	if scope.DeploymentMode == DeploymentModeDeployer {
+		return "Write " + scope.Slug + "'s .user.ini in the release it is currently serving; publishing a new release replaces it."
+	}
+	return "Write " + scope.Slug + "'s .user.ini in its document root."
+}
+
 func (o *HostOperator) siteSettingsFingerprint(scope SiteScope) (string, error) {
-	values, err := readININil(userIniPath(scope.RootPath))
+	path, err := userIniPath(scope)
+	if err != nil {
+		return "", err
+	}
+	values, err := readININil(path)
 	if err != nil {
 		return "", err
 	}
@@ -300,7 +315,7 @@ func (o *HostOperator) narrative(change Change) ([]string, []string, []string) {
 		}
 		steps = append(
 			steps,
-			"Write "+change.Site.Slug+"'s .user.ini in its document root.",
+			userIniStep(*change.Site),
 			"Overrides take effect on the next PHP-FPM user_ini refresh (within its cache TTL).",
 		)
 		return nil, steps, settingsWarnings(change)

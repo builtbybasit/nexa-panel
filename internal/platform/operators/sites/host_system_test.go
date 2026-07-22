@@ -98,6 +98,214 @@ func TestPrepareSiteDoesNotCreateUserAfterLookupInfrastructureFailure(t *testing
 	}
 }
 
+// deployerSite is prepared through prepareDeployerLayout rather than through
+// PrepareSite: the site root is chowned to uid 0 before the release tree is
+// touched, which no unprivileged test can do. The uid and gid handed to the
+// layout are the test process's own, so every chmod and chown below still runs
+// for real.
+func deployerSite(t *testing.T) (*os.Root, Site) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "site")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { root.Close() })
+	return root, Site{Slug: "demo-site", UnixUser: "nexa_demo_site", RootPath: path, DeploymentMode: "deployer"}
+}
+
+func prepareTestLayout(t *testing.T, handle *os.Root, site Site) error {
+	t.Helper()
+	return prepareDeployerLayout(handle, site, os.Getuid(), os.Getgid(), os.Getgid())
+}
+
+func TestPrepareDeployerLayoutCreatesTheReleaseTree(t *testing.T) {
+	handle, site := deployerSite(t)
+	root := site.RootPath
+	if err := prepareTestLayout(t, handle, site); err != nil {
+		t.Fatalf("prepareDeployerLayout() = %v", err)
+	}
+	for path, mode := range map[string]os.FileMode{
+		"app":                         0o755,
+		"app/releases":                0o755,
+		"app/releases/initial":        0o755,
+		"app/releases/initial/public": 0o750,
+		"app/shared":                  0o750,
+		"app/shared/storage":          0o750,
+	} {
+		info, err := os.Stat(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.IsDir() || info.Mode().Perm() != mode {
+			t.Fatalf("%s mode = %v, want directory %o", path, info.Mode(), mode)
+		}
+	}
+	// The site root itself must stay root-owned 0755: sshd refuses to chroot the
+	// per-site SFTP jail into anything the login user could rename.
+	info, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("site root mode = %o, want 755", info.Mode().Perm())
+	}
+	target, err := os.Readlink(filepath.Join(root, "app", "current"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != filepath.Join("releases", "initial") {
+		t.Fatalf("current -> %q, want releases/initial", target)
+	}
+	placeholder, err := os.ReadFile(filepath.Join(root, "app", "current", "public", "index.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(placeholder), "demo-site") {
+		t.Fatalf("placeholder = %q, want the site slug", placeholder)
+	}
+}
+
+// A second activation prepares the layout again over a tree the deployer now
+// owns. It must not put the placeholder back, must not re-point current at the
+// initial release, and must not fail.
+func TestPrepareDeployerLayoutLeavesADeployedReleaseTreeAlone(t *testing.T) {
+	handle, site := deployerSite(t)
+	root := site.RootPath
+	if err := prepareTestLayout(t, handle, site); err != nil {
+		t.Fatalf("prepareDeployerLayout() = %v", err)
+	}
+	deployed := filepath.Join(root, "app", "releases", "20260722")
+	if err := os.MkdirAll(filepath.Join(deployed, "public"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "app", "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("releases", "20260722"), filepath.Join(root, "app", "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app", "releases", "initial", "public", "index.php"), []byte("application"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := prepareTestLayout(t, handle, site); err != nil {
+		t.Fatalf("second prepareDeployerLayout() = %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(root, "app", "current"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != filepath.Join("releases", "20260722") {
+		t.Fatalf("current -> %q, want the deployed release to be left alone", target)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "app", "releases", "initial", "public", "index.php"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "application" {
+		t.Fatalf("placeholder = %q, want the existing file to be left alone", content)
+	}
+}
+
+// A deployer-mode site that serves out of a subdirectory resolves it below the
+// release's public/, so the first activation has a document root to verify
+// before any deploy has run.
+func TestPrepareDeployerLayoutSeedsTheSubdirectoryDocumentRoot(t *testing.T) {
+	handle, site := deployerSite(t)
+	site.Settings.Subdirectory = "web/dist"
+	if err := prepareTestLayout(t, handle, site); err != nil {
+		t.Fatalf("prepareDeployerLayout() = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(documentRoot(site), "index.php")); err != nil {
+		t.Fatalf("stat served index.php = %v, want the placeholder in the served directory", err)
+	}
+}
+
+// A directory (or any other entry) where the release link belongs is not
+// something the panel may adopt: replacing it would destroy whatever put it
+// there, so the activation fails instead.
+func TestPrepareDeployerLayoutRejectsACurrentThatIsNotALink(t *testing.T) {
+	handle, site := deployerSite(t)
+	if err := os.MkdirAll(filepath.Join(site.RootPath, "app", "current"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := prepareTestLayout(t, handle, site)
+	if err == nil || !strings.Contains(err.Error(), "current is not a managed release link") {
+		t.Fatalf("prepareDeployerLayout() = %v, want the unmanaged current entry to be refused", err)
+	}
+}
+
+// The release tree is unmanaged by construction: no rendered artifact may resolve
+// inside it, or a deploy would look like drift to checkBefore and Rollback.
+func TestDeployerPlanCarriesNoArtifactInsideTheReleaseTree(t *testing.T) {
+	site := Site{
+		ID: "site-1", Slug: "demo-site", PrimaryDomain: "demo.example.com", PHPVersion: "8.4",
+		UnixUser: "nexa_demo_site", RootPath: "/srv/nexa/sites/demo-site", SocketPath: "/run/php/nexa-demo-site.sock",
+		DeploymentMode: "deployer",
+	}
+	plan, err := (Renderer{}).Render(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releases := filepath.Join(releaseRoot(site), "releases")
+	for _, path := range append(append([]string{}, plan.Retired...), artifactPaths(plan.Artifacts)...) {
+		relative, err := filepath.Rel(releases, path)
+		if err == nil && filepath.IsLocal(relative) {
+			t.Fatalf("plan path %s resolves inside the release tree", path)
+		}
+	}
+}
+
+func artifactPaths(artifacts []Artifact) []string {
+	paths := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		paths = append(paths, artifact.Path)
+	}
+	return paths
+}
+
+// Nginx accepts a dangling root and answers 404, and probeHost accepts a 404, so
+// the missing-document-root case has to be caught by its own assertion.
+func TestVerifyDocumentRootRejectsAMissingRoot(t *testing.T) {
+	site := Site{Slug: "demo-site", RootPath: filepath.Join(t.TempDir(), "site")}
+	err := NewHostSystem().VerifyDocumentRoot(context.Background(), site)
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(site.RootPath, "public")) {
+		t.Fatalf("VerifyDocumentRoot() = %v, want an error naming the missing document root", err)
+	}
+}
+
+func TestVerifyDocumentRootFollowsTheDeployerCurrentLink(t *testing.T) {
+	handle, site := deployerSite(t)
+	system := NewHostSystem()
+	if err := system.VerifyDocumentRoot(context.Background(), site); err == nil {
+		t.Fatal("VerifyDocumentRoot() = nil, want an error before the release tree exists")
+	}
+	if err := prepareTestLayout(t, handle, site); err != nil {
+		t.Fatal(err)
+	}
+	if err := system.VerifyDocumentRoot(context.Background(), site); err != nil {
+		t.Fatalf("VerifyDocumentRoot() = %v, want nil once the initial release is seeded", err)
+	}
+}
+
+func TestVerifyDocumentRootRejectsAFileWhereTheRootBelongs(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "site")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "public"), []byte("not a directory"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	err := NewHostSystem().VerifyDocumentRoot(context.Background(), Site{Slug: "demo-site", RootPath: root})
+	if err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("VerifyDocumentRoot() = %v, want the non-directory root to be refused", err)
+	}
+}
+
 func TestSecureArtifactsRejectsSymlinkWithoutChangingTarget(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "site")
 	public := filepath.Join(root, "public")
@@ -304,4 +512,41 @@ func fileGID(path string) (int, error) {
 		return 0, errors.New("unsupported stat")
 	}
 	return int(stat.Gid), nil
+}
+
+// The seeded current link belongs to the site account, not to root. The vhost
+// renders `disable_symlinks if_not_owner from={root}/app`, so nginx compares the
+// owner of `current` with the owner of the release it points at: a root-owned
+// link over a site-owned release would 403 every request on a freshly activated
+// deployer-mode site. Lchown, not Chown — chowning through the link would
+// re-own the release directory instead.
+func TestPrepareDeployerLayoutOwnsTheCurrentLink(t *testing.T) {
+	handle, site := deployerSite(t)
+	if err := prepareTestLayout(t, handle, site); err != nil {
+		t.Fatalf("prepareDeployerLayout() = %v", err)
+	}
+	link := filepath.Join(site.RootPath, "app", "current")
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("current is not a symlink")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("this platform does not report link ownership")
+	}
+	if int(stat.Uid) != os.Getuid() || int(stat.Gid) != os.Getgid() {
+		t.Fatalf("current link owned by %d:%d, want %d:%d", stat.Uid, stat.Gid, os.Getuid(), os.Getgid())
+	}
+	// The release it points at must not have been re-owned through the link: it
+	// keeps the web group the rest of the release tree carries.
+	target, err := os.Stat(filepath.Join(site.RootPath, "app", "releases", "initial"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !target.IsDir() {
+		t.Fatal("current does not resolve to the initial release")
+	}
 }

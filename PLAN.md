@@ -164,7 +164,6 @@ verified through integration benchmarks before publishing hard workload claims.
 - Reseller/customer model
 - Resource quotas and usage accounting
 - Migration/import tools
-- Git deployments and zero-downtime release directories
 - Replication and high-availability database topologies
 - Optional DNS-zone hosting
 
@@ -677,6 +676,20 @@ POST   /api/v1/backup-plans
 GET    /api/v1/restore-points
 POST   /api/v1/restore-points/{id}/restore-plans
 
+GET    /api/v1/sites/{id}/ssh
+POST   /api/v1/sites/{id}/ssh/enable
+POST   /api/v1/sites/{id}/ssh/disable
+POST   /api/v1/sites/{id}/ssh/keys
+POST   /api/v1/sites/{id}/ssh/keys/generate
+DELETE /api/v1/sites/{id}/ssh/keys/{keyId}
+GET    /api/v1/sites/{id}/deploy-key
+POST   /api/v1/sites/{id}/deploy-key
+POST   /api/v1/sites/{id}/deploy-key/test
+PATCH  /api/v1/sites/{id}/deployment-mode
+GET    /api/v1/sites/{id}/deployment/env
+PUT    /api/v1/sites/{id}/deployment/env
+POST   /api/v1/sites/{id}/deployment/prepare
+
 GET    /api/v1/plans/{id}
 POST   /api/v1/plans/{id}/apply
 GET    /api/v1/jobs/{id}
@@ -789,6 +802,7 @@ nexa-panel/
       logs/
       schedules/
       backups/
+      deploy/
       system/
     adapters/
       nginx/
@@ -1324,6 +1338,33 @@ destination on a fresh VM, and pass application verification.
 
 **Exit:** all release acceptance tests pass on a clean supported OS and an
 upgrade from the prior release candidate preserves resources and audit history.
+
+### Milestone 9: Git deployments and zero-downtime release directories
+
+- Per-site SSH access through the site's own Unix Owner, mutually exclusive with
+  that site's SFTP jail, with operator-installed authorized keys.
+- Per-site ed25519 deploy keys generated on the node, with pinned GitHub host
+  keys and a "Test connection" probe. Only the public half reaches the panel.
+- Deployer mode: release directories, a shared path, and an atomic current-release
+  symlink swap.
+
+Current implementation progress:
+
+- complete: SSH access (`deploy.read`/`deploy.write`, `site_ssh_access` and
+  `site_ssh_keys`, enable/disable and key management with fail-closed audit);
+- complete: deploy keys (`site_deploy_keys`, node-side generation, pinned
+  `known_hosts`, and the `deploy.github_test` job);
+- complete: deployer mode (`deployment_mode` on the site, the release tree at
+  `{root}/app`, a shared path with its `.env` editor, and a seeded current-release
+  symlink so the site answers before the first deploy);
+- complete: node preparation (`deploy.prepare` installs the deploy tooling and
+  reports, read-only, whether the firewall still admits SSH) and the narrow
+  root-owned FPM reload wrapper behind a single-path sudoers drop-in;
+- pending: site teardown does not yet disable SSH access or remove the deploy
+  key, so `dependentBlocker` must refuse deletion while SSH access is enabled.
+
+**Exit:** a site can be prepared, a repository cloned over its own deploy key, and
+a new release activated and rolled back without dropping a request.
 
 ## 21. Release Acceptance Criteria
 

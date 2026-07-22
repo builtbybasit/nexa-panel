@@ -9,6 +9,12 @@ import (
 // NodeSystem is the privileged surface Apply drives. HostSystem is the real
 // implementation; tests substitute a fake.
 type NodeSystem interface {
+	// SSHAccessDropInExists reports whether the deploy operator already owns an
+	// SSH-access Match block for this site. That file sorts before this one and
+	// sshd keeps the first value of each keyword, so with both present the jail
+	// this operator writes is not enforced at all. This is the node-side half of
+	// the mutual exclusion, and the mirror of the deploy operator's own check.
+	SSHAccessDropInExists(ctx context.Context, slug string) (bool, error)
 	// EnsureChrootRoot re-asserts the OpenSSH chroot invariant on a site root
 	// (owned by root, not group/world writable). It is idempotent with what the
 	// sites operator already does at activation.
@@ -46,6 +52,16 @@ func (o *HostOperator) Apply(ctx context.Context, request Request) (Observation,
 
 func (o *HostOperator) enable(ctx context.Context, request Request) (Observation, error) {
 	path := request.dropInPath()
+	// Refuse before anything is written: a jail installed alongside an SSH-access
+	// block is silently unenforced, and the password issued for it cannot even
+	// authenticate, so applying it would hand out a credential that lies.
+	present, err := o.system.SSHAccessDropInExists(ctx, request.Slug)
+	if err != nil {
+		return Observation{}, fmt.Errorf("inspect SSH access configuration: %w", err)
+	}
+	if present {
+		return Observation{}, ErrSSHAccessPresent
+	}
 	if err := o.system.EnsureChrootRoot(ctx, request.RootPath); err != nil {
 		return Observation{}, fmt.Errorf("prepare SFTP chroot root: %w", err)
 	}
@@ -95,3 +111,9 @@ func (o *HostOperator) disable(ctx context.Context, request Request) (Observatio
 // ErrChrootRootUnsafe is returned when a site root cannot serve as a chroot and
 // cannot be repaired. It is exported so callers can surface actionable guidance.
 var ErrChrootRootUnsafe = errors.New("site root is not a usable SFTP chroot")
+
+// ErrSSHAccessPresent is returned when a site still has the deploy operator's
+// SSH-access drop-in installed. It is exported so callers can surface actionable
+// guidance: the two drop-ins cannot coexist, and SSH access must be turned off
+// first.
+var ErrSSHAccessPresent = errors.New("per-site SSH access is enabled for this site")

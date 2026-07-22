@@ -14,6 +14,7 @@ import (
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
+	deployoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/deploy"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
 	firewalloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/firewall"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
@@ -100,6 +101,10 @@ func runAgent(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create firewall operator: %w", err)
 	}
+	deployOperator, err := deployoperator.NewSSHHostOperator(nil)
+	if err != nil {
+		return fmt.Errorf("create deploy operator: %w", err)
+	}
 	selfUpdateOperator, err := selfupdateoperator.NewHostOperator(selfupdateoperator.HostConfig{
 		InstalledVersion: version.Version,
 		// The swap target is /usr/bin/nexa on a real host; NEXA_SELFUPDATE_BINARY
@@ -114,6 +119,6 @@ func runAgent(args []string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	server := agent.New(*socket, version.Version, token, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithPHPOperator(phpOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator), agent.WithServicesOperator(servicesOperator), agent.WithSFTPOperator(sftpOperator), agent.WithFirewallOperator(firewallOperator), agent.WithSelfUpdateOperator(selfUpdateOperator))
+	server := agent.New(*socket, version.Version, token, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithPHPOperator(phpOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator), agent.WithServicesOperator(servicesOperator), agent.WithSFTPOperator(sftpOperator), agent.WithFirewallOperator(firewallOperator), agent.WithDeployOperator(deployOperator), agent.WithSelfUpdateOperator(selfUpdateOperator))
 	return server.Serve(ctx)
 }

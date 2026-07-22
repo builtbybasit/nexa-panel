@@ -43,7 +43,20 @@ type SiteScope struct {
 	Version  string `json:"version"`
 	RootPath string `json:"rootPath"`
 	UnixUser string `json:"unixUser"`
+	// DeploymentMode decides which directory nginx serves, and therefore the one
+	// directory PHP will scan for a .user.ini. It mirrors the sites module's
+	// column; an empty value reads as standard, so a caller that predates the
+	// deployer layout still resolves the historical path.
+	DeploymentMode string `json:"deploymentMode,omitempty"`
 }
+
+// DeploymentModeStandard and DeploymentModeDeployer mirror the sites module's
+// constants. They are restated rather than imported because an operator never
+// depends on a control-plane module.
+const (
+	DeploymentModeStandard = "standard"
+	DeploymentModeDeployer = "deployer"
+)
 
 // Change is the caller's request. Version is always required and validated
 // against the node's installed PHP branches; Extension and the Set/Reset entries

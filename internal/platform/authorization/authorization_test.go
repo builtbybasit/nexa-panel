@@ -28,31 +28,34 @@ func TestRolePermissionMatrix(t *testing.T) {
 		SystemRead, SystemUpdate, JobsRead, AuditRead, RuntimesRead, SitesRead, SitesWrite,
 		DomainsRead, DomainsWrite, CertificatesRead, CertificatesWrite,
 		DatabasesRead, DatabasesWrite, OperationsApply,
-		FilesRead, FilesWrite, LogsRead, SchedulesRead, SchedulesWrite, UsersManage,
+		FilesRead, FilesWrite, LogsRead, SchedulesRead, SchedulesWrite,
+		DeployRead, DeployWrite, UsersManage,
 	}
 	expected := map[string]map[Permission]bool{
 		"viewer": {
 			SystemRead: true, JobsRead: true, RuntimesRead: true, SitesRead: true,
 			DomainsRead: true, CertificatesRead: true, DatabasesRead: true,
-			FilesRead: true, LogsRead: true, SchedulesRead: true,
+			FilesRead: true, LogsRead: true, SchedulesRead: true, DeployRead: true,
 		},
 		"developer": {
 			SystemRead: true, JobsRead: true, RuntimesRead: true, SitesRead: true,
 			FilesRead: true, FilesWrite: true, LogsRead: true,
 			SchedulesRead: true, SchedulesWrite: true,
+			DeployRead: true, DeployWrite: true,
 		},
 		"operator": {
 			SystemRead: true, JobsRead: true, RuntimesRead: true, SitesRead: true, SitesWrite: true,
 			DomainsRead: true, DomainsWrite: true, CertificatesRead: true, CertificatesWrite: true,
 			DatabasesRead: true, DatabasesWrite: true,
 			FilesRead: true, FilesWrite: true, LogsRead: true, SchedulesRead: true, SchedulesWrite: true,
+			DeployRead: true, DeployWrite: true,
 		},
 		"admin": {
 			SystemRead: true, SystemUpdate: true, JobsRead: true, AuditRead: true, RuntimesRead: true, SitesRead: true, SitesWrite: true,
 			DomainsRead: true, DomainsWrite: true, CertificatesRead: true, CertificatesWrite: true,
 			DatabasesRead: true, DatabasesWrite: true, OperationsApply: true,
 			FilesRead: true, FilesWrite: true, LogsRead: true, SchedulesRead: true, SchedulesWrite: true,
-			UsersManage: true,
+			DeployRead: true, DeployWrite: true, UsersManage: true,
 		},
 		"unknown": {},
 	}

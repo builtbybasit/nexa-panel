@@ -1,0 +1,327 @@
+sites_id_ssh:
+  get:
+    operationId: getSiteSshAccess
+    summary: Get Site SSH Access
+    tags:
+    - Deployments
+    x-permission: deploy.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    responses:
+      '200':
+        description: SSH access state for the site, with the authorized keys the panel manages.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/SshAccess
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+sites_id_ssh_enable:
+  post:
+    operationId: enableSiteSshAccess
+    summary: Enable Site SSH Access
+    description: Gives the site's Unix Owner a login shell and installs its sshd drop-in. SSH access and the site's SFTP jail are mutually exclusive.
+    tags:
+    - Deployments
+    x-permission: deploy.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    responses:
+      '200':
+        description: SSH access is enabled.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/SshAccess
+      '409':
+        description: SFTP access is enabled for this site and must be disabled first.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+sites_id_ssh_disable:
+  post:
+    operationId: disableSiteSshAccess
+    summary: Disable Site SSH Access
+    tags:
+    - Deployments
+    x-permission: deploy.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    responses:
+      '200':
+        description: The drop-in is removed and the account is back on a nologin shell.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/SshAccess
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+sites_id_ssh_keys:
+  post:
+    operationId: addSiteSshKey
+    summary: Add a Site SSH Key
+    tags:
+    - Deployments
+    x-permission: deploy.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/deploy.yaml#/AddSshKey
+    responses:
+      '200':
+        description: The key was accepted and the authorized-keys file was rewritten.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/SshAccess
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+sites_id_ssh_keys_generate:
+  post:
+    operationId: generateSiteSshKey
+    summary: Generate a Site SSH Key
+    description: Mints a pair for the caller. The private half appears in this response only and is never stored.
+    tags:
+    - Deployments
+    x-permission: deploy.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/deploy.yaml#/GenerateSshKey
+    responses:
+      '200':
+        description: The pair was generated and its public half installed.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/GeneratedSshKey
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+sites_id_ssh_keys_keyId:
+  delete:
+    operationId: removeSiteSshKey
+    summary: Remove a Site SSH Key
+    tags:
+    - Deployments
+    x-permission: deploy.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    - name: keyId
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: The key was removed and the authorized-keys file was rewritten.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/SshAccess
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+sites_id_deploy-key:
+  get:
+    operationId: getSiteDeployKey
+    summary: Get Site Deploy Key
+    tags:
+    - Deployments
+    x-permission: deploy.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    responses:
+      '200':
+        description: The site's deploy key, public half only.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/DeployKey
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+  post:
+    operationId: ensureSiteDeployKey
+    summary: Create or Rotate the Site Deploy Key
+    description: Generates the pair on the node. Rotation replaces it immediately, so the key the repository already trusts stops working.
+    tags:
+    - Deployments
+    x-permission: deploy.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/deploy.yaml#/EnsureDeployKey
+    responses:
+      '200':
+        description: The key is in place; the public half is ready to register on the repository.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/DeployKey
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+sites_id_deploy-key_test:
+  post:
+    operationId: testSiteDeployKey
+    summary: Test the Site Deploy Key
+    description: Queues the two node-side probes - an authentication handshake and a `git ls-remote`. A probe that ran and failed is a job result, not a job failure.
+    tags:
+    - Deployments
+    x-permission: deploy.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/deploy.yaml#/TestDeployKey
+    responses:
+      '202':
+        description: The access test was queued as a job.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - job
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+sites_id_deployment-mode:
+  patch:
+    operationId: setSiteDeploymentMode
+    summary: Set Site Deployment Mode
+    description: Switches the site between panel-owned (standard) and deploy-tool-owned (deployer) layouts, re-rendering and re-applying the virtual host.
+    tags:
+    - Deployments
+    x-permission: deploy.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/deploy.yaml#/SetDeploymentMode
+    responses:
+      '200':
+        description: The mode was stored, with the re-apply job when the site was live enough to need one.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/DeploymentModeChange
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+sites_id_deployment_env:
+  get:
+    operationId: getSiteSharedEnv
+    summary: Get the Shared Environment File
+    tags:
+    - Deployments
+    x-permission: deploy.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    responses:
+      '200':
+        description: The shared environment file, read synchronously so its content never enters a job payload.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/SharedEnv
+      '409':
+        description: The site is not in deployer mode, so it has no shared path.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+  put:
+    operationId: updateSiteSharedEnv
+    summary: Write the Shared Environment File
+    tags:
+    - Deployments
+    x-permission: deploy.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/deploy.yaml#/WriteSharedEnv
+    responses:
+      '200':
+        description: The file was written; only its size and checksum are recorded in the audit trail.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/deploy.yaml#/SharedEnv
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+sites_id_deployment_prepare:
+  post:
+    operationId: prepareNodeForDeployments
+    summary: Prepare the Node for Deployments
+    description: Queues the tooling check. There is no request body - the PHP branch prepared is the one the site already serves. The firewall part of the run is read-only and never opens a port.
+    tags:
+    - Deployments
+    x-permission: deploy.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    responses:
+      '202':
+        description: The preparation was queued as a job; its result is a NodePreparation.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - job
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

@@ -30,5 +30,13 @@ export const sitesModule: FeatureModule = {
       component: () => import('./views/SiteSettingsView.vue'),
       meta: { moduleId: 'sites' },
     },
+    // Deployment is a per-site page, so it lives on the site's route tree and
+    // earns no sidebar entry of its own.
+    {
+      path: '/sites/:siteId/deployment',
+      name: 'site-deployment',
+      component: () => import('@/modules/deploy/views/SiteDeploymentView.vue'),
+      meta: { moduleId: 'sites' },
+    },
   ],
 }

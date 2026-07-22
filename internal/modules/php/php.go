@@ -113,7 +113,10 @@ func (m *Module) SaveSettings(ctx context.Context, version string, set map[strin
 // operator re-validates every field against the sites root, so this is a
 // convenience, not the trust boundary.
 func siteScope(site sites.Site) phpoperator.SiteScope {
-	return phpoperator.SiteScope{Slug: site.Slug, Version: site.PHPVersion, RootPath: site.RootPath, UnixUser: site.UnixUser}
+	return phpoperator.SiteScope{
+		Slug: site.Slug, Version: site.PHPVersion, RootPath: site.RootPath,
+		UnixUser: site.UnixUser, DeploymentMode: site.DeploymentMode,
+	}
 }
 
 // SiteSettings lists the directives a site may override, each with its

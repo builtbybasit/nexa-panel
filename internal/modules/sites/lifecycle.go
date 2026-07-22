@@ -37,7 +37,8 @@ func (m *Module) Create(ctx context.Context, request CreateRequest, actorUserID 
 		UnixUser:   "nexa_" + strings.ReplaceAll(request.Slug, "-", "_"),
 		RootPath:   filepath.Join("/srv/nexa/sites", request.Slug),
 		SocketPath: filepath.Join("/run/php", "nexa-"+request.Slug+".sock"),
-		Status:     string(StatusPlanning), CreatedAt: now, UpdatedAt: now,
+		Status:     string(StatusPlanning), DeploymentMode: DeploymentModeStandard,
+		CreatedAt: now, UpdatedAt: now,
 	}
 	if _, err := m.database.NewInsert().Model(model).Exec(ctx); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {

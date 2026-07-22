@@ -290,9 +290,27 @@ func (model siteModel) toSite() Site {
 	return Site{
 		ID: model.ID, Slug: model.Slug, DisplayName: model.DisplayName, PrimaryDomain: model.PrimaryDomain,
 		PHPVersion: model.PHPVersion, UnixUser: model.UnixUser, RootPath: model.RootPath, SocketPath: model.SocketPath,
-		Status: Status(model.Status), Settings: settings, LastJobID: model.LastJobID, Failure: failure,
-		CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
+		Status: Status(model.Status), Settings: settings, DeploymentMode: deploymentMode(model.DeploymentMode),
+		LastJobID: model.LastJobID, Failure: failure, CreatedAt: model.CreatedAt, UpdatedAt: model.UpdatedAt,
 	}
+}
+
+// validDeploymentMode reports whether v is a mode the panel knows how to render.
+// The empty string is deliberately rejected: it is only ever a stored default,
+// never a value a caller may ask for.
+func validDeploymentMode(v string) bool {
+	return v == DeploymentModeStandard || v == DeploymentModeDeployer
+}
+
+// deploymentMode normalises a stored column to a mode the renderer understands.
+// Rows written before the column existed, and any value a future downgrade left
+// behind, read back as standard — which is what the renderer emits for them
+// anyway, so no backfill is required.
+func deploymentMode(stored string) string {
+	if !validDeploymentMode(stored) {
+		return DeploymentModeStandard
+	}
+	return stored
 }
 
 // settingsEditable reports whether the site is in a settled state that a settings

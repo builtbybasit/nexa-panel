@@ -28,6 +28,10 @@ func (s *fakeNodeSystem) SecureArtifacts(context.Context, Site, []Artifact) erro
 	return s.call("secure")
 }
 
+func (s *fakeNodeSystem) VerifyDocumentRoot(context.Context, Site) error {
+	return s.call("verify-document-root")
+}
+
 func (s *fakeNodeSystem) ValidatePHP(context.Context, string) error { return s.call("validate-php") }
 
 func (s *fakeNodeSystem) ValidateNginx(context.Context) error     { return s.call("validate-nginx") }
@@ -72,7 +76,7 @@ func TestHostOperatorAppliesVerifiesAndRollsBack(t *testing.T) {
 	if !observation.Active || len(observation.Artifacts) != 3 {
 		t.Fatalf("observation = %+v", observation)
 	}
-	wanted := []string{"prepare", "secure", "validate-php", "validate-nginx", "reload-php", "reload-nginx", "verify-host"}
+	wanted := []string{"prepare", "secure", "verify-document-root", "validate-php", "validate-nginx", "reload-php", "reload-nginx", "verify-host"}
 	if !reflect.DeepEqual(system.calls, wanted) {
 		t.Fatalf("calls = %v", system.calls)
 	}

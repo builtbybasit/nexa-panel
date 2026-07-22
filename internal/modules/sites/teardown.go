@@ -114,12 +114,35 @@ func (m *Module) dependentBlocker(ctx context.Context, siteID string) (string, e
 	if err != nil {
 		return "", err
 	}
-	blockers := make([]string, 0, 2)
+	// SSH access lives on the node as an sshd drop-in, an authorized-keys file,
+	// and an interactive login shell. The site_ssh_access row cascades away with
+	// the site, so deleting while it is enabled would strand all three and leave
+	// a shell account for a site that no longer exists.
+	sshEnabled, err := m.database.NewSelect().TableExpr("site_ssh_access").
+		Where("site_id = ?", siteID).Where("enabled = ?", true).Count(ctx)
+	if err != nil {
+		return "", err
+	}
+	// SFTP strands the same class of state: an sshd drop-in the site teardown
+	// does not remove, plus a live password in /etc/shadow on an account nothing
+	// ever deletes. A later site reusing the slug would inherit both.
+	sftpEnabled, err := m.database.NewSelect().TableExpr("sftp_access").
+		Where("site_id = ?", siteID).Where("enabled = ?", true).Count(ctx)
+	if err != nil {
+		return "", err
+	}
+	blockers := make([]string, 0, 4)
 	if len(hostnames) > 0 {
 		blockers = append(blockers, fmt.Sprintf("remove its attached domains first (%s)", strings.Join(hostnames, ", ")))
 	}
 	if certificates > 0 {
 		blockers = append(blockers, "remove its TLS certificate first")
+	}
+	if sshEnabled > 0 {
+		blockers = append(blockers, "disable its SSH access first")
+	}
+	if sftpEnabled > 0 {
+		blockers = append(blockers, "disable its SFTP access first")
 	}
 	if len(blockers) == 0 {
 		return "", nil
@@ -144,6 +167,19 @@ func (m *Module) deleteJob(ctx context.Context, request json.RawMessage, report 
 	}
 	if err != nil {
 		return nil, err
+	}
+	// Withdraw the deploy-side grants first. They live outside this module's
+	// artifacts (/etc/sudoers.d), so removing the vhost would not touch them,
+	// and a rule naming a slug that no longer exists must not survive to be
+	// inherited by a site created with the same slug later.
+	if m.deployTeardown != nil {
+		if err := report(30, "Withdrawing this site's deployment grants."); err != nil {
+			return nil, err
+		}
+		if err := m.deployTeardown.TeardownSiteDeployment(ctx, site.ID); err != nil {
+			m.markFailed(context.WithoutCancel(ctx), site.ID, err)
+			return nil, err
+		}
 	}
 	if payload.TeardownHost {
 		if err := report(45, "Removing managed Nginx and PHP-FPM configuration from the node."); err != nil {

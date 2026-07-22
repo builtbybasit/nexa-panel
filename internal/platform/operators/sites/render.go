@@ -84,7 +84,28 @@ type Site struct {
 	TLS           *TLS     `json:"tls,omitempty"`
 	TLSDomains    []string `json:"tlsDomains,omitempty"`
 	Settings      Settings `json:"settings,omitempty"`
+	// DeploymentMode selects the site layout: "standard" (the panel owns
+	// public/ and seeds the managed index.php there) or "deployer" (a release
+	// tree under {root}/app owns the served files). The renderer branches on
+	// this field and on nothing else — never on node state — so a plan stays a
+	// pure function of Site plus Settings and survives the byte-exact re-render
+	// gate in validatePlan. An empty value means standard, which is what keeps
+	// every plan issued before the mode existed byte-identical.
+	DeploymentMode string `json:"deploymentMode,omitempty"`
 }
+
+// The two site layouts. deployerMode nests the release tree at {root}/app so
+// {root} itself stays root-owned and non-group-writable: sshd refuses a
+// ChrootDirectory it does not own, and the per-site SFTP jail chroots to {root}.
+const (
+	standardMode = "standard"
+	deployerMode = "deployer"
+)
+
+// deployerLayout reports whether the site is served out of a release tree. The
+// empty mode is standard so a stored row that predates the column, or a Plan
+// caller not yet wired to thread the mode, renders exactly as it always did.
+func deployerLayout(site Site) bool { return site.DeploymentMode == deployerMode }
 
 // Settings carries the editable per-site Nginx and PHP-FPM knobs. Its zero value
 // reproduces the hardened baseline byte-for-byte, so a site that has never been
@@ -302,11 +323,7 @@ func (r Renderer) Render(site Site) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	index, err := execute(indexTemplate, site)
-	if err != nil {
-		return Plan{}, err
-	}
-	// The three core artifacts always render. The rate-limit zone, htpasswd file,
+	// The two node-configuration artifacts always render. The rate-limit zone, htpasswd file,
 	// and logrotate stanza are conditional: each is appended when its setting is on
 	// and named in Retired when it is off, both in a fixed order so re-renders are
 	// deterministic. validatePlan matches artifacts by Kind, so a variable set is
@@ -318,11 +335,29 @@ func (r Renderer) Render(site Site) (Plan, error) {
 	// For the rate-limit zone and the htpasswd file the leftover is inert (an
 	// unreferenced zone, an unreferenced password file), but a stale logrotate
 	// stanza keeps rotating the site's logs while the UI reports rotation off.
-	artifacts := []Artifact{
-		{Kind: "site-root", Path: filepath.Join(site.RootPath, "public", "index.php"), Mode: 0o640, Content: index},
-		{Kind: "php-fpm-pool", Path: filepath.Join(phpRoot, site.PHPVersion, "fpm", "pool.d", "nexa-"+site.Slug+".conf"), Mode: 0o640, Content: fpm},
-		{Kind: "nginx-site", Path: filepath.Join(nginxRoot, "nexa-"+site.Slug+".conf"), Mode: 0o640, Content: nginx},
+	artifacts := make([]Artifact, 0, 6)
+	// In deployer mode the served files live under a release tree the deployer
+	// owns and rotates, so the panel emits no site-root artifact at all. That is
+	// what keeps a deploy from ever looking like drift: checkBefore never holds a
+	// digest for a path an external deploy can flip, Rollback can never refuse
+	// with "managed site changed after activation" over a release file, and
+	// teardown has no managed file inside the release tree to remove. The
+	// pre-deploy placeholder is seeded unmanaged, only when absent, by
+	// PrepareSite. The path is deliberately NOT retired either: {root}/public may
+	// hold a real application from the site's standard-mode life, and a mode
+	// switch must never delete it.
+	if !deployerLayout(site) {
+		index, err := execute(indexTemplate, site)
+		if err != nil {
+			return Plan{}, err
+		}
+		artifacts = append(artifacts, Artifact{Kind: "site-root", Path: filepath.Join(site.RootPath, "public", "index.php"), Mode: 0o640, Content: index})
 	}
+	artifacts = append(
+		artifacts,
+		Artifact{Kind: "php-fpm-pool", Path: filepath.Join(phpRoot, site.PHPVersion, "fpm", "pool.d", "nexa-"+site.Slug+".conf"), Mode: 0o640, Content: fpm},
+		Artifact{Kind: "nginx-site", Path: filepath.Join(nginxRoot, "nexa-"+site.Slug+".conf"), Mode: 0o640, Content: nginx},
+	)
 	// Every conditional artifact is described once, so its path is identical
 	// whether it is being written or retired and the two can never drift apart.
 	conditionals := []struct {
@@ -347,6 +382,9 @@ func (r Renderer) Render(site Site) (Plan, error) {
 func (r Renderer) validate(site Site) error {
 	if site.ID == "" || !slugPattern.MatchString(site.Slug) || !domainPattern.MatchString(site.PrimaryDomain) || !phpVersionSupported(site.PHPVersion) {
 		return errors.New("site identity, slug, primary domain, and a PHP " + phpFloor + " or newer runtime are required")
+	}
+	if site.DeploymentMode != "" && site.DeploymentMode != standardMode && site.DeploymentMode != deployerMode {
+		return errors.New("site deployment mode must be standard or deployer")
 	}
 	expectedUser := "nexa_" + strings.ReplaceAll(site.Slug, "-", "_")
 	if site.UnixUser != expectedUser {
@@ -631,7 +669,7 @@ const nginxTemplate = `# Managed by Nexa Panel.
 {{- define "vhostBody"}}
     root {{.Eff.DocRoot}};
     index {{.Eff.IndexFiles}};
-    disable_symlinks if_not_owner from={{.Eff.DocRoot}};
+    disable_symlinks if_not_owner from={{.Eff.SymlinkFrom}};
     client_max_body_size {{.Eff.ClientMaxBodyMB}}m;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;

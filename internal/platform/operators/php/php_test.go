@@ -304,3 +304,122 @@ func TestApplyRejectsDriftedFingerprint(t *testing.T) {
 		t.Fatal("apply must reject a plan whose observed state drifted")
 	}
 }
+
+// deployerTree lays out {root}/app/{releases/initial/public,current} the way the
+// sites operator does in deployer mode, and points the site scope at it.
+func deployerTree(t *testing.T, scope SiteScope) SiteScope {
+	t.Helper()
+	release := filepath.Join(scope.RootPath, "app", "releases", "initial", "public")
+	if err := os.MkdirAll(release, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("releases", "initial"), filepath.Join(scope.RootPath, "app", "current")); err != nil {
+		t.Fatal(err)
+	}
+	scope.DeploymentMode = DeploymentModeDeployer
+	return scope
+}
+
+// PHP scans user_ini.filename from the executing script's directory up to
+// DOCUMENT_ROOT and no further. In deployer mode nginx serves
+// {root}/app/current/public, and {root}/public is a sibling of the release tree
+// rather than an ancestor of it — an override written there is never read, while
+// the panel goes on reporting it as active.
+func TestDeployerModeWritesTheUserIniIntoTheServedRelease(t *testing.T) {
+	operator, owner, standard := newSiteOperator(t)
+	scope := deployerTree(t, standard)
+	ctx := context.Background()
+
+	plan, err := operator.Plan(ctx, Change{Action: ActionSaveSiteSettings, Version: "8.3", Site: &scope, Set: map[string]string{"memory_limit": "512M"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+
+	served := filepath.Join(scope.RootPath, "app", "releases", "initial", "public", ".user.ini")
+	content, err := os.ReadFile(served)
+	if err != nil {
+		t.Fatalf(".user.ini not written into the served release: %v", err)
+	}
+	if !strings.Contains(string(content), "memory_limit = 512M") {
+		t.Fatalf(".user.ini = %q, want memory_limit = 512M", content)
+	}
+	if _, err := os.Stat(filepath.Join(scope.RootPath, "public", ".user.ini")); !os.IsNotExist(err) {
+		t.Fatalf("an unread .user.ini was left in {root}/public, stat err = %v", err)
+	}
+	// The recorded path is symlink-resolved (macOS /var -> /private/var), so the
+	// tail is what identifies it.
+	if len(owner.chowned) == 0 || !strings.HasSuffix(owner.chowned[0], filepath.Join("app", "releases", "initial", "public", ".user.ini")+"|nexa_blog") {
+		t.Fatalf("chowned = %v, want the served release's .user.ini", owner.chowned)
+	}
+
+	// The read-back must open the same path it wrote, so the page reports what
+	// PHP actually reads.
+	directives, err := operator.SiteSettings(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, directive := range directives {
+		if directive.Name == "memory_limit" {
+			if directive.Value != "512M" || !directive.Managed {
+				t.Fatalf("memory_limit read back as %q managed=%v", directive.Value, directive.Managed)
+			}
+			return
+		}
+	}
+	t.Fatal("memory_limit was not reported after the save")
+}
+
+// The standard-mode path is unchanged: an explicit standard mode resolves the
+// same file the empty mode always has.
+func TestStandardModeKeepsThePublicUserIniPath(t *testing.T) {
+	_, _, scope := newSiteOperator(t)
+	implicit, err := userIniPath(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope.DeploymentMode = DeploymentModeStandard
+	explicit, err := userIniPath(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if implicit != explicit || implicit != filepath.Join(scope.RootPath, "public", ".user.ini") {
+		t.Fatalf("standard-mode .user.ini path = %q / %q", implicit, explicit)
+	}
+}
+
+// `current` is owned and re-pointed by the site account while this code runs as
+// root, so a link out of the release tree must never become a root-owned write.
+func TestDeployerModeRefusesACurrentLinkOutsideTheReleaseTree(t *testing.T) {
+	operator, _, standard := newSiteOperator(t)
+	scope := deployerTree(t, standard)
+	escape := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(escape, "public"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(scope.RootPath, "app", "current")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(escape, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.SiteSettings(context.Background(), scope); err == nil {
+		t.Fatal("a current link outside the release tree must be refused")
+	}
+	if _, err := os.Stat(filepath.Join(escape, "public", ".user.ini")); !os.IsNotExist(err) {
+		t.Fatal("a .user.ini was written outside the site's release tree")
+	}
+}
+
+// An unrecognised mode is refused rather than defaulted: guessing would resolve
+// the override to a directory PHP does not scan.
+func TestSiteScopeRejectsAnUnknownDeploymentMode(t *testing.T) {
+	operator, _, scope := newSiteOperator(t)
+	scope.DeploymentMode = "release-tree"
+	if _, err := operator.SiteSettings(context.Background(), scope); err == nil {
+		t.Fatal("an unknown deployment mode must be rejected")
+	}
+}

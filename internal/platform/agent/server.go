@@ -17,6 +17,7 @@ import (
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
+	deployoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/deploy"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
 	firewalloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/firewall"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
@@ -50,6 +51,7 @@ type Server struct {
 	backups      backupoperator.Operator
 	services     servicesoperator.Operator
 	firewall     firewalloperator.Operator
+	deploy       deployoperator.Operator
 	selfUpdate   selfupdateoperator.Operator
 	logger       *slog.Logger
 
@@ -181,6 +183,16 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.firewall != nil {
 		mux.HandleFunc("GET /v1/firewall/status", s.firewallStatusHTTP)
 		mux.HandleFunc("POST /v1/firewall/apply", s.firewallApplyHTTP)
+	}
+	if s.deploy != nil {
+		mux.HandleFunc("POST /v1/deploy/ssh/apply", s.deploySSHApplyHTTP)
+		mux.HandleFunc("POST /v1/deploy/ssh/keys/generate", s.deploySSHGenerateKeyHTTP)
+		mux.HandleFunc("POST /v1/deploy/key/ensure", s.deployKeyEnsureHTTP)
+		mux.HandleFunc("POST /v1/deploy/github/test", s.deployGitHubTestHTTP)
+		mux.HandleFunc("POST /v1/deploy/env/read", s.deployEnvReadHTTP)
+		mux.HandleFunc("POST /v1/deploy/env/write", s.deployEnvWriteHTTP)
+		mux.HandleFunc("POST /v1/deploy/prepare", s.deployPrepareHTTP)
+		mux.HandleFunc("POST /v1/deploy/fpm-reload/apply", s.deployFPMReloadApplyHTTP)
 	}
 	if s.selfUpdate != nil {
 		mux.HandleFunc("GET /v1/self-update/latest", s.selfUpdateLatestHTTP)

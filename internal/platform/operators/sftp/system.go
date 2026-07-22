@@ -28,6 +28,21 @@ func runCommand(ctx context.Context, stdin, name string, args ...string) ([]byte
 	return command.CombinedOutput()
 }
 
+// SSHAccessDropInExists looks for the deploy operator's per-site Match block by
+// the name that operator writes it under. The two operators share a directory
+// and nothing else, so this file's presence is the only node-side evidence of
+// the conflict.
+func (s *HostSystem) SSHAccessDropInExists(_ context.Context, slug string) (bool, error) {
+	_, err := os.Lstat(filepath.Join(SSHDDropInDir, "nexa-access-"+slug+".conf"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *HostSystem) EnsureChrootRoot(_ context.Context, rootPath string) error {
 	rootPath = filepath.Clean(rootPath)
 	if filepath.Dir(rootPath) != siteRootBase {

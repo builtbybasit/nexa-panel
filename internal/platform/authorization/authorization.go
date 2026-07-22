@@ -38,6 +38,8 @@ const (
 	ServicesWrite     Permission = "services.write"
 	FirewallRead      Permission = "firewall.read"
 	FirewallWrite     Permission = "firewall.write"
+	DeployRead        Permission = "deploy.read"
+	DeployWrite       Permission = "deploy.write"
 	UsersManage       Permission = "users.manage"
 )
 
@@ -50,16 +52,16 @@ type Policy struct {
 func New() *Policy {
 	return &Policy{now: time.Now, stepUpTTL: 10 * time.Minute, grants: map[string]map[Permission]struct{}{
 		"viewer": {
-			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, DomainsRead: {}, CertificatesRead: {}, DatabasesRead: {}, FilesRead: {}, LogsRead: {}, SchedulesRead: {}, ApplicationsRead: {}, BackupsRead: {}, ServicesRead: {}, FirewallRead: {},
+			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, DomainsRead: {}, CertificatesRead: {}, DatabasesRead: {}, FilesRead: {}, LogsRead: {}, SchedulesRead: {}, ApplicationsRead: {}, BackupsRead: {}, ServicesRead: {}, FirewallRead: {}, DeployRead: {},
 		},
 		"developer": {
-			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, BackupsRead: {},
+			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, BackupsRead: {}, DeployRead: {}, DeployWrite: {},
 		},
 		"operator": {
-			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {}, FirewallRead: {}, FirewallWrite: {},
+			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {}, FirewallRead: {}, FirewallWrite: {}, DeployRead: {}, DeployWrite: {},
 		},
 		"admin": {
-			SystemRead: {}, SystemUpdate: {}, JobsRead: {}, AuditRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, OperationsApply: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {}, FirewallRead: {}, FirewallWrite: {}, UsersManage: {},
+			SystemRead: {}, SystemUpdate: {}, JobsRead: {}, AuditRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, OperationsApply: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {}, FirewallRead: {}, FirewallWrite: {}, DeployRead: {}, DeployWrite: {}, UsersManage: {},
 		},
 	}}
 }
@@ -93,7 +95,7 @@ func (p *Policy) Middleware(permission string, next http.Handler) http.Handler {
 }
 
 func sensitivePermission(permission Permission) bool {
-	return permission == OperationsApply || permission == UsersManage || permission == SystemUpdate || permission == FirewallWrite
+	return permission == OperationsApply || permission == UsersManage || permission == SystemUpdate || permission == FirewallWrite || permission == DeployWrite
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {

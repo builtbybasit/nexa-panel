@@ -20,6 +20,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/modules/applications"
 	"github.com/nexa-panel/nexa-panel/internal/modules/backups"
 	"github.com/nexa-panel/nexa-panel/internal/modules/certificates"
+	deploymodule "github.com/nexa-panel/nexa-panel/internal/modules/deploy"
 	"github.com/nexa-panel/nexa-panel/internal/modules/domains"
 	"github.com/nexa-panel/nexa-panel/internal/modules/files"
 	"github.com/nexa-panel/nexa-panel/internal/modules/firewall"
@@ -44,6 +45,7 @@ import (
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
+	deployoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/deploy"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
 	firewalloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/firewall"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
@@ -60,6 +62,13 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 	"github.com/nexa-panel/nexa-panel/internal/platform/version"
 )
+
+// The deploy module narrows its site catalog to SiteModeSwitcher at call time
+// and answers 501 when the assertion fails. Neither package may import the
+// other, so the pairing is proven here, where both are already wired: a change
+// to either signature breaks the build instead of silently disabling the
+// deployment-mode switch at runtime.
+var _ deploymodule.SiteModeSwitcher = (*sites.Module)(nil)
 
 func runAPI(args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet("api", flag.ContinueOnError)
@@ -196,10 +205,26 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize SFTP module: %w", err)
 	}
+	deployModule, err := deploymodule.New(setupCtx, database, deployoperator.NewUnixClient(*agentSocket, *agentToken), jobsModule, sitesModule, identityModule, sftpModule)
+	if err != nil {
+		return fmt.Errorf("initialize deploy module: %w", err)
+	}
+	// The two features write competing sshd Match blocks for one account, so each
+	// refuses while the other is on. The deploy module takes the SFTP state as a
+	// constructor dependency; the reverse link is made here, once both exist.
+	sftpModule.UseSSHAccessState(deployModule)
+	// A deployer-mode site holds a sudoers drop-in, which outlives its vhost, so
+	// the sites module's delete job asks this module to withdraw it first.
+	sitesModule.SetDeployTeardown(deployModule)
 	firewallModule, err := firewall.New(jobsModule, firewalloperator.NewUnixClient(*agentSocket, *agentToken))
 	if err != nil {
 		return fmt.Errorf("initialize firewall module: %w", err)
 	}
+	// The deploy module's prepare job warns when port 22 is closed. It takes its
+	// own client narrowed to FirewallInspector, which has Discover and nothing
+	// else, so no path through deploy can change a rule — that stays behind the
+	// MFA-gated firewall.write surface.
+	deployModule.UseFirewallState(firewalloperator.NewUnixClient(*agentSocket, *agentToken))
 	backupsModule, err := backups.New(setupCtx, backups.Dependencies{
 		Database: database, Jobs: jobsModule, Cipher: secretBox,
 		Operator:     backupoperator.NewUnixClient(*agentSocket, *agentToken),
@@ -232,6 +257,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		phpModule,
 		servicesModule,
 		sftpModule,
+		deployModule,
 		firewallModule,
 		backupsModule,
 		system.New(capacity.NewProcReader(), podman.NewInspector(), system.WithUpdates(jobsModule, selfupdateoperator.NewUnixClient(*agentSocket, *agentToken))),

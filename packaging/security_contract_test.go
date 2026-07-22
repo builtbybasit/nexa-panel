@@ -300,7 +300,18 @@ func TestTmpfilesSeparatesRuntimeStateSecretsAndContainerData(t *testing.T) {
 		"/etc/nexa-panel/admin-tools/pgadmin/data":        {kind: "d", mode: "0700", user: "5050", group: "5050"},
 		"/etc/nexa-panel/generated":                       {kind: "d", mode: "0711", user: "root", group: "root"},
 		"/etc/nexa-panel/generated/tasks":                 {kind: "d", mode: "0711", user: "root", group: "root"},
-		"/var/log/nexa-panel":                             {kind: "d", mode: "0700", user: "nexa", group: "nexa"},
+		// Holds the root-owned FPM reload wrappers a sudoers rule names by
+		// absolute path. 0711 root:root is what stops a site account from
+		// listing, replacing, or adding a script that sudo would then run.
+		"/etc/nexa-panel/generated/deploy": {kind: "d", mode: "0711", user: "root", group: "root"},
+		// Holds the per-site authorized_keys files. sshd opens them after
+		// dropping to the login user, so this directory has to stay traversable
+		// by others — a mode without o+x makes every key-based login fail with
+		// "Could not open user authorized keys", and no root-run test sees it
+		// because root bypasses the traversal check. 0711 traverses without
+		// letting a site account enumerate the other sites' key files.
+		"/etc/nexa-panel/generated/ssh": {kind: "d", mode: "0711", user: "root", group: "root"},
+		"/var/log/nexa-panel":           {kind: "d", mode: "0700", user: "nexa", group: "nexa"},
 	}
 	for path, expected := range wanted {
 		if got, ok := entries[path]; !ok {
