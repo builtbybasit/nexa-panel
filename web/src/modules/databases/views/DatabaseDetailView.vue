@@ -112,6 +112,12 @@ const connectionUsers = computed(() =>
   accessRows.value.map((row) => ({ value: row.role.name, label: row.role.name })),
 )
 
+const showConnectDialog = ref(false)
+/** Nothing to connect to until the database exists and someone can sign in. */
+const canConnect = computed(
+  () => database.value?.status === 'active' && !!instance.value && connectionUsers.value.length > 0,
+)
+
 const grantRunner = useJobRunner()
 const rotateRunner = useJobRunner()
 const backupRunner = useJobRunner()
@@ -411,6 +417,7 @@ const revealFacts = computed<Fact[]>(() => {
         :title="database.name"
       >
         <StatusPill :status="database.status" />
+        <AppButton v-if="canConnect" icon="plug" @click="showConnectDialog = true">Connect</AppButton>
         <AppButton
           v-if="canWrite && database.status === 'active'"
           icon="copy"
@@ -443,15 +450,23 @@ const revealFacts = computed<Fact[]>(() => {
         <AppAlert v-if="database.failure" tone="danger" class="mt-4">{{ database.failure }}</AppAlert>
       </AppCard>
 
-      <ConnectionDetails
-        v-if="instance && connectionUsers.length"
-        engine="postgres"
-        :engine-label="`PostgreSQL ${instance.version} · ${instance.cluster}`"
-        :port="instance.port"
-        :database="database.name"
-        :users="connectionUsers"
-        :socket-path="instance.socketPath"
-      />
+      <AppDialog
+        :open="canConnect && showConnectDialog"
+        size="lg"
+        title="Remote connection"
+        description="Point pgAdmin, Beekeeper Studio or psql at this database."
+        @close="showConnectDialog = false"
+      >
+        <ConnectionDetails
+          v-if="instance"
+          engine="postgres"
+          :engine-label="`PostgreSQL ${instance.version} · ${instance.cluster}`"
+          :port="instance.port"
+          :database="database.name"
+          :users="connectionUsers"
+          :socket-path="instance.socketPath"
+        />
+      </AppDialog>
 
       <!-- Access: the owner plus every granted role, which is what FastPanel
            calls the database's users. -->

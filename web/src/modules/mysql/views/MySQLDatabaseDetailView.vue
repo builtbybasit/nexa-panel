@@ -120,6 +120,12 @@ const connectionUsers = computed(() =>
   accessRows.value.map((row) => ({ value: row.account.name, label: `${row.account.name}@${row.account.host}` })),
 )
 
+const showConnectDialog = ref(false)
+/** Nothing to connect to until the database exists and someone can sign in. */
+const canConnect = computed(
+  () => database.value?.status === 'active' && !!engine.value && connectionUsers.value.length > 0,
+)
+
 const grantRunner = useJobRunner()
 const rotateRunner = useJobRunner()
 const backupRunner = useJobRunner()
@@ -470,6 +476,7 @@ const revealFacts = computed<Fact[]>(() => {
         :title="database.name"
       >
         <StatusPill :status="database.status" />
+        <AppButton v-if="canConnect" icon="plug" @click="showConnectDialog = true">Connect</AppButton>
         <AppButton
           v-if="canWrite && database.status === 'active'"
           icon="copy"
@@ -502,15 +509,23 @@ const revealFacts = computed<Fact[]>(() => {
         <AppAlert v-if="database.failure" tone="danger" class="mt-4">{{ database.failure }}</AppAlert>
       </AppCard>
 
-      <ConnectionDetails
-        v-if="engine && connectionUsers.length"
-        :engine="engine.kind"
-        :engine-label="`${ENGINE_NAMES[engine.kind]} ${engine.versionText}`"
-        :port="engine.port"
-        :database="database.name"
-        :users="connectionUsers"
-        :socket-path="engine.socketPath"
-      />
+      <AppDialog
+        :open="canConnect && showConnectDialog"
+        size="lg"
+        title="Remote connection"
+        description="Point Beekeeper Studio, DBeaver or the mysql client at this database."
+        @close="showConnectDialog = false"
+      >
+        <ConnectionDetails
+          v-if="engine"
+          :engine="engine.kind"
+          :engine-label="`${ENGINE_NAMES[engine.kind]} ${engine.versionText}`"
+          :port="engine.port"
+          :database="database.name"
+          :users="connectionUsers"
+          :socket-path="engine.socketPath"
+        />
+      </AppDialog>
 
       <!-- Access: the owner plus every granted account, which is what FastPanel
            calls the database's users. -->

@@ -14,12 +14,16 @@ import {
 
 import AppAlert from './AppAlert.vue'
 import AppButton from './AppButton.vue'
-import AppCard from './AppCard.vue'
 import AppInput from './AppInput.vue'
 import CopyField from './CopyField.vue'
 import FormField from './FormField.vue'
 import { Select, SelectContent, SelectItem, SelectTrigger } from './select'
 
+/**
+ * Renders bare, without card chrome: it lives in a dialog behind the detail
+ * page's "Connect" button, because copying these strings is an occasional task
+ * rather than something worth a permanent block on every visit.
+ */
 const props = defineProps<{
   engine: EngineKind
   /** Human name of the server, e.g. "PostgreSQL 17 · main". */
@@ -70,13 +74,14 @@ const tunnelCommand = computed(() => sshTunnelCommand(directTarget.value, tunnel
 </script>
 
 <template>
-  <AppCard eyebrow="Connect from your computer" title="Remote connection">
-    <template #actions>
+  <div>
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <p class="text-[13px] text-ink-secondary">{{ engineLabel }}</p>
       <div class="flex items-center gap-1 rounded-lg border border-outline p-1">
         <AppButton size="sm" :variant="overSsh ? 'primary' : 'ghost'" @click="overSsh = true">SSH tunnel</AppButton>
         <AppButton size="sm" :variant="overSsh ? 'ghost' : 'primary'" @click="overSsh = false">Direct</AppButton>
       </div>
-    </template>
+    </div>
 
     <AppAlert v-if="overSsh" tone="info">
       {{ engineLabel }} listens on the node's loopback address only. Open the tunnel below — or paste the same details
@@ -88,7 +93,7 @@ const tunnelCommand = computed(() => sshTunnelCommand(directTarget.value, tunnel
       firewall. From a laptop, prefer the SSH tunnel.
     </AppAlert>
 
-    <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div class="mt-4 grid gap-3 sm:grid-cols-2">
       <FormField label="Node address">
         <AppInput v-model="host" autocomplete="off" spellcheck="false" />
       </FormField>
@@ -118,7 +123,7 @@ const tunnelCommand = computed(() => sshTunnelCommand(directTarget.value, tunnel
       hint="Run this in a terminal and leave it open while you are connected."
     />
 
-    <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div class="mt-4 grid gap-4 sm:grid-cols-2">
       <CopyField label="Host" :value="target.host" />
       <CopyField label="Port" :value="String(target.port)" />
       <CopyField label="Database" :value="target.database" />
@@ -129,11 +134,11 @@ const tunnelCommand = computed(() => sshTunnelCommand(directTarget.value, tunnel
       <CopyField
         label="Connection URI"
         :value="connectionUri(target)"
-        hint="No password: reveal or rotate the user's credential below, then add it in your client."
+        hint="No password: reveal or rotate the user's credential from the Access table, then add it in your client."
       />
       <CopyField label="JDBC URL" :value="jdbcUrl(target)" :hint="jdbcDriverHint" />
       <CopyField label="Command line" :value="cliCommand(target)" />
       <CopyField v-if="socketPath" label="Unix socket (on the node)" :value="socketPath" />
     </div>
-  </AppCard>
+  </div>
 </template>
