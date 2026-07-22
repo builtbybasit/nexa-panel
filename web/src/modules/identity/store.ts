@@ -84,9 +84,8 @@ export const useIdentityStore = defineStore('identity', {
       else if (next === 'mfa_challenge') this.phase = 'challenge'
       else this.phase = 'authenticated'
     },
-    /** Non-admin accounts may defer MFA; administrators must complete enrollment. */
+    /** MFA is optional for every role, so any account may defer enrollment. */
     skipEnrollment() {
-      if (this.user?.role === 'admin') return
       this.enrollment = undefined
       this.error = ''
       this.phase = 'authenticated'

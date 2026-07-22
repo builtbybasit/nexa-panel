@@ -104,6 +104,15 @@ func RecentMFA(ctx context.Context, now time.Time, maxAge time.Duration) bool {
 	return !verifiedAt.After(now.UTC()) && now.UTC().Sub(verifiedAt) <= maxAge
 }
 
+// MFAEnrolled reports whether the current session's account has a confirmed
+// second factor. Authorization uses it to require step-up for sensitive actions
+// only when the account opted into MFA: because MFA is optional, a password-only
+// account must not be blocked from actions it is otherwise authorized for.
+func MFAEnrolled(ctx context.Context) bool {
+	value, ok := ctx.Value(principalContextKey{}).(principal)
+	return ok && value.TOTPConfirmedAt != nil
+}
+
 // principalFromContext returns the full authenticated principal, including the
 // session identifier, for handlers that need to act on the current session
 // (e.g. keeping it alive while revoking the account's other sessions).
@@ -227,10 +236,10 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 			return
 		}
-		if person.Role == "admin" && person.TOTPConfirmedAt == nil {
-			writeError(w, http.StatusForbidden, "mfa_enrollment_required", "Administrators must enroll multi-factor authentication to continue.")
-			return
-		}
+		// Multi-factor authentication is optional: an account is never forced to
+		// enroll. But once an account HAS enrolled, every request must carry a
+		// completed challenge, so a stolen password alone can't ride an
+		// MFA-protected account.
 		if person.TOTPConfirmedAt != nil && person.MFAVerifiedAt == nil {
 			writeError(w, http.StatusUnauthorized, "mfa_required", "Complete multi-factor authentication to continue.")
 			return

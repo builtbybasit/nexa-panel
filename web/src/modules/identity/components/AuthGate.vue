@@ -33,7 +33,8 @@ const headline = computed(() => {
 })
 const errorMessage = computed(() => localError.value || identity.error)
 const enrollmentFailed = computed(() => !identity.enrollment && !identity.loading && !!identity.error)
-const enrollmentRequired = computed(() => identity.user?.role === 'admin')
+// MFA is optional for every role: enrollment is always deferrable, never required.
+const enrollmentRequired = computed(() => false)
 
 function focusCodeField(select = false) {
   const el = codeField.value?.$el as HTMLInputElement | undefined

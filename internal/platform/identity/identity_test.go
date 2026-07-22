@@ -36,7 +36,7 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBootstrapRequiresAdministratorMFAAndLoginChallenge(t *testing.T) {
+func TestBootstrapOptionalMFAOptInAndLoginChallenge(t *testing.T) {
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
@@ -84,26 +84,26 @@ func TestBootstrapRequiresAdministratorMFAAndLoginChallenge(t *testing.T) {
 		t.Fatalf("unexpected bootstrap cookies: %+v", bootstrapCookies)
 	}
 
-	// Bootstrap creates a restricted enrollment session. It cannot cross the
-	// authenticated interface until the administrator confirms MFA.
-	if !strings.Contains(bootstrap.Body.String(), `"next":"mfa_enrollment"`) {
-		t.Fatalf("bootstrap did not offer enrollment: %s", bootstrap.Body.String())
+	// MFA is optional: bootstrap signs the administrator straight in, so the
+	// session immediately reaches the authenticated interface and protected
+	// routes with no second factor demanded.
+	if !strings.Contains(bootstrap.Body.String(), `"next":"authenticated"`) {
+		t.Fatalf("bootstrap did not sign the administrator in: %s", bootstrap.Body.String())
 	}
 	openSession := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/session", "", bootstrapCookies[0])
-	if openSession.Code != http.StatusForbidden || !strings.Contains(openSession.Body.String(), `"mfa_enrollment_required"`) {
-		t.Fatalf("session without MFA = %d %s", openSession.Code, openSession.Body.String())
+	if openSession.Code != http.StatusOK {
+		t.Fatalf("session after bootstrap = %d %s", openSession.Code, openSession.Body.String())
 	}
 	openModules := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", bootstrapCookies[0])
-	if openModules.Code != http.StatusForbidden || !strings.Contains(openModules.Body.String(), `"mfa_enrollment_required"`) {
-		t.Fatalf("protected route without MFA = %d %s", openModules.Code, openModules.Body.String())
+	if openModules.Code != http.StatusOK {
+		t.Fatalf("protected route after bootstrap = %d %s", openModules.Code, openModules.Body.String())
 	}
 	openStatus := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/status", "", bootstrapCookies[0])
-	if !strings.Contains(openStatus.Body.String(), `"authenticated":false`) || !strings.Contains(openStatus.Body.String(), `"mfaEnrollmentRequired":true`) {
-		t.Fatalf("status without MFA = %s", openStatus.Body.String())
+	if !strings.Contains(openStatus.Body.String(), `"authenticated":true`) || !strings.Contains(openStatus.Body.String(), `"mfaEnabled":false`) {
+		t.Fatalf("status after bootstrap = %s", openStatus.Body.String())
 	}
 
-	// Enrollment endpoints deliberately accept the restricted pre-authentication
-	// session so bootstrap can be completed.
+	// The administrator then opts into MFA from an already-authenticated session.
 	enrollment := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/enroll", "", bootstrapCookies[0])
 	if enrollment.Code != http.StatusOK {
 		t.Fatalf("enrollment = %d %s", enrollment.Code, enrollment.Body.String())
@@ -344,6 +344,9 @@ func (testAuthorization) Middleware(_ string, next http.Handler) http.Handler { 
 
 func performRequest(handler http.Handler, method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	// The control plane refuses non-loopback plaintext HTTP; these tests exercise
+	// the documented loopback bootstrap workflow, so present a loopback client.
+	request.RemoteAddr = "127.0.0.1:12345"
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
 	}

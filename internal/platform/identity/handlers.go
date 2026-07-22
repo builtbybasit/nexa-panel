@@ -27,9 +27,10 @@ func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 		response["user"] = person.User
 		enrolled := person.TOTPConfirmedAt != nil
 		response["mfaEnabled"] = enrolled
-		if person.Role == "admin" && !enrolled {
-			response["mfaEnrollmentRequired"] = true
-		} else if enrolled && person.MFAVerifiedAt == nil {
+		// MFA is optional, so enrollment is never demanded. An enrolled account
+		// must still complete its outstanding challenge; anything else is
+		// authenticated on the password session alone.
+		if enrolled && person.MFAVerifiedAt == nil {
 			response["mfaChallengeRequired"] = true
 		} else {
 			response["authenticated"] = true
@@ -82,7 +83,9 @@ func (m *Module) bootstrapHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &user.ID, Action: "identity.bootstrap", Subject: "user:" + user.ID, RemoteAddress: remoteAddress(r)})
-	writeJSON(w, http.StatusCreated, map[string]any{"user": user, "next": "mfa_enrollment"})
+	// MFA is optional, so a freshly bootstrapped administrator is signed straight
+	// in. They can enable a second factor later from account security.
+	writeJSON(w, http.StatusCreated, map[string]any{"user": user, "next": "authenticated"})
 }
 
 func (m *Module) loginHTTP(w http.ResponseWriter, r *http.Request) {
@@ -125,13 +128,11 @@ func (m *Module) loginHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = m.database.NewUpdate().Model((*userModel)(nil)).
 		Set("last_login_at = ?", lastLogin).Where("id = ?", user.ID).Exec(r.Context())
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &user.ID, Action: "identity.password_accepted", Subject: "user:" + user.ID, RemoteAddress: remoteAddress(r)})
+	// MFA is optional: an account without a confirmed factor is authenticated on
+	// the password alone. Only an enrolled account is sent to its challenge.
 	next := "mfa_challenge"
 	if model.TOTPConfirmedAt == nil {
-		if user.Role == "admin" {
-			next = "mfa_enrollment"
-		} else {
-			next = "authenticated"
-		}
+		next = "authenticated"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": user, "next": next})
 }

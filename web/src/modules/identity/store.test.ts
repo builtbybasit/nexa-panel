@@ -12,34 +12,33 @@ afterEach(() => {
 })
 
 describe('identity session state', () => {
-  it('requires an administrator without MFA to finish enrollment before authentication', async () => {
+  it('does not force enrollment: an account without MFA is authenticated, and any role may defer', async () => {
     const user = { id: 'admin-1', username: 'admin', role: 'admin' }
-    const enrollment = { secret: 'secret', provisioningUri: 'otpauth://totp/Nexa:admin' }
     vi.stubGlobal(
       'fetch',
-      vi
-        .fn()
-        .mockResolvedValueOnce(
-          Response.json({
-            bootstrapRequired: false,
-            authenticated: false,
-            mfaEnabled: false,
-            mfaChallengeRequired: false,
-            mfaEnrollmentRequired: true,
-            user,
-          }),
-        )
-        .mockResolvedValueOnce(Response.json(enrollment)),
+      vi.fn().mockResolvedValueOnce(
+        Response.json({
+          bootstrapRequired: false,
+          authenticated: true,
+          mfaEnabled: false,
+          mfaChallengeRequired: false,
+          mfaEnrollmentRequired: false,
+          user,
+        }),
+      ),
     )
 
     const identity = useIdentityStore()
     await identity.initialize()
 
-    expect(identity.phase).toBe('enroll')
-    expect(identity.authenticated).toBe(false)
-    expect(identity.enrollment).toEqual(enrollment)
+    // MFA is optional, so an administrator without a second factor is signed in.
+    expect(identity.phase).toBe('authenticated')
+    expect(identity.authenticated).toBe(true)
+
+    // Even if the enroll step is opened, any role (including admin) can defer it.
+    identity.phase = 'enroll'
     identity.skipEnrollment()
-    expect(identity.phase).toBe('enroll')
+    expect(identity.phase).toBe('authenticated')
   })
 
   it('exposes role capabilities from the current session', () => {

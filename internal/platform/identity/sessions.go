@@ -97,6 +97,14 @@ func requestIsHTTPS(r *http.Request) bool {
 }
 
 func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	// Only delete a cookie the client actually presented. Sending the deletion on
+	// a request that carried no session cookie would wipe a valid cookie the
+	// browser still holds but merely withheld on this one request (a stale
+	// duplicate for the same host sent first, or a SameSite navigation), turning a
+	// single transient miss into a permanent sign-out on the next reload.
+	if _, err := r.Cookie(cookieName); err != nil {
+		return
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieName, Value: "", Path: "/", HttpOnly: true,
 		Secure: requestIsHTTPS(r), SameSite: http.SameSiteStrictMode,
