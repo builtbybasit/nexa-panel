@@ -105,7 +105,9 @@ func (m *Module) planHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "site_plan_unavailable", "The site plan could not be loaded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"plan": plan, "expiresAt": expiresAt})
+	// sites.read reaches this endpoint, which includes read-only roles, so the
+	// basic-auth credential is stripped from the response (never from storage).
+	writeJSON(w, http.StatusOK, map[string]any{"plan": redactPlanForAPI(plan), "expiresAt": expiresAt})
 }
 
 // siteAccessible hides sites the user cannot reach; callers respond 404 so

@@ -136,6 +136,55 @@ func tidyIndexFiles(files []string) []string {
 	return tidied
 }
 
+// redactedSecret replaces credential material in an API response. It is not an
+// empty string so a reader can tell "withheld" apart from "this file is empty".
+const redactedSecret = "[redacted]"
+
+// htpasswdSuffix identifies the one managed artifact whose body is a credential.
+const htpasswdSuffix = ".htpasswd"
+
+// redactPlanForAPI returns a copy of a stored plan with every trace of the
+// basic-auth hash removed, for the plan endpoint.
+//
+// The stored plan deliberately keeps the hash: the node re-renders plan.Site and
+// requires byte-exact artifact equality, so a plan stripped of the credential
+// would fail validation and no site with basic auth could ever be activated.
+// Redaction therefore belongs on the response path only, and this function must
+// never write back into the value it was handed — hence the fresh slices.
+//
+// The hash reaches a response through four separate routes, and all four matter:
+// the settings field, the rendered htpasswd artifact body, the before-snapshot
+// of that file, and — after basic auth is switched off — the retired-path
+// snapshot, which still carries the contents of the file about to be deleted.
+// Digests go too: they are computed over the credential line, so publishing them
+// would let a guessed hash be confirmed offline.
+func redactPlanForAPI(plan siteoperator.Plan) siteoperator.Plan {
+	plan.Site.Settings.BasicAuth.PasswordHash = ""
+	artifacts := make([]siteoperator.Artifact, len(plan.Artifacts))
+	for index, artifact := range plan.Artifacts {
+		if strings.HasSuffix(artifact.Path, htpasswdSuffix) {
+			artifact.Content = redactedSecret
+		}
+		artifacts[index] = artifact
+	}
+	plan.Artifacts = artifacts
+	plan.Before = redactSnapshots(plan.Before)
+	plan.RetiredBefore = redactSnapshots(plan.RetiredBefore)
+	return plan
+}
+
+func redactSnapshots(snapshots []siteoperator.Snapshot) []siteoperator.Snapshot {
+	redacted := make([]siteoperator.Snapshot, len(snapshots))
+	for index, snapshot := range snapshots {
+		if strings.HasSuffix(snapshot.Path, htpasswdSuffix) && snapshot.Exists {
+			snapshot.Content = redactedSecret
+			snapshot.Digest = redactedSecret
+		}
+		redacted[index] = snapshot
+	}
+	return redacted
+}
+
 // clampTLSDomains keeps only the certificate names that still have a serving
 // hostname on the site. A certificate's stored SAN list is not rewritten when a
 // domain is removed — the domains module clamps at teardown for exactly this

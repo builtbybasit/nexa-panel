@@ -329,6 +329,13 @@ SiteArtifact:
       type: string
 SitePlan:
   type: object
+  description: >-
+    A signed node configuration plan. This endpoint is readable with sites.read,
+    so basic-auth credential material is withheld from the response: the
+    passwordHash field is empty and the password file's body, before-state, and
+    digest read "[redacted]". Only the response is redacted — the stored plan
+    keeps the real credential, which the node needs to re-render the file
+    byte-identically when the plan is applied.
   required:
   - id
   - kind
