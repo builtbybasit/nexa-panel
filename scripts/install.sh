@@ -27,6 +27,12 @@ usage() {
   cat <<'EOF'
 Usage: install.sh [options]
 
+  With no --panel-hostname the installer runs the quick-start: it publishes the
+  panel on :8888 over plain HTTP (reachable by the server's public IP), auto-
+  creates the first administrator and prints its password, and opens UFW ports
+  22, 80, 443, and 8888. Pass --panel-hostname with --tls-email for a domain
+  fronted by a Let's Encrypt certificate instead.
+
   --binary PATH   Install PATH as /usr/bin/nexa. If omitted, an existing
                   /usr/bin/nexa is left alone (the test image bind-mounts one).
   --no-start      Configure and enable the services but do not start them.
@@ -85,12 +91,22 @@ if [[ -n "$PANEL_HOSTNAME" ]] && ! valid_hostname "$PANEL_HOSTNAME"; then
   die "--panel-hostname must be a valid DNS hostname"
 fi
 [[ -z "$TLS_EMAIL" || -n "$PANEL_HOSTNAME" ]] || die "--tls-email requires --panel-hostname"
-# Publishing on a public hostname exposes the login and session cookie to the
-# network. Default to safe-by-default: require TLS unless the operator explicitly
-# accepts cleartext (e.g. TLS terminates on a load balancer in front of this
-# node). The loopback-only bootstrap listener is unaffected.
+# Publishing exposes the login and session cookie to the network. A named host
+# must therefore use TLS (--tls-email) unless the operator explicitly accepts
+# cleartext (--allow-insecure-http, e.g. TLS terminates on a load balancer in
+# front of this node). The default no-hostname mode is the public-IP quick-start
+# below: the panel is published on :8888 over plain HTTP by design.
 if [[ -n "$PANEL_HOSTNAME" && -z "$TLS_EMAIL" && "$ALLOW_INSECURE" -eq 0 ]]; then
   die "refusing to publish $PANEL_HOSTNAME over plaintext HTTP: pass --tls-email EMAIL to provision TLS, or --allow-insecure-http to accept cleartext authentication (only safe when TLS terminates in front of this node)"
+fi
+
+# Whether the API must accept non-loopback plaintext HTTP. True for the default
+# public-IP quick-start (no hostname; panel on :8888) and the explicit
+# load-balancer opt-in; false only when a named host is fronted by TLS here.
+if [[ -z "$PANEL_HOSTNAME" || "$ALLOW_INSECURE" -eq 1 ]]; then
+  INSECURE_HTTP=1
+else
+  INSECURE_HTTP=0
 fi
 
 export DEBIAN_FRONTEND=noninteractive
@@ -194,25 +210,31 @@ log "Installing the packaged units, service account, and directories"
 install -d -m 0755 /usr/lib/systemd/system /usr/lib/sysusers.d /usr/lib/tmpfiles.d
 install -m 0644 "$ROOT_DIR/packaging/systemd/nexa-agent.service" /usr/lib/systemd/system/nexa-agent.service
 install -m 0644 "$ROOT_DIR/packaging/systemd/nexa-api.service" /usr/lib/systemd/system/nexa-api.service
+install -m 0644 "$ROOT_DIR/packaging/systemd/nexa-panel-system-backup.service" /usr/lib/systemd/system/nexa-panel-system-backup.service
+install -m 0644 "$ROOT_DIR/packaging/systemd/nexa-panel-system-backup.timer" /usr/lib/systemd/system/nexa-panel-system-backup.timer
 install -m 0644 "$ROOT_DIR/packaging/sysusers/nexa-panel.conf" /usr/lib/sysusers.d/nexa-panel.conf
 install -m 0644 "$ROOT_DIR/packaging/tmpfiles/nexa-panel.conf" /usr/lib/tmpfiles.d/nexa-panel.conf
 
-# The control plane refuses to serve authenticated traffic over non-loopback
-# plaintext HTTP unless NEXA_ALLOW_INSECURE_HTTP is set. Manage that opt-in as a
-# drop-in so it is applied when --allow-insecure-http was requested and removed
-# otherwise — a later safe re-install must not silently retain the override.
+# API service drop-in. Two production settings the shipped unit deliberately does
+# not hardcode: the first-run bootstrap token path (owner-only, under the state
+# dir, not the /tmp dev default), and — only when serving non-loopback plaintext
+# HTTP — the NEXA_ALLOW_INSECURE_HTTP opt-in the secure-transport guard requires.
+# Written every run so a later re-install without cleartext drops the override.
 NEXA_API_DROPIN_DIR="/etc/systemd/system/nexa-api.service.d"
-NEXA_API_INSECURE_DROPIN="$NEXA_API_DROPIN_DIR/10-insecure-http.conf"
-if [[ "$ALLOW_INSECURE" -eq 1 ]]; then
-  warn "publishing over plaintext HTTP (--allow-insecure-http): authentication and the session cookie cross the network in cleartext; only do this when TLS terminates in front of this node"
-  install -d -m 0755 "$NEXA_API_DROPIN_DIR"
-  cat > "$NEXA_API_INSECURE_DROPIN" <<'EOF'
-[Service]
-Environment=NEXA_ALLOW_INSECURE_HTTP=1
-EOF
-  chmod 0644 "$NEXA_API_INSECURE_DROPIN"
-else
-  rm -f "$NEXA_API_INSECURE_DROPIN"
+NEXA_API_DROPIN="$NEXA_API_DROPIN_DIR/10-nexa-panel.conf"
+install -d -m 0755 "$NEXA_API_DROPIN_DIR"
+# Retire the older single-purpose drop-in name so its setting cannot linger.
+rm -f "$NEXA_API_DROPIN_DIR/10-insecure-http.conf"
+{
+  echo "[Service]"
+  echo "Environment=NEXA_BOOTSTRAP_TOKEN=/var/lib/nexa-panel/bootstrap.token"
+  if [[ "$INSECURE_HTTP" -eq 1 ]]; then
+    echo "Environment=NEXA_ALLOW_INSECURE_HTTP=1"
+  fi
+} > "$NEXA_API_DROPIN"
+chmod 0644 "$NEXA_API_DROPIN"
+if [[ "$INSECURE_HTTP" -eq 1 ]]; then
+  warn "publishing over plaintext HTTP: authentication and the session cookie cross the network in cleartext; put TLS in front for anything beyond a test node"
 fi
 
 # Create the account and the managed tree now rather than waiting for the next
@@ -231,8 +253,11 @@ if [[ -n "$PANEL_HOSTNAME" ]]; then
   PANEL_LISTEN="80"
   PANEL_SERVER_NAME="$PANEL_HOSTNAME"
 else
-  PANEL_LISTEN="127.0.0.1:8888"
-  PANEL_SERVER_NAME="localhost"
+  # Quick-start default: reachable on every interface by the server's public IP,
+  # no domain or certificate. server_name "_" is the catch-all so any Host (the
+  # bare IP included) matches. /metrics stays loopback-gated inside the template.
+  PANEL_LISTEN="8888"
+  PANEL_SERVER_NAME="_"
 fi
 sed -e "s/__LISTEN__/$PANEL_LISTEN/g" -e "s/__SERVER_NAME__/$PANEL_SERVER_NAME/g" \
   "$ROOT_DIR/packaging/nginx/nexa-panel.conf.template" > /etc/nginx/sites-available/nexa-panel.conf
@@ -266,7 +291,7 @@ sshd -t
 
 # --- services ---------------------------------------------------------------
 log "Enabling services"
-systemctl enable nexa-agent.service nexa-api.service nginx.service cron.service ssh.service
+systemctl enable nexa-agent.service nexa-api.service nginx.service cron.service ssh.service nexa-panel-system-backup.timer
 
 # systemd is not running inside an image build, so there is nothing to start and
 # `systemctl start` would fail; the units are enabled and start on first boot.
@@ -278,13 +303,39 @@ else
   log "Starting services"
   systemctl daemon-reload
   systemctl restart nexa-agent.service nexa-api.service nginx.service
+  systemctl start nexa-panel-system-backup.timer
   if [[ -n "$TLS_EMAIL" ]]; then
     log "Obtaining a TLS certificate for $PANEL_HOSTNAME"
     certbot --nginx --non-interactive --agree-tos --redirect --email "$TLS_EMAIL" -d "$PANEL_HOSTNAME"
   fi
+
+  # Firewall: allow SSH first so enabling UFW can never lock out this session,
+  # then the web and panel ports, then turn the firewall on.
+  if command -v ufw >/dev/null 2>&1; then
+    log "Opening the firewall (UFW): 22, 80, 443, 8888"
+    ufw allow 22/tcp
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+    ufw allow 8888/tcp
+    ufw --force enable >/dev/null || warn "could not enable UFW; open 22/80/443/8888 manually"
+  fi
+
+  # Auto-create the first administrator and print its credentials, closing the
+  # bootstrap window immediately. The seed helper is shared with the disposable
+  # Docker node's boot unit so the two never drift; it only creates the account
+  # in a plaintext mode, where the API socket call is not blocked by the TLS
+  # guard. A named host fronted by TLS keeps the create-first-account-in-browser
+  # flow instead.
+  panel_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [[ -n "$panel_ip" ]] || panel_ip="<server-ip>"
   if [[ -n "$PANEL_HOSTNAME" ]]; then
-    log "Nexa Panel is available at http${TLS_EMAIL:+s}://$PANEL_HOSTNAME/"
+    panel_url="http${TLS_EMAIL:+s}://${PANEL_HOSTNAME}/"
   else
-    log "Nexa Panel bootstrap listener is available locally at http://127.0.0.1:8888/. Re-run with --panel-hostname to publish it."
+    panel_url="http://${panel_ip}:8888/"
+  fi
+  if [[ "$INSECURE_HTTP" -eq 1 ]]; then
+    bash "$ROOT_DIR/scripts/nexa-seed-admin.sh" "$panel_url"
+  else
+    log "Nexa Panel is available at ${panel_url}"
   fi
 fi

@@ -93,7 +93,22 @@ runs the same checks as CI before writing the binary and checksum under `dist/`.
 
 The installer supports Ubuntu 24.04 LTS only. It configures the system users,
 directories, systemd services, Nginx proxy, required host packages, and the PHP
-and PostgreSQL package repositories. From a source checkout on the target node:
+and PostgreSQL package repositories. From a source checkout on the target node,
+the default run is a quick-start:
+
+```bash
+sudo ./scripts/install.sh --binary dist/nexa-linux-amd64
+```
+
+This publishes the panel on port 8888 over plain HTTP at
+`http://<server-ip>:8888/`, opens UFW ports 22, 80, 443, and 8888, and
+auto-creates the first administrator — printing its username (`admin`) and a
+generated password at the end of the run. Save that password; it is not shown
+again. Authentication then crosses the network in cleartext, so use this mode on
+a trusted network or a throwaway node and move to TLS for anything lasting.
+
+For a domain fronted by a Let's Encrypt certificate, point the hostname's public
+DNS at the node, allow inbound HTTP on port 80, then pass a hostname and email:
 
 ```bash
 sudo ./scripts/install.sh \
@@ -102,21 +117,12 @@ sudo ./scripts/install.sh \
   --tls-email operations@example.com
 ```
 
-Before requesting a certificate, point the hostname's public DNS at the node
-and allow inbound HTTP on port 80. Certbot uses that listener for the initial
-HTTP-01 challenge and configures the HTTPS redirect.
-
-Without `--panel-hostname`, the installer exposes a bootstrap listener only on
-`127.0.0.1:8080`. Reach it through an SSH tunnel instead of publishing that
-listener directly:
-
-```bash
-ssh -L 8080:127.0.0.1:8080 administrator@server
-```
-
-Then open `http://127.0.0.1:8080`. The first account becomes the administrator
-and must finish TOTP enrollment before entering the panel. Store its one-time
-recovery codes outside the managed node.
+Certbot uses the port-80 listener for the initial HTTP-01 challenge and
+configures the HTTPS redirect; the panel is then served at
+`https://panel.example.com/`. In this TLS mode the installer does not
+auto-create the administrator: open the panel and create the first account,
+which becomes the administrator (MFA enrollment is optional). Store any recovery
+codes outside the managed node.
 
 The privileged systemd/container setup in `Dockerfile` and `compose.yaml` is a
 disposable Ubuntu acceptance node, not a supported production deployment.

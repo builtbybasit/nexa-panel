@@ -96,5 +96,56 @@ database and site credential in plaintext.
   cannot decrypt the stored secrets. Always restore the two files **from the
   same copy**.
 - Creating panel-state backups: `nexa backup system --account <id|name>` (or the
-  `POST /api/v1/backups/system` API). Scheduling these on a timer is a planned
-  follow-up; for now run it after significant changes and/or from cron.
+  `POST /api/v1/backups/system` API) runs one on demand.
+
+## Scheduling automatic off-node backups
+
+A live node should keep off-node copies without anyone remembering to run the
+command. Nexa ships a systemd timer for this
+(`nexa-panel-system-backup.timer` → `nexa-panel-system-backup.service`).
+`scripts/install.sh` enables the timer by default, but it stays **dormant** — its
+service is a no-op (`ConditionPathExists`) — until you tell it which backup
+storage account (rclone remote) to ship to. So a fresh node produces no failure
+spam, and the day you point it at a destination the daily backups just start.
+
+(If you are upgrading a node that predates this timer, or ran the installer with
+`--no-start`, enable it yourself as shown in step 3.)
+
+1. **Choose the destination account.** In the panel, create (or pick) a backup
+   storage account and note its ID or name. Follow the security guidance above:
+   it must be a trusted, encrypted remote, since the archive is
+   credential-equivalent.
+
+2. **Point the timer at it.** Write the account into the service's environment
+   file (root-owned, under `/etc/nexa-panel/`):
+
+   ```
+   printf 'NEXA_SYSTEM_BACKUP_ACCOUNT=%s\n' '<account id or name>' \
+     > /etc/nexa-panel/system-backup.env
+   chmod 0640 /etc/nexa-panel/system-backup.env
+   ```
+
+   Until this file exists the timer's service is a **no-op** (`ConditionPathExists`
+   skips it cleanly), so a node that has not opted in never spams backup
+   failures.
+
+3. **Enable the timer:**
+
+   ```
+   systemctl enable --now nexa-panel-system-backup.timer
+   ```
+
+   It runs daily with a randomized delay and `Persistent=true` (a backup missed
+   while the node was off runs once it returns). Trigger one immediately to
+   verify wiring with `systemctl start nexa-panel-system-backup.service`, then
+   confirm a new copy appears (panel Backups view or `nexa` logs / the
+   `system_backup_copies` history).
+
+> **Critical — store the remote's credentials off-node.** The timer only creates
+> copies; it cannot help you *restore* if the rclone remote definition
+> (endpoint + credentials for the destination account) lives only on the node
+> that died. During a disaster recovery `control.db` is exactly what is being
+> restored, so the node cannot read the stored account — you must supply the
+> remote config yourself (see "What you need" above). Keep that remote
+> definition somewhere independent of this node (a password manager, a second
+> host, sealed offline storage).
