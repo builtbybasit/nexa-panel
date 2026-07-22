@@ -7,6 +7,7 @@ const route = useRoute()
 const tabs = [
   { label: 'Plans', to: '/backups' },
   { label: 'Accounts', to: '/backups/accounts' },
+  { label: 'Panel state', to: '/backups/system' },
 ]
 </script>
 

@@ -50,6 +50,7 @@ type TestResult struct {
 type Operator interface {
 	TestAccount(ctx context.Context, account Account) (TestResult, error)
 	Run(ctx context.Context, request RunRequest) (Manifest, error)
+	RunSystem(ctx context.Context, request SystemRunRequest) (Manifest, error)
 	Restore(ctx context.Context, request RestoreRequest) error
 	DeleteCopy(ctx context.Context, request DeleteRequest) error
 	InstallSchedule(ctx context.Context, spec ScheduleSpec) error
@@ -133,12 +134,14 @@ func (execRunner) RunFromFile(ctx context.Context, name string, args, env []stri
 // HostOperator is the real, privileged implementation. It shells out to rclone
 // (backups) and systemctl (schedules).
 type HostOperator struct {
-	runner      Runner
-	binary      string
-	nexaBinary  string
-	systemdRoot string
-	stagingRoot string
-	siteRoot    string
+	runner        Runner
+	binary        string
+	nexaBinary    string
+	systemdRoot   string
+	stagingRoot   string
+	siteRoot      string
+	stateDBPath   string
+	masterKeyPath string
 }
 
 // HostConfig contains paths owned by the privileged agent. They are never
@@ -146,6 +149,10 @@ type HostOperator struct {
 type HostConfig struct {
 	StagingRoot string
 	SiteRoot    string
+	// StateDBPath and MasterKeyPath locate the panel's own state for the system
+	// backup. They default to the packaged layout and are agent-owned.
+	StateDBPath   string
+	MasterKeyPath string
 }
 
 // NewHostOperator builds the operator. A nil runner uses the real exec runner;
@@ -161,6 +168,8 @@ func NewHostOperator(runner Runner, configs ...HostConfig) (*HostOperator, error
 	}
 	stagingRoot := defaultStagingRoot
 	siteRoot := defaultSiteRoot
+	stateDBPath := defaultStateDBPath
+	masterKeyPath := defaultMasterKeyPath
 	if len(configs) == 1 && configs[0].StagingRoot != "" {
 		if !filepath.IsAbs(configs[0].StagingRoot) {
 			return nil, errors.New("backup staging root must be absolute")
@@ -173,11 +182,23 @@ func NewHostOperator(runner Runner, configs ...HostConfig) (*HostOperator, error
 		}
 		siteRoot = filepath.Clean(configs[0].SiteRoot)
 	}
+	if len(configs) == 1 && configs[0].StateDBPath != "" {
+		if !filepath.IsAbs(configs[0].StateDBPath) {
+			return nil, errors.New("control-plane state database path must be absolute")
+		}
+		stateDBPath = filepath.Clean(configs[0].StateDBPath)
+	}
+	if len(configs) == 1 && configs[0].MasterKeyPath != "" {
+		if !filepath.IsAbs(configs[0].MasterKeyPath) {
+			return nil, errors.New("master key path must be absolute")
+		}
+		masterKeyPath = filepath.Clean(configs[0].MasterKeyPath)
+	}
 	nexaBinary := "/usr/bin/nexa"
 	if executable, err := os.Executable(); err == nil && executable != "" {
 		nexaBinary = executable
 	}
-	return &HostOperator{runner: runner, binary: "rclone", nexaBinary: nexaBinary, systemdRoot: systemdRoot, stagingRoot: stagingRoot, siteRoot: siteRoot}, nil
+	return &HostOperator{runner: runner, binary: "rclone", nexaBinary: nexaBinary, systemdRoot: systemdRoot, stagingRoot: stagingRoot, siteRoot: siteRoot, stateDBPath: stateDBPath, masterKeyPath: masterKeyPath}, nil
 }
 
 // TestAccount verifies the account is reachable AND writable by creating the

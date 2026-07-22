@@ -20,15 +20,17 @@ import (
 )
 
 type fakeBackupOperator struct {
-	lastAccount backupoperator.Account
-	lastRun     backupoperator.RunRequest
-	lastRestore backupoperator.RestoreRequest
-	lastDelete  backupoperator.DeleteRequest
-	installed   []backupoperator.ScheduleSpec
-	removed     []string
-	result      backupoperator.TestResult
-	manifest    backupoperator.Manifest
-	err         error
+	lastAccount    backupoperator.Account
+	lastRun        backupoperator.RunRequest
+	lastSystemRun  backupoperator.SystemRunRequest
+	lastRestore    backupoperator.RestoreRequest
+	lastDelete     backupoperator.DeleteRequest
+	installed      []backupoperator.ScheduleSpec
+	removed        []string
+	result         backupoperator.TestResult
+	manifest       backupoperator.Manifest
+	systemManifest backupoperator.Manifest
+	err            error
 }
 
 type fakeBackupAccess struct {
@@ -56,6 +58,19 @@ func (f *fakeBackupOperator) Run(_ context.Context, request backupoperator.RunRe
 	if manifest.CopyName == "" {
 		manifest.CopyName = request.CopyName
 	}
+	return manifest, nil
+}
+
+func (f *fakeBackupOperator) RunSystem(_ context.Context, request backupoperator.SystemRunRequest) (backupoperator.Manifest, error) {
+	f.lastSystemRun = request
+	if f.err != nil {
+		return backupoperator.Manifest{}, f.err
+	}
+	manifest := f.systemManifest
+	if manifest.CopyName == "" {
+		manifest.CopyName = request.CopyName
+	}
+	manifest.IntegrityChecked = true
 	return manifest, nil
 }
 

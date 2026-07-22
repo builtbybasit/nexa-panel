@@ -147,3 +147,27 @@ export function restoreBackupCopy(copyId: string, body: BackupRestoreRequest) {
 export function deleteBackupCopy(copyId: string) {
   return request<void>(`/api/v1/backups/copies/${copyId}`, { method: 'DELETE' })
 }
+
+// --- panel-state (system) backups ------------------------------------------
+// These back up the panel's OWN state — control.db plus master.key — off-node,
+// so a lost disk doesn't take every stored credential with it. Restore is a
+// deliberate CLI step (see docs/runbooks/panel-state-restore.md); the archive
+// is credential-equivalent, so it only belongs on a trusted, encrypted remote.
+
+export interface SystemBackupCopy {
+  id: string
+  accountId: string
+  copyName: string
+  remotePath: string
+  sizeBytes: number
+  sha256: string
+  createdAt: string
+}
+
+export async function listSystemBackupCopies() {
+  return (await request<{ items: SystemBackupCopy[] }>('/api/v1/backups/system')).items
+}
+
+export function runSystemBackup(accountId: string) {
+  return request<{ id: number }>('/api/v1/backups/system', { method: 'POST', body: JSON.stringify({ accountId }) })
+}

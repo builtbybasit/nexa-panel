@@ -200,6 +200,8 @@ paths:
     $ref: ./paths/backups.yaml#/backups_copies_copyId_restore
   /backups/copies/{copyId}:
     $ref: ./paths/backups.yaml#/backups_copies_copyId
+  /backups/system:
+    $ref: ./paths/backups.yaml#/backups_system
   /admin-tools:
     $ref: ./paths/admin-tools.yaml#/admin-tools
   /admin-tools/{kind}/plan:

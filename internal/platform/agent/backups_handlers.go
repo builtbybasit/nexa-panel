@@ -47,6 +47,24 @@ func (s *Server) backupRunHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, manifest)
 }
 
+func (s *Server) backupRunSystemHTTP(w http.ResponseWriter, r *http.Request) {
+	var request backupoperator.SystemRunRequest
+	if err := decodeBackupRunJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := backupoperator.ValidateSystemRunRequest(request); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_request", err.Error())
+		return
+	}
+	manifest, err := s.backups.RunSystem(r.Context(), request)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "backup_system_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, manifest)
+}
+
 func (s *Server) backupRestoreHTTP(w http.ResponseWriter, r *http.Request) {
 	var request backupoperator.RestoreRequest
 	if err := decodeBackupRunJSON(w, r, &request); err != nil {

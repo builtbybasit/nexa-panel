@@ -33,6 +33,12 @@ func (c *UnixClient) Run(ctx context.Context, request RunRequest) (Manifest, err
 	return manifest, err
 }
 
+func (c *UnixClient) RunSystem(ctx context.Context, request SystemRunRequest) (Manifest, error) {
+	var manifest Manifest
+	err := c.call(ctx, http.MethodPost, "/v1/backups/system/run", request, &manifest)
+	return manifest, err
+}
+
 func (c *UnixClient) Restore(ctx context.Context, request RestoreRequest) error {
 	return c.call(ctx, http.MethodPost, "/v1/backups/restore", request, nil)
 }

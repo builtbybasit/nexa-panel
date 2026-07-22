@@ -348,3 +348,65 @@ backups_copies_copyId:
 
       '4XX':
         $ref: ../components/responses.yaml#/ClientError
+backups_system:
+  get:
+    operationId: listSystemBackups
+    summary: List Panel-State Backups
+    description: >-
+      Panel-state ("system") backups snapshot the control database and master
+      key off-node so a disk loss is recoverable. They are global and restricted
+      to operator roles (developers are refused).
+    tags:
+    - Backups
+    x-permission: backups.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Stored panel-state copies, newest first
+      '403':
+        description: The caller has a site-scoped (developer) role
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+  post:
+    operationId: runSystemBackup
+    summary: Back Up Panel State
+    description: >-
+      Queues a backup.system job that snapshots control.db (via SQLite VACUUM
+      INTO) plus master.key into a single archive and uploads it to the chosen
+      storage account. The archive is credential-equivalent, so the account's
+      remote must be trusted/encrypted.
+    tags:
+    - Backups
+    x-permission: backups.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: Idempotency-Key
+      in: header
+      required: false
+      description: Repeating the same key and request returns the original durable job.
+      schema:
+        type: string
+        maxLength: 200
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+            - accountId
+            properties:
+              accountId:
+                type: string
+                description: The storage account to upload the panel-state archive to.
+    responses:
+      '202':
+        description: A backup.system job was queued (Location header points at the job)
+      '403':
+        description: The caller has a site-scoped (developer) role
+      '409':
+        description: The idempotency key was previously used with a different request
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

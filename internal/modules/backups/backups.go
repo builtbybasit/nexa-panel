@@ -147,6 +147,9 @@ func New(ctx context.Context, deps Dependencies) (*Module, error) {
 	if err := deps.Jobs.RegisterHandlerWithOptions("backup.restore", module.restoreJob, jobs.HandlerOptions{RecoveryPolicy: jobs.RecoveryFail}); err != nil {
 		return nil, err
 	}
+	if err := deps.Jobs.RegisterHandlerWithOptions("backup.system", module.systemJob, jobs.HandlerOptions{RecoveryPolicy: jobs.RecoveryFail}); err != nil {
+		return nil, err
+	}
 	return module, nil
 }
 
@@ -180,6 +183,8 @@ func (m *Module) Register(registry module.Registry) error {
 		{"GET /api/v1/backups/plans/{id}/copies", "backups.read", http.HandlerFunc(m.listCopiesHTTP)},
 		{"POST /api/v1/backups/copies/{copyId}/restore", "operations.apply", http.HandlerFunc(m.restoreCopyHTTP)},
 		{"DELETE /api/v1/backups/copies/{copyId}", "backups.write", http.HandlerFunc(m.deleteCopyHTTP)},
+		{"GET /api/v1/backups/system", "backups.read", http.HandlerFunc(m.listSystemCopiesHTTP)},
+		{"POST /api/v1/backups/system", "backups.write", http.HandlerFunc(m.runSystemHTTP)},
 	}
 	for _, route := range routes {
 		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
