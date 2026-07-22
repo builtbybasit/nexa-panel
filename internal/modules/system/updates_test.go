@@ -29,6 +29,10 @@ func (f *fakeUpdateOperator) Apply(_ context.Context, change selfupdateoperator.
 	return f.result, f.applyErr
 }
 
+func (f *fakeUpdateOperator) Rollback(context.Context) (selfupdateoperator.Result, error) {
+	return f.result, f.applyErr
+}
+
 func TestAvailableUpdateHTTPReportsAvailability(t *testing.T) {
 	operator := &fakeUpdateOperator{availability: selfupdateoperator.Availability{
 		InstalledVersion: "0.1.0",

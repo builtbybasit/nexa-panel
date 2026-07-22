@@ -2,12 +2,52 @@ package persistence
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/nexa-panel/nexa-panel/migrations"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/migrate"
 )
+
+// defaultSnapshotRetention caps how many pre-migration control.db snapshots are
+// kept next to the live database; older ones are pruned after each new snapshot.
+const defaultSnapshotRetention = 5
+
+// MigrateOption configures optional migration behaviour without breaking the
+// many callers (tests included) that invoke RunMigrations with just a context
+// and a database.
+type MigrateOption func(*migrateSettings)
+
+// migrateSettings holds the resolved optional behaviour threaded into the
+// testable runMigrations core.
+type migrateSettings struct {
+	// snapshotStatePath, when set, is the control.db path a pre-migration
+	// snapshot is taken next to. An empty value disables snapshotting.
+	snapshotStatePath string
+	retain            int
+	logger            *slog.Logger
+}
+
+// WithPreMigrationSnapshot takes a consistent SQLite snapshot of the control
+// database, alongside statePath, immediately before applying pending migrations
+// to an existing install. statePath is the live control.db path. A snapshot
+// failure aborts the migration so a partial or failed upgrade never runs without
+// a restore point. Only the most recent defaultSnapshotRetention snapshots are
+// kept.
+func WithPreMigrationSnapshot(statePath string, logger *slog.Logger) MigrateOption {
+	return func(s *migrateSettings) {
+		s.snapshotStatePath = statePath
+		s.retain = defaultSnapshotRetention
+		s.logger = logger
+	}
+}
 
 // legacyMigration maps a converted migration to the (module, version) it used to
 // occupy under the pre-bun schema_migrations ledger. It lets installs created by
@@ -52,17 +92,26 @@ var legacyLedger = []legacyMigration{
 
 // RunMigrations brings the control-plane schema up to date. It is called once,
 // in the API composition root, after Open and before the module constructors.
-func RunMigrations(ctx context.Context, database *bun.DB) error {
+func RunMigrations(ctx context.Context, database *bun.DB, opts ...MigrateOption) error {
 	set := migrate.NewMigrations()
 	if err := set.Discover(migrations.FS); err != nil {
 		return fmt.Errorf("discover migrations: %w", err)
 	}
-	return runMigrations(ctx, database, set, legacyLedger)
+	var settings migrateSettings
+	for _, opt := range opts {
+		opt(&settings)
+	}
+	if settings.logger == nil {
+		settings.logger = slog.Default()
+	}
+	return runMigrations(ctx, database, set, legacyLedger, settings)
 }
 
 // runMigrations is the testable core: reconcile pre-bun installs, then apply any
-// unapplied migrations under an advisory lock so two boots cannot race.
-func runMigrations(ctx context.Context, database *bun.DB, set *migrate.Migrations, ledger []legacyMigration) error {
+// unapplied migrations under an advisory lock so two boots cannot race. When a
+// pre-migration snapshot is configured and an existing install is actually being
+// upgraded, it snapshots control.db first and aborts on snapshot failure.
+func runMigrations(ctx context.Context, database *bun.DB, set *migrate.Migrations, ledger []legacyMigration, settings migrateSettings) error {
 	// WithMarkAppliedOnSuccess records a migration only after its statements
 	// succeed, so a failed migration is retried rather than silently skipped.
 	migrator := migrate.NewMigrator(database, set, migrate.WithMarkAppliedOnSuccess(true))
@@ -76,10 +125,81 @@ func runMigrations(ctx context.Context, database *bun.DB, set *migrate.Migration
 		return fmt.Errorf("acquire migration lock: %w", err)
 	}
 	defer func() { _ = migrator.Unlock(ctx) }()
+
+	// Before altering schema on an existing install, capture a consistent
+	// snapshot of control.db so a failed or partial upgrade migration has a
+	// restore point. A snapshot failure aborts the migration rather than
+	// upgrading blind. To restore: stop the panel, replace control.db with the
+	// chosen .bak (removing any -wal/-shm sidecars), and restart.
+	if settings.snapshotStatePath != "" {
+		status, err := migrator.MigrationsWithStatus(ctx)
+		if err != nil {
+			return fmt.Errorf("inspect migration status: %w", err)
+		}
+		pending := status.Unapplied()
+		applied := status.Applied()
+		// Only an existing install actually being upgraded is worth protecting:
+		// a fresh install (applied==0) has no state to lose, and a caught-up
+		// install (pending==0) changes nothing.
+		if len(pending) > 0 && len(applied) > 0 {
+			snapshot, err := snapshotControlDB(ctx, database, settings.snapshotStatePath, settings.retain, settings.logger)
+			if err != nil {
+				return fmt.Errorf("snapshot control database before migrating: %w", err)
+			}
+			settings.logger.Info("captured pre-migration control database snapshot", "snapshot", snapshot, "pending", len(pending))
+		}
+	}
+
 	if _, err := migrator.Migrate(ctx); err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil
+}
+
+// snapshotControlDB writes a consistent, self-contained copy of the live control
+// database to a timestamped sibling of statePath using SQLite's VACUUM INTO.
+// VACUUM INTO checkpoints the WAL and produces a single fully-written file,
+// unlike a naive file copy of a live WAL-mode database, which could capture a
+// torn page set. It refuses to overwrite an existing target and prunes older
+// snapshots best-effort.
+func snapshotControlDB(ctx context.Context, database *bun.DB, statePath string, retain int, logger *slog.Logger) (string, error) {
+	target := fmt.Sprintf("%s.%s.bak", statePath, time.Now().UTC().Format("20060102T150405Z"))
+	if _, err := os.Stat(target); err == nil {
+		return "", fmt.Errorf("snapshot target %s already exists", target)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect snapshot target %s: %w", target, err)
+	}
+	// The path is derived, not caller input, but escape single quotes anyway so
+	// the VACUUM INTO string literal stays well-formed.
+	escaped := strings.ReplaceAll(target, "'", "''")
+	if _, err := database.ExecContext(ctx, fmt.Sprintf("VACUUM INTO '%s'", escaped)); err != nil {
+		return "", fmt.Errorf("vacuum into %s: %w", target, err)
+	}
+	if retain > 0 {
+		pruneSnapshots(statePath, retain, logger)
+	}
+	return target, nil
+}
+
+// pruneSnapshots keeps only the newest retain snapshots of statePath, removing
+// the rest. The timestamped names sort chronologically, so lexical order is
+// chronological order. Prune errors are logged, not fatal: a stale snapshot next
+// to a freshly written one is harmless.
+func pruneSnapshots(statePath string, retain int, logger *slog.Logger) {
+	matches, err := filepath.Glob(statePath + ".*.bak")
+	if err != nil {
+		logger.Warn("could not list control database snapshots to prune", "error", err)
+		return
+	}
+	if len(matches) <= retain {
+		return
+	}
+	sort.Strings(matches)
+	for _, stale := range matches[:len(matches)-retain] {
+		if err := os.Remove(stale); err != nil {
+			logger.Warn("could not prune old control database snapshot", "snapshot", stale, "error", err)
+		}
+	}
 }
 
 // preseedLegacy marks converted migrations as already applied when the old

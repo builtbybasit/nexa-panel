@@ -20,6 +20,10 @@ import (
 // restart all happen inside nexa-agent — the CLI only issues the request and
 // prints the outcome.
 func runSelfUpdate(args []string) error {
+	if len(args) > 0 && args[0] == "rollback" {
+		return runSelfUpdateRollback(args[1:])
+	}
+
 	flags := flag.NewFlagSet("self-update", flag.ContinueOnError)
 	socket := flags.String("socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
 	tokenPath := flags.String("token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
@@ -83,6 +87,33 @@ func runSelfUpdate(args []string) error {
 		return fmt.Errorf("apply update: %w", err)
 	}
 	fmt.Printf("Updated Nexa Panel from %s to %s.\n", result.PreviousVersion, result.TargetVersion)
+	printRestart(result)
+	return nil
+}
+
+// runSelfUpdateRollback reverts the panel to the binary preserved by the last
+// swap. Like the forward update, the validation and atomic swap happen inside
+// nexa-agent; the CLI only issues the request and prints the outcome.
+func runSelfUpdateRollback(args []string) error {
+	flags := flag.NewFlagSet("self-update rollback", flag.ContinueOnError)
+	socket := flags.String("socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
+	tokenPath := flags.String("token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+
+	client := selfupdateoperator.NewUnixClient(*socket, *tokenPath)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	rollbackCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	result, err := client.Rollback(rollbackCtx)
+	if err != nil {
+		return fmt.Errorf("roll back update: %w", err)
+	}
+	fmt.Printf("Rolled back to %s (was %s).\n", result.TargetVersion, result.PreviousVersion)
 	printRestart(result)
 	return nil
 }

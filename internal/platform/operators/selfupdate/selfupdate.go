@@ -99,6 +99,9 @@ type Result struct {
 	Swapped          bool   `json:"swapped"`
 	RestartScheduled bool   `json:"restartScheduled"`
 	RestartDelay     string `json:"restartDelay,omitempty"`
+	// PreviousBinaryPath is the retained prior binary a rollback would restore,
+	// present only when such a binary exists on disk after the swap.
+	PreviousBinaryPath string `json:"previousBinaryPath,omitempty"`
 }
 
 // Operator is the interface the control plane depends on (via a unix-socket
@@ -110,6 +113,9 @@ type Operator interface {
 	// Apply downloads, verifies, and swaps in the target release, then schedules
 	// the detached restart. It returns before the restart fires.
 	Apply(context.Context, Change) (Result, error)
+	// Rollback reinstalls the binary preserved by the previous swap and schedules
+	// the detached restart. It errors when no previous binary is available.
+	Rollback(context.Context) (Result, error)
 }
 
 // ReleaseSource resolves releases from the trusted repository. It is an

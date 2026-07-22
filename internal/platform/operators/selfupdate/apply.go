@@ -94,11 +94,49 @@ func (o *HostOperator) applyLocalBinary(ctx context.Context, path string) (Resul
 	return o.finishSwap(ctx, reported)
 }
 
+// Rollback reinstalls the binary preserved by the previous swap. It validates
+// the preserved binary runs before the atomic replacement — which itself
+// re-preserves the now-current binary as the new .prev, so a rollback can be
+// undone — then arms the same detached restart as a normal apply. It errors when
+// no previous binary is available.
+func (o *HostOperator) Rollback(ctx context.Context) (Result, error) {
+	o.applyMu.Lock()
+	defer o.applyMu.Unlock()
+
+	previous := o.previousBinaryPath()
+	info, err := os.Stat(previous)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Result{}, errors.New("no previous binary is available to roll back to")
+		}
+		return Result{}, fmt.Errorf("the previous binary at %s could not be read: %w", previous, err)
+	}
+	if !info.Mode().IsRegular() {
+		return Result{}, fmt.Errorf("%s is not a regular file", previous)
+	}
+	binary, err := os.ReadFile(previous)
+	if err != nil {
+		return Result{}, fmt.Errorf("the previous binary at %s could not be read: %w", previous, err)
+	}
+	reported, err := o.installStagedBinary(ctx, binary, "")
+	if err != nil {
+		return Result{}, err
+	}
+	if reported == "" {
+		reported = "the previous binary"
+	}
+	return o.finishSwap(ctx, reported)
+}
+
 // finishSwap arms the restart and assembles the Result after a successful swap.
 // The swap has already happened, so a restart-scheduling failure is reported but
 // still returns Swapped: the operator can bounce the units by hand.
 func (o *HostOperator) finishSwap(ctx context.Context, targetVersion string) (Result, error) {
 	result := Result{PreviousVersion: o.installed, TargetVersion: targetVersion, Swapped: true}
+	// Surface whether a rollback target exists so callers can offer it.
+	if info, err := os.Stat(o.previousBinaryPath()); err == nil && info.Mode().IsRegular() {
+		result.PreviousBinaryPath = o.previousBinaryPath()
+	}
 	if err := o.scheduleRestart(ctx); err != nil {
 		return result, fmt.Errorf("binary was updated to %s but the automatic restart could not be scheduled: %w", targetVersion, err)
 	}
@@ -196,11 +234,64 @@ func (o *HostOperator) installStagedBinary(ctx context.Context, binary []byte, e
 		cleanup()
 		return "", fmt.Errorf("the binary reports an unexpected version")
 	}
+	// Preserve the binary being replaced before overwriting it, so a bad upgrade
+	// can be rolled back. A failure here aborts the swap: an un-rollbackable
+	// upgrade must never happen silently.
+	if err := o.preservePreviousBinary(); err != nil {
+		cleanup()
+		return "", err
+	}
 	if err := os.Rename(tempPath, o.binaryPath); err != nil {
 		cleanup()
 		return "", fmt.Errorf("install the new binary: %w", err)
 	}
 	return firstField(string(output)), nil
+}
+
+// previousBinaryPath is where the binary being replaced is preserved on each
+// swap, enabling `nexa self-update rollback`.
+func (o *HostOperator) previousBinaryPath() string {
+	return o.binaryPath + ".prev"
+}
+
+// preservePreviousBinary copies the binary currently at o.binaryPath aside to
+// o.previousBinaryPath() before it is overwritten, retaining a rollback target.
+// It is a no-op when no binary is installed yet (a first install). The copy is
+// staged and atomically renamed so a crash mid-copy never leaves a truncated
+// .prev in place.
+func (o *HostOperator) preservePreviousBinary() error {
+	current, err := os.ReadFile(o.binaryPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read the current binary to preserve it: %w", err)
+	}
+	directory := filepath.Dir(o.binaryPath)
+	temp, err := os.CreateTemp(directory, ".nexa-prev-*")
+	if err != nil {
+		return fmt.Errorf("stage the previous binary: %w", err)
+	}
+	tempPath := temp.Name()
+	cleanup := func() { _ = os.Remove(tempPath) }
+	if _, err := temp.Write(current); err != nil {
+		_ = temp.Close()
+		cleanup()
+		return fmt.Errorf("write the previous binary: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("flush the previous binary: %w", err)
+	}
+	if err := os.Chmod(tempPath, 0o755); err != nil {
+		cleanup()
+		return fmt.Errorf("make the previous binary executable: %w", err)
+	}
+	if err := os.Rename(tempPath, o.previousBinaryPath()); err != nil {
+		cleanup()
+		return fmt.Errorf("preserve the previous binary: %w", err)
+	}
+	return nil
 }
 
 // firstField returns the first whitespace-delimited token of s, which for the

@@ -42,3 +42,16 @@ func (s *Server) selfUpdateApplyHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, result)
 }
+
+// selfUpdateRollbackHTTP reinstalls the binary preserved by the previous swap
+// and schedules the detached restart, mirroring selfUpdateApplyHTTP's outcome
+// shape. A missing rollback target is reported as a 409 like any other apply
+// conflict.
+func (s *Server) selfUpdateRollbackHTTP(w http.ResponseWriter, r *http.Request) {
+	result, err := s.selfUpdate.Rollback(r.Context())
+	if err != nil {
+		writeError(w, http.StatusConflict, "self_update_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
