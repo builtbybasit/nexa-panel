@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
@@ -31,6 +32,13 @@ type Config struct {
 	PasswordThreads    uint8
 	AttemptLimit       int
 	AttemptWindow      time.Duration
+	// MFALockoutLimit and MFALockoutWindow guard the second-factor challenge
+	// against brute force. Once an identity fails the second factor this many
+	// times inside the window, further verification is locked for the remainder
+	// of the window. Because the bucket is keyed on the user identity (not the
+	// session), minting a fresh login session does not reset it.
+	MFALockoutLimit  int
+	MFALockoutWindow time.Duration
 }
 
 func DefaultConfig() Config {
@@ -41,6 +49,8 @@ func DefaultConfig() Config {
 		PasswordThreads:    defaultPasswordParameters.parallelism,
 		AttemptLimit:       5,
 		AttemptWindow:      5 * time.Minute,
+		MFALockoutLimit:    10,
+		MFALockoutWindow:   15 * time.Minute,
 	}
 }
 
@@ -130,7 +140,14 @@ type Module struct {
 	parameters    passwordParameters
 	secrets       secrets.Cipher
 	attempts      *attemptLimiter
+	lockouts      *attemptLimiter
 	siteDirectory SiteDirectory
+
+	// bootstrapMu guards the first-run bootstrap secret against concurrent
+	// bootstrap requests racing the account creation that closes the window.
+	bootstrapMu        sync.Mutex
+	bootstrapTokenPath string
+	bootstrapToken     string
 }
 
 func New(ctx context.Context, database *bun.DB, recorder audit.Recorder, cryptography secrets.Cipher, logger *slog.Logger) (*Module, error) {
@@ -150,7 +167,13 @@ func NewWithConfig(_ context.Context, database *bun.DB, recorder audit.Recorder,
 	if config.AttemptWindow == 0 {
 		config.AttemptWindow = DefaultConfig().AttemptWindow
 	}
-	if config.SessionTTL <= 0 || config.PasswordMemoryKiB == 0 || config.PasswordIterations == 0 || config.PasswordThreads == 0 || config.AttemptLimit <= 0 || config.AttemptWindow <= 0 {
+	if config.MFALockoutLimit == 0 {
+		config.MFALockoutLimit = DefaultConfig().MFALockoutLimit
+	}
+	if config.MFALockoutWindow == 0 {
+		config.MFALockoutWindow = DefaultConfig().MFALockoutWindow
+	}
+	if config.SessionTTL <= 0 || config.PasswordMemoryKiB == 0 || config.PasswordIterations == 0 || config.PasswordThreads == 0 || config.AttemptLimit <= 0 || config.AttemptWindow <= 0 || config.MFALockoutLimit <= 0 || config.MFALockoutWindow <= 0 {
 		return nil, errors.New("identity configuration values must be positive")
 	}
 	return &Module{
@@ -161,6 +184,7 @@ func NewWithConfig(_ context.Context, database *bun.DB, recorder audit.Recorder,
 		config:   config,
 		secrets:  cryptography,
 		attempts: newAttemptLimiter(config.AttemptLimit, config.AttemptWindow),
+		lockouts: newAttemptLimiter(config.MFALockoutLimit, config.MFALockoutWindow),
 		parameters: passwordParameters{
 			memory: config.PasswordMemoryKiB, iterations: config.PasswordIterations,
 			parallelism: config.PasswordThreads, saltLength: 16, keyLength: 32,

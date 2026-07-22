@@ -23,6 +23,12 @@ func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 		"bootstrapRequired": bootstrapRequired, "authenticated": false,
 		"mfaEnabled": false, "mfaChallengeRequired": false, "mfaEnrollmentRequired": false,
 	}
+	// Tell the setup UI whether this caller must present the out-of-band bootstrap
+	// token: a loopback operator may bootstrap directly, a remote one must supply
+	// the token the server printed to its owner-only file.
+	if bootstrapRequired {
+		response["bootstrapTokenRequired"] = !m.bootstrapRequestAllowed(r, "")
+	}
 	if person, err := m.authenticate(r.Context(), r); err == nil {
 		response["user"] = person.User
 		enrolled := person.TOTPConfirmedAt != nil
@@ -39,24 +45,40 @@ func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+type bootstrapRequest struct {
+	credentials
+	// BootstrapToken is the body-field alternative to the X-Nexa-Bootstrap-Token
+	// header for callers that cannot set custom headers.
+	BootstrapToken string `json:"bootstrapToken,omitempty"`
+}
+
 func (m *Module) bootstrapHTTP(w http.ResponseWriter, r *http.Request) {
-	var input credentials
+	var input bootstrapRequest
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	input.Username = strings.TrimSpace(input.Username)
-	if err := validateCredentials(input); err != nil {
+	// An unauthenticated REMOTE client must never be able to claim the admin
+	// account on a public bind: require either loopback access or the bootstrap
+	// token before any account is created.
+	if !m.bootstrapRequestAllowed(r, input.BootstrapToken) {
+		m.recordAudit(r.Context(), audit.Entry{Action: "identity.bootstrap", Subject: "user:pending", RemoteAddress: remoteAddress(r), Metadata: map[string]any{"result": "forbidden"}})
+		writeError(w, http.StatusForbidden, "bootstrap_forbidden", "First-run setup must be proven from the server: supply the bootstrap token or connect from the local host.")
+		return
+	}
+	creds := input.credentials
+	creds.Username = strings.TrimSpace(creds.Username)
+	if err := validateCredentials(creds); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_credentials", err.Error())
 		return
 	}
-	passwordHash, err := hashPassword(input.Password, m.parameters)
+	passwordHash, err := hashPassword(creds.Password, m.parameters)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "identity_unavailable", "Administrator could not be created.")
 		return
 	}
 
-	user := User{ID: randomID(16), Username: input.Username, Role: "admin"}
+	user := User{ID: randomID(16), Username: creds.Username, Role: "admin"}
 	now := m.now().UTC()
 	err = m.database.RunInTx(r.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
 		exists, err := tx.NewSelect().Model((*userModel)(nil)).Exists(ctx)
@@ -82,6 +104,9 @@ func (m *Module) bootstrapHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "session_unavailable", "Administrator was created, but a session could not be started.")
 		return
 	}
+	// The administrator now exists: permanently close the bootstrap window and
+	// remove the on-disk token so it can never be replayed.
+	m.clearBootstrapToken()
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &user.ID, Action: "identity.bootstrap", Subject: "user:" + user.ID, RemoteAddress: remoteAddress(r)})
 	// MFA is optional, so a freshly bootstrapped administrator is signed straight
 	// in. They can enable a second factor later from account security.

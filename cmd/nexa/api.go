@@ -70,6 +70,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 	masterKey := flags.String("master-key", envOrDefault("NEXA_MASTER_KEY", "/tmp/nexa-panel/master.key"), "AES master key path")
 	agentSocket := flags.String("agent-socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
 	agentToken := flags.String("agent-token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
+	bootstrapToken := flags.String("bootstrap-token", envOrDefault("NEXA_BOOTSTRAP_TOKEN", "/tmp/nexa-panel/bootstrap.token"), "first-run bootstrap token path (owner-only; gates admin creation on a public bind)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -106,6 +107,13 @@ func runAPI(args []string, logger *slog.Logger) error {
 	identityModule, err := identity.New(setupCtx, database, auditModule, secretBox, logger)
 	if err != nil {
 		return fmt.Errorf("initialize identity module: %w", err)
+	}
+	// Provision the first-run bootstrap gate: while no administrator exists the
+	// module writes an owner-only token file that a remote operator must present
+	// to claim admin, closing the public-bind land-grab window.
+	identityModule.SetBootstrapTokenPath(*bootstrapToken)
+	if err := identityModule.EnsureBootstrapToken(setupCtx); err != nil {
+		return fmt.Errorf("provision bootstrap token: %w", err)
 	}
 	jobsModule, err := jobs.New(setupCtx, database, auditModule, logger)
 	if err != nil {

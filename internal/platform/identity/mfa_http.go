@@ -13,6 +13,50 @@ import (
 
 const totpSecretLabelPrefix = "identity.totp."
 
+// mfaAttemptKey and mfaLockoutKey key the second-factor rate limiters on the
+// USER identity rather than the session. Every password login mints a fresh
+// session, so keying on the session let an attacker who already had the password
+// reset the counter at will and grind the six-digit code; keying on the user
+// makes the limit survive re-authentication.
+func mfaAttemptKey(userID string) string { return "mfa:" + userID }
+func mfaLockoutKey(userID string) string { return "mfa-lockout:" + userID }
+
+// allowMFAAttempt consumes one second-factor verification attempt against both
+// the short-term burst limiter and the longer lockout window. It returns ok
+// false when either bucket is exhausted; locked reports that the hard lockout
+// (not merely the burst limit) tripped, so the caller can explain the longer
+// cooldown. Both buckets are keyed on the user identity, so a new session does
+// not reset them.
+func (m *Module) allowMFAAttempt(userID string) (ok bool, locked bool) {
+	now := m.now()
+	// Consume the lockout token first so a burst-limited request still counts
+	// toward the hard lockout for the user.
+	lockOK := m.lockouts.Allow(mfaLockoutKey(userID), now)
+	burstOK := m.attempts.Allow(mfaAttemptKey(userID), now)
+	if !lockOK {
+		return false, true
+	}
+	if !burstOK {
+		return false, false
+	}
+	return true, false
+}
+
+// resetMFAAttempts clears both second-factor limiters after a successful
+// verification, so a legitimate user is never penalised for earlier fumbles.
+func (m *Module) resetMFAAttempts(userID string) {
+	m.attempts.Reset(mfaAttemptKey(userID))
+	m.lockouts.Reset(mfaLockoutKey(userID))
+}
+
+func writeMFARateLimited(w http.ResponseWriter, locked bool) {
+	if locked {
+		writeError(w, http.StatusTooManyRequests, "account_locked", "Too many failed verification attempts. This account is temporarily locked. Try again later.")
+		return
+	}
+	writeError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many verification attempts. Try again later.")
+}
+
 type mfaCodeRequest struct {
 	Code         string `json:"code,omitempty"`
 	RecoveryCode string `json:"recoveryCode,omitempty"`
@@ -77,9 +121,8 @@ func (m *Module) mfaConfirmHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "A six-digit authenticator code is required.")
 		return
 	}
-	attemptKey := "mfa:" + person.SessionID
-	if !m.attempts.Allow(attemptKey, m.now()) {
-		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many verification attempts. Try again later.")
+	if ok, locked := m.allowMFAAttempt(person.ID); !ok {
+		writeMFARateLimited(w, locked)
 		return
 	}
 	model, secret, err := m.loadMFAUser(r.Context(), person.ID)
@@ -123,7 +166,7 @@ func (m *Module) mfaConfirmHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be confirmed.")
 		return
 	}
-	m.attempts.Reset(attemptKey)
+	m.resetMFAAttempts(person.ID)
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_enrolled", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r)})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{"user": person.User, "recoveryCodes": codes})
@@ -199,9 +242,8 @@ func (m *Module) mfaVerifyHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Provide either an authenticator code or one recovery code.")
 		return
 	}
-	attemptKey := "mfa:" + person.SessionID
-	if !m.attempts.Allow(attemptKey, m.now()) {
-		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many verification attempts. Try again later.")
+	if ok, locked := m.allowMFAAttempt(person.ID); !ok {
+		writeMFARateLimited(w, locked)
 		return
 	}
 
@@ -218,7 +260,7 @@ func (m *Module) mfaVerifyHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_mfa_code", "The authentication or recovery code is invalid.")
 		return
 	}
-	m.attempts.Reset(attemptKey)
+	m.resetMFAAttempts(person.ID)
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.login", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r), Metadata: map[string]any{"method": method}})
 	writeJSON(w, http.StatusOK, map[string]any{"user": person.User})
 }

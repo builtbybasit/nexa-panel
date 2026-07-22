@@ -299,3 +299,64 @@ func TestRequireSecureTransportBlocksPublicCleartext(t *testing.T) {
 		})
 	}
 }
+
+// authRequest builds a POST to an auth path that clears the secure-transport
+// guard as a trusted-proxy request forwarding an https client, so it reaches the
+// throttle keyed on the forwarded client IP.
+func authRequest(method, path, clientIP string) *http.Request {
+	request := httptest.NewRequest(method, path, nil)
+	request.RemoteAddr = "127.0.0.1:5000"
+	request.Header.Set("X-Forwarded-For", clientIP)
+	request.Header.Set("X-Forwarded-Proto", "https")
+	return request.WithContext(httpapi.WithTrustedProxy(request.Context()))
+}
+
+func TestAuthThrottleRejectsCredentialSprayPerClientIP(t *testing.T) {
+	server, err := New("test", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The credential-submitting budget lets an operator retype and retry, then
+	// sheds the surplus with 429 once a single client exceeds it.
+	throttled := false
+	for i := 0; i < authThrottleLimit+1; i++ {
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, authRequest(http.MethodPost, "/api/v1/auth/login", "198.51.100.8"))
+		if response.Code == http.StatusTooManyRequests {
+			throttled = true
+			if !strings.Contains(response.Body.String(), "rate_limited") {
+				t.Fatalf("throttled body = %q", response.Body.String())
+			}
+			if got := response.Header().Get("Retry-After"); got == "" {
+				t.Fatal("throttled response omitted Retry-After")
+			}
+		}
+	}
+	if !throttled {
+		t.Fatalf("no request past the %d auth budget was throttled", authThrottleLimit)
+	}
+
+	// A different source address keeps its own budget: spraying from one host
+	// must not lock out a legitimate operator elsewhere.
+	other := httptest.NewRecorder()
+	server.Handler().ServeHTTP(other, authRequest(http.MethodPost, "/api/v1/auth/login", "203.0.113.9"))
+	if other.Code == http.StatusTooManyRequests {
+		t.Fatal("a distinct client IP was throttled by another client's spray")
+	}
+}
+
+func TestAuthThrottleSkipsReadOnlyGets(t *testing.T) {
+	server, err := New("test", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The SPA polls status/session; GETs must never exhaust the strict budget.
+	for i := 0; i < authThrottleLimit*3; i++ {
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, authRequest(http.MethodGet, "/api/v1/auth/status", "198.51.100.8"))
+		if response.Code == http.StatusTooManyRequests {
+			t.Fatalf("read-only auth GET %d was throttled by the credential budget", i)
+		}
+	}
+}

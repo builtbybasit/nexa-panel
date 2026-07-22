@@ -40,8 +40,26 @@ type Server struct {
 	started        bool
 	closed         bool
 
+	authThrottle   *httpapi.IPThrottle
+	globalThrottle *httpapi.IPThrottle
+
 	allowInsecureHTTP bool
 }
+
+// Per-client-IP transport throttle thresholds. These are a defense-in-depth
+// backstop behind the nginx limit_req zone and the per-account login limiter:
+// they cap raw requests per source address so one host cannot password-spray
+// across unlimited usernames even if the reverse proxy is bypassed or absent.
+// Rates are deliberately generous so a legitimate operator is never locked out —
+// the auth budget comfortably covers a human retyping a password and a TOTP
+// code, while the general budget only trips on automated flooding.
+const (
+	authThrottleLimit    = 20
+	authThrottleWindow   = time.Minute
+	globalThrottleLimit  = 600
+	globalThrottleWindow = time.Minute
+	authThrottlePrefix   = "/api/v1/auth/"
+)
 
 type Authentication interface {
 	Middleware(next http.Handler) http.Handler
@@ -101,6 +119,8 @@ func New(version string, modules []module.Module, logger *slog.Logger, options .
 		patterns:       make(map[string]struct{}),
 		readiness:      func(context.Context) error { return nil },
 		startedAt:      time.Now().UTC(),
+		authThrottle:   httpapi.NewIPThrottle(authThrottleLimit, authThrottleWindow),
+		globalThrottle: httpapi.NewIPThrottle(globalThrottleLimit, globalThrottleWindow),
 	}
 	for _, option := range options {
 		option(server)
@@ -157,7 +177,41 @@ func (s *Server) Close() {
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.requestMetrics(s.requestLog(s.recoverPanic(s.requestID(s.securityHeaders(s.requireSecureTransport(s.mux))))))
+	return s.requestMetrics(s.requestLog(s.recoverPanic(s.requestID(s.securityHeaders(s.requireSecureTransport(s.throttleByClientIP(s.mux)))))))
+}
+
+// throttleByClientIP sheds abusive request floods before they reach routing or
+// authentication. It keys on the trusted client IP (RemoteAddress, which honors
+// the forwarded address only for the trusted proxy) and applies a strict budget
+// to credential-submitting auth requests — login, bootstrap, and MFA POSTs — so
+// a single host cannot password-spray across unlimited usernames, plus a much
+// looser ceiling to the whole API as a general flood backstop. The strict budget
+// deliberately skips read-only auth GETs (status, session) that the SPA polls,
+// so a legitimate operator is never throttled by ordinary use. Both limiters are
+// in-memory and reset on restart; the nginx limit_req zone is the durable
+// front-line control. A rejected request gets 429 and never touches the mux.
+func (s *Server) throttleByClientIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		client := httpapi.RemoteAddress(r)
+		now := time.Now()
+		if !s.globalThrottle.Allow(client, now) {
+			s.writeThrottled(w)
+			return
+		}
+		if r.Method != http.MethodGet && strings.HasPrefix(r.URL.Path, authThrottlePrefix) && !s.authThrottle.Allow(client, now) {
+			s.writeThrottled(w)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) writeThrottled(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "60")
+	writeJSON(w, http.StatusTooManyRequests, map[string]string{
+		"code":    "rate_limited",
+		"message": "Too many requests. Please slow down and try again shortly.",
+	})
 }
 
 // requireSecureTransport refuses to serve any request whose transport would
