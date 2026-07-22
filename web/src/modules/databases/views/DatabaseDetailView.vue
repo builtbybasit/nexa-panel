@@ -13,6 +13,7 @@ import {
   AppCard,
   AppConfirmDialog,
   AppDialog,
+  ConnectionDetails,
   CredentialReveal,
   EmptyState,
   FactList,
@@ -105,6 +106,11 @@ const accessRows = computed(() => {
   }
   return rows
 })
+
+/** Roles a desktop client could sign in as: the owner first, then the grantees. */
+const connectionUsers = computed(() =>
+  accessRows.value.map((row) => ({ value: row.role.name, label: row.role.name })),
+)
 
 const grantRunner = useJobRunner()
 const rotateRunner = useJobRunner()
@@ -436,6 +442,16 @@ const revealFacts = computed<Fact[]>(() => {
         <FactList :facts="overviewFacts" />
         <AppAlert v-if="database.failure" tone="danger" class="mt-4">{{ database.failure }}</AppAlert>
       </AppCard>
+
+      <ConnectionDetails
+        v-if="instance && connectionUsers.length"
+        engine="postgres"
+        :engine-label="`PostgreSQL ${instance.version} · ${instance.cluster}`"
+        :port="instance.port"
+        :database="database.name"
+        :users="connectionUsers"
+        :socket-path="instance.socketPath"
+      />
 
       <!-- Access: the owner plus every granted role, which is what FastPanel
            calls the database's users. -->

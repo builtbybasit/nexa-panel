@@ -13,6 +13,7 @@ import {
   AppCard,
   AppConfirmDialog,
   AppDialog,
+  ConnectionDetails,
   CredentialReveal,
   EmptyState,
   FactList,
@@ -109,6 +110,15 @@ const accessRows = computed(() => {
   }
   return rows
 })
+
+/**
+ * Accounts a desktop client could sign in as. Only the account name goes into a
+ * connection string — the `@host` half is the server's rule about where the
+ * account may connect from, and an SSH tunnel arrives as `localhost`.
+ */
+const connectionUsers = computed(() =>
+  accessRows.value.map((row) => ({ value: row.account.name, label: `${row.account.name}@${row.account.host}` })),
+)
 
 const grantRunner = useJobRunner()
 const rotateRunner = useJobRunner()
@@ -491,6 +501,16 @@ const revealFacts = computed<Fact[]>(() => {
         <FactList :facts="overviewFacts" />
         <AppAlert v-if="database.failure" tone="danger" class="mt-4">{{ database.failure }}</AppAlert>
       </AppCard>
+
+      <ConnectionDetails
+        v-if="engine && connectionUsers.length"
+        :engine="engine.kind"
+        :engine-label="`${ENGINE_NAMES[engine.kind]} ${engine.versionText}`"
+        :port="engine.port"
+        :database="database.name"
+        :users="connectionUsers"
+        :socket-path="engine.socketPath"
+      />
 
       <!-- Access: the owner plus every granted account, which is what FastPanel
            calls the database's users. -->
