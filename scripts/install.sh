@@ -672,6 +672,12 @@ validate_or_plan_ownership() {
     actual_marker="$(cat "$OWNERSHIP_MARKER")"
     [[ "$actual_marker" == "$expected_marker" ]] || die "the Nexa ownership marker is invalid or from an unsupported layout"
     validate_service_identity || die "the existing nexa service account/group does not match the recorded ownership contract"
+    # A validated marker means this run upgrades an install this script already
+    # owns, so the preflight's "Nexa Panel is already running here" blocker is
+    # the expected state rather than a conflict. Without this, every re-run on a
+    # live node fails preflight unless the operator remembers --allow-existing,
+    # which is the opposite of the idempotent re-run the installer promises.
+    ALLOW_EXISTING=1
   elif [[ "$existing" -eq 1 ]]; then
     [[ "$ADOPT_EXISTING" -eq 1 ]] ||
       die "pre-existing nexa identity or managed roots have no ownership marker; move them aside, or inspect the node and re-run once with --adopt-existing for a genuine pre-v1 Nexa install"
@@ -930,6 +936,11 @@ fi
 
 WORK_DIR="$(mktemp -d)"
 trap on_failure EXIT
+# Bash does not run an EXIT trap when an untrapped SIGTERM/SIGINT/SIGHUP kills
+# the shell, so without these an interrupted install skipped the rollback
+# entirely and left a running but unseeded panel nobody could sign in to.
+# Exiting from the handler is what hands control to on_failure above.
+trap 'warn "interrupted; rolling back this run"; exit 130' INT TERM HUP
 journal_start
 
 # --- release credential -----------------------------------------------------
