@@ -93,8 +93,26 @@ func IsHTTPS(r *http.Request) bool {
 // judged by the forwarded client address nginx supplies. A non-loopback or
 // unparseable address is never treated as loopback.
 func IsLoopback(r *http.Request) bool {
+	if IsLocalSocketCaller(r) {
+		return true
+	}
 	ip := net.ParseIP(RemoteAddress(r))
 	return ip != nil && ip.IsLoopback()
+}
+
+// IsLocalSocketCaller reports whether the request came from a process on this
+// host that opened the API socket itself, rather than from a client nginx
+// forwarded. A Unix socket has no network peer, so RemoteAddr is "@" and parses
+// as no IP at all — which used to make the seed helper's readiness probe fail
+// the TLS gate with 426 on every published install, rolling back a healthy
+// panel. The packaged proxy always sets X-Forwarded-For and X-Forwarded-Proto
+// (packaging/nginx/nexa-panel-proxy.conf.template), so their total absence is
+// what separates a local caller from a forwarded one; a remote client can never
+// clear headers nginx adds after it.
+func IsLocalSocketCaller(r *http.Request) bool {
+	return IsTrustedProxy(r.Context()) &&
+		r.Header.Get("X-Forwarded-For") == "" &&
+		r.Header.Get("X-Forwarded-Proto") == ""
 }
 
 func firstForwardedAddress(value string) string {

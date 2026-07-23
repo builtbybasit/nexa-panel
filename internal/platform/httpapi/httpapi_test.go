@@ -103,3 +103,42 @@ func TestIsLoopback(t *testing.T) {
 		t.Fatal("trusted forwarded public client was treated as loopback")
 	}
 }
+
+// A process on this host that opens the API socket itself has no network peer,
+// so it must be judged local. The seed helper's readiness probe takes exactly
+// this path, and treating it as a public cleartext client made every published
+// install roll back a healthy panel.
+func TestLocalSocketCallerIsLoopbackButForwardedClientsAreNot(t *testing.T) {
+	local := httptest.NewRequest(http.MethodGet, "/api/v1/health/ready", nil)
+	local.RemoteAddr = "@"
+	local = local.WithContext(WithTrustedProxy(local.Context()))
+	if !IsLocalSocketCaller(local) || !IsLoopback(local) {
+		t.Fatal("a direct Unix-socket caller with no forwarded headers must be local")
+	}
+
+	// nginx always adds X-Forwarded-For, so a forwarded remote client must never
+	// inherit the local caller's exemption from the TLS gate.
+	forwarded := httptest.NewRequest(http.MethodGet, "/api/v1/health/ready", nil)
+	forwarded.RemoteAddr = "@"
+	forwarded.Header.Set("X-Forwarded-For", "203.0.113.7")
+	forwarded = forwarded.WithContext(WithTrustedProxy(forwarded.Context()))
+	if IsLocalSocketCaller(forwarded) || IsLoopback(forwarded) {
+		t.Fatal("a forwarded public client must not be treated as local")
+	}
+
+	// A proxied client that only announces its scheme is still not local.
+	scheme := httptest.NewRequest(http.MethodGet, "/api/v1/health/ready", nil)
+	scheme.RemoteAddr = "@"
+	scheme.Header.Set("X-Forwarded-Proto", "http")
+	scheme = scheme.WithContext(WithTrustedProxy(scheme.Context()))
+	if IsLocalSocketCaller(scheme) {
+		t.Fatal("a request carrying proxy headers must not be treated as local")
+	}
+
+	// Without the trusted-proxy marker a direct TCP client cannot claim locality.
+	untrusted := httptest.NewRequest(http.MethodGet, "/api/v1/health/ready", nil)
+	untrusted.RemoteAddr = "203.0.113.9:44321"
+	if IsLocalSocketCaller(untrusted) || IsLoopback(untrusted) {
+		t.Fatal("an untrusted TCP client must never be local")
+	}
+}
