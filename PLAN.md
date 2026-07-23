@@ -570,6 +570,7 @@ prior install, a real reboot, or a real bad artifact.
 | 5 | `nexa-agent` listed `/run/containers` in `ReadWritePaths`, which Podman creates lazily, so the first boot died with `226/NAMESPACE`. The agent recovered on its own restart, but `nexa-api` used `Requires=`, and systemd never retries a job cancelled by a failed `Requires=` dependency. | **The panel was dead after every reboot** — with zero failed units, so nothing looked wrong — until an operator logged in and started it by hand. | Fixed — `-` prefix on lazily-created `/run` trees; `Wants=` with `After=`. |
 | 6 | `validateBinary` accepted any candidate whose `version` exited zero, and the activation helper *is* the newly installed binary, so a candidate that runs without being nexa never advances the journal; `waitForActivation` then expired and returned, leaving the bad binary live. | **Bricked the node.** A 22-byte shell script was installed as `/usr/bin/nexa`; the panel survived only because the running processes held the deleted inode. | Fixed — version-shape validation, and a stalled activation now restores itself. |
 | 7 | Uninstall removes the panel vhost, which is the only source of publishing truth. A reinstall over retained state therefore cannot recover the publishing mode. | **Reinstall silently downgraded a public HTTPS node to loopback-only `127.0.0.1:8888`.** The certificate was retained but unused; the panel became unreachable from the internet with no error. | Fixed — the installer writes and reads `/etc/nexa-panel/publishing.json`; see 10.3. |
+| 8 | `nexa-agent.service` named `User=root` alongside `NoNewPrivileges=true`. Naming the user explicitly makes systemd withhold `CAP_SETUID`, and `NoNewPrivileges` makes it unregainable; apt's http/https methods `seteuid` to `_apt` (uid 42) before fetching. | **No application, PHP extension or database engine could ever be installed from the panel**, on any node. Every apt download died with `E: seteuid 42 failed`. Hidden because `install.sh` does its own apt work as a plain root script, never under the unit, and catalog enumeration uses `apt-cache`, which needs no privilege drop — so the UI listed versions correctly right up to the moment of install. | Fixed — the redundant `User=root` is gone; see 10.5. |
 
 ### 10.2 Proven working on real hardware
 
@@ -643,8 +644,8 @@ listener and the cleartext decision both came back; two container tests in
 `scripts/lifecycle_contract_test.go` covering the recorded-HTTPS reinstall and
 the refusal when the certificate is gone; and `test-vm-lifecycle.sh reinstall`,
 which is the live-hardware half — uninstall, flagless reinstall, then a public
-`curl` with no `-k` on the original hostname. That last one has **not** run yet;
-it needs the fresh box.
+`curl` with no `-k` on the original hostname. That last one **passed on real
+hardware** on 2026-07-23; see 10.5.
 
 ### 10.4 What this says about the acceptance strategy
 
@@ -657,3 +658,46 @@ defect is found by users.
 Re-run the full sequence on a clean box now that all seven fixes have landed. The
 procedure is `docs/live-test-plan.md`; the session handoff is
 `docs/live-test-handoff.md`.
+
+### 10.5 Second live-node qualification, 2026-07-23
+
+A second Linode Ubuntu 24.04.4 AMD64 box (2 GiB / 1 vCPU), hostname
+`panel.panjnadvetclinic.com`, with all seven fixes already in the bundle.
+
+**The whole matrix passed**, `test-vm-lifecycle.sh all` at commit `2c701b4`:
+
+| # | Scenario | Result |
+| --- | --- | --- |
+| 1 | fresh TLS install | pass — real certificate, `doctor` reports 0 blockers |
+| 2 | uninstall then flagless reinstall | pass — defect 7 proven on hardware |
+| 3 | N-1 -> N update | pass — 0.3.0 -> 0.4.0 |
+| 4 | offline rollback, services stopped | pass — after a harness fix, below |
+| 5 | injected update failure | pass — node stayed on 0.3.0 |
+| 6 | reboot | pass — 0 failed units, public HTTPS immediately |
+
+This is the first install to go start to finish on unmodified code: the previous
+session landed six fixes mid-run and a seventh after it.
+
+Scenario 2 is the one that mattered. The retain-data uninstall kept
+`/etc/nexa-panel/publishing.json`, the flagless reinstall republished from it and
+re-deployed the retained certificate without issuing anything, and an ordinary
+public `curl` returned 200. `nexa publishing show` reports `Source: install`.
+
+Two defects found, neither by the matrix itself:
+
+- **Defect 8** (10.1) — found by driving the panel UI, not the scenarios. No
+  lifecycle scenario installs an application, which is why six scenarios could
+  pass on a node where the Applications page could not install anything at all.
+  The gap is worth closing: a scenario that installs one catalog application
+  would have caught it.
+- **A harness defect**, not a product one: `scenario_offline_rollback` compared
+  the transaction journal's bare `previousVersion` ("0.3.0") against
+  `nexa version`'s stamped line ("0.3.0 (commit …, built …)"). That can never
+  hold, so the scenario failed on a node that had rolled back perfectly, and
+  aborted before the assertions that mattered ever ran. Guarded now by
+  `TestVersionAssertionsCompareLikeWithLike`.
+
+Also worth fixing: `docs/live-test-plan.md` tells the operator to run
+`test-vm-lifecycle.sh` from an unpacked release tree at `/opt/nexa-src`, but
+`build-linux-release.sh` does not ship the harness in the bundle — it stages only
+the files `install.sh` reads. The harness has to be copied to the box separately.

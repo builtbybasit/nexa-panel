@@ -55,9 +55,10 @@ from …`. If you see the latter on a node, its record has not been written yet 
 one installer run, or `sudo nexa publishing migrate`, fixes it.
 
 Proven in the container (`scripts/test-node-lifecycle.sh` scenario 4 now
-reinstalls with **no publishing flags** and asserts the listener came back).
-**Not yet proven on hardware**: `test-vm-lifecycle.sh reinstall` is the live
-half, and it needs the fresh box.
+reinstalls with **no publishing flags** and asserts the listener came back), and
+**proven on hardware** on 2026-07-23: `test-vm-lifecycle.sh reinstall` passed on
+`panel.panjnadvetclinic.com`, along with the whole six-scenario matrix. See
+`PLAN.md` section 10.5.
 
 ---
 
@@ -144,11 +145,14 @@ yet gone start to finish on unmodified code.
 
 ## 5. What to test next, in order
 
-1. **Uninstall → reinstall over HTTPS** — `sudo bash scripts/test-vm-lifecycle.sh
-   reinstall` after `fresh-tls`, which asserts the panel comes back on the
-   original hostname over public HTTPS with no publishing flags given. This is
-   defect 7's fix; it has only been proven in a container so far.
-2. **Clean end-to-end install** on the fresh box with no intervening fixes.
+1. ~~**Uninstall → reinstall over HTTPS**~~ — **done** 2026-07-23, passed on
+   hardware. `PLAN.md` 10.5.
+2. ~~**Clean end-to-end install**~~ — **done** 2026-07-23; the whole six-scenario
+   matrix passed on unmodified code.
+2a. **Install one application from the panel** in any future matrix run. Defect 8
+   made every apt install on every node impossible, and all six scenarios passed
+   on a box where the Applications page could not install a thing. No scenario
+   covers this yet.
 3. **Injected update failure mid-activation** — kill the activation helper, pull
    power (hard reset via the provider console), and confirm the node returns to
    the old healthy version. Only the *validation* failure path was proven; the
