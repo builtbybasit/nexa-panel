@@ -52,8 +52,10 @@ func newGuardedModule(t *testing.T, window time.Duration, rules ...firewallopera
 	return module, guard, auditLog
 }
 
-var sshRule = firewalloperator.Rule{Port: "22", Protocol: "tcp", Action: "allow"}
-var httpsRule = firewalloperator.Rule{Port: "443", Protocol: "tcp", Action: "allow"}
+var (
+	sshRule   = firewalloperator.Rule{Port: "22", Protocol: "tcp", Action: "allow"}
+	httpsRule = firewalloperator.Rule{Port: "443", Protocol: "tcp", Action: "allow"}
+)
 
 // Deleting the last rule admitting SSH must not be possible on the strength of a
 // typed browser confirmation alone: the server refuses it outright.
