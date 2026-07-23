@@ -7,6 +7,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 )
 
 func newSPAHandler(assets fs.FS) http.Handler {
@@ -20,6 +22,14 @@ func newSPAHandler(assets fs.FS) http.Handler {
 		requested := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 		if requested == "." || requested == "" {
 			requested = "index.html"
+		}
+
+		// An unrouted API path must never fall through to the SPA. Serving
+		// index.html with 200 makes a typo, a removed endpoint, and a version
+		// mismatch all indistinguishable from success to anything parsing JSON.
+		if requested == "api" || strings.HasPrefix(requested, "api/") {
+			httpapi.WriteError(w, http.StatusNotFound, "not_found", "No such API endpoint.")
+			return
 		}
 
 		content, err := fs.ReadFile(assets, requested)
