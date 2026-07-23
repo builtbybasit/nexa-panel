@@ -1,8 +1,13 @@
 module github.com/nexa-panel/nexa-panel
 
-go 1.25.0
-
-toolchain go1.25.12
+// Names a patched release, not the .0: CI and the release workflow resolve the
+// toolchain from this line (go-version-file: go.mod) and run GOTOOLCHAIN=local,
+// which forbids the upgrade a separate toolchain directive would have asked for.
+// Left at 1.25.0 they built against a standard library carrying 30 known
+// vulnerabilities, which govulncheck failed the build over. This line is now the
+// single place the toolchain is chosen, so `go mod tidy` drops the redundant
+// toolchain directive that used to sit below it.
+go 1.25.12
 
 require (
 	github.com/uptrace/bun v1.2.18
