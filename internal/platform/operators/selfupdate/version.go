@@ -33,3 +33,12 @@ func isNewer(candidate, baseline string) bool {
 	baseline = normalizeVersion(baseline)
 	return candidate != "" && baseline != "" && semver.Compare("v"+candidate, "v"+baseline) > 0
 }
+
+// isPlausibleVersion reports whether a candidate binary's `version` output looks
+// like a version this project produces. It is the guard that stops any
+// exit-zero executable from being installed as /usr/bin/nexa: the activation
+// helper is the newly installed binary, so a candidate that runs without being
+// nexa can neither activate nor roll itself back.
+func isPlausibleVersion(reported string) bool {
+	return normalizeVersion(reported) != ""
+}

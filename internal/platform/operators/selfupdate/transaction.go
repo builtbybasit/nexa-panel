@@ -577,10 +577,44 @@ func (o *HostOperator) waitForActivation(ctx context.Context, statePath string) 
 		}
 		select {
 		case <-ctx.Done():
-			return Result{}, ctx.Err()
+			// The activation helper is the newly installed binary. A candidate
+			// that runs but is not really nexa never advances this journal, so
+			// waiting simply expires — and returning here used to leave the bad
+			// binary live with the preserved one untouched, which bricks the
+			// node at its next restart. Recovery must never depend on the
+			// artifact under test, so restore from the journal ourselves.
+			return Result{}, o.recoverStalledActivation(statePath, ctx.Err())
 		case <-ticker.C:
 		}
 	}
+}
+
+// recoverStalledActivation restores the preserved binary and managed files when
+// the activation helper never reported an outcome. It runs on a context that
+// outlives the cancelled one, because the usual cause is that deadline expiring.
+func (o *HostOperator) recoverStalledActivation(statePath string, cause error) error {
+	state, err := readTransaction(statePath)
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("read update journal for recovery: %w", err))
+	}
+	if state.Phase == phaseSucceeded || state.Phase == phaseFailed {
+		return cause
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), restoreTimeout)
+	defer cancel()
+	restoreErr := o.restoreTransaction(ctx, state)
+	state.Phase = phaseFailed
+	state.Failure = cause.Error()
+	state.FailureReported = true
+	state.Result.RolledBack = restoreErr == nil
+	if restoreErr != nil {
+		state.Failure += "; restore previous state: " + restoreErr.Error()
+	}
+	_ = writeTransaction(statePath, state)
+	if restoreErr != nil {
+		return errors.Join(cause, restoreErr)
+	}
+	return fmt.Errorf("%w; the previous version was restored", cause)
 }
 
 // ActivateTransaction is the root-only detached helper entrypoint. It applies

@@ -558,3 +558,34 @@ func TestApplyLocalBinarySaysPackagingWasNotTouched(t *testing.T) {
 		t.Fatalf("no installer should run for a local push, got %+v", sync)
 	}
 }
+
+// A shell script that exits zero is not a nexa binary. Installing one is fatal
+// in a way no other bad candidate is: the activation helper is the newly
+// installed binary, so it can neither activate nor roll itself back, and the
+// node is left with the preserved binary unused and no working panel.
+func TestLocalBinaryRefusesACandidateThatIsNotNexa(t *testing.T) {
+	// A shell script that exits zero is not a nexa binary. Installing one is
+	// fatal in a way no other bad candidate is: the activation helper is the
+	// newly installed binary, so it can neither activate nor roll itself back,
+	// and the node keeps a preserved binary it never uses.
+	runner := &fakeRunner{versionOutput: "broken"}
+	operator, binaryPath := newTestOperator(t, "0.1.0-dev", fakeSource{}, fakeDownloader{}, runner)
+	live, err := os.ReadFile(binaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	staged := filepath.Join(t.TempDir(), "not-nexa")
+	if err := os.WriteFile(staged, []byte("#!/bin/sh\necho broken\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := operator.ApplyLocalBinary(context.Background(), staged); err == nil {
+		t.Fatal("a candidate that is not a nexa binary must be refused")
+	} else if !strings.Contains(err.Error(), "not a nexa binary") {
+		t.Fatalf("error = %v, want it to name the cause", err)
+	}
+	if got, _ := os.ReadFile(binaryPath); string(got) != string(live) {
+		t.Fatalf("the live binary must be untouched, got %q", got)
+	}
+}

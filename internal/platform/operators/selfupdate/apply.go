@@ -569,7 +569,15 @@ func (o *HostOperator) validateBinary(ctx context.Context, binary []byte, expect
 	if expectVersion != "" && !strings.Contains(string(output), expectVersion) {
 		return "", errors.New("the binary reports an unexpected version")
 	}
-	return firstField(string(output)), nil
+	// Exiting zero is not proof this is nexa: any script does that, and one that
+	// does gets installed and then cannot activate or roll itself back, because
+	// the activation helper is this very binary. Require the version line to
+	// carry a version we recognise before it is allowed near /usr/bin/nexa.
+	reported := firstField(string(output))
+	if !isPlausibleVersion(reported) {
+		return "", fmt.Errorf("the binary is not a nexa binary: %q is not a version", strings.TrimSpace(firstLine(string(output))))
+	}
+	return reported, nil
 }
 
 // restorePreparedTransaction is used before activation starts. No service has
@@ -743,4 +751,11 @@ func firstField(s string) string {
 		return ""
 	}
 	return fields[0]
+}
+
+// firstLine returns the first line of command output, for error messages that
+// quote what a candidate binary actually printed.
+func firstLine(output string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
+	return line
 }
