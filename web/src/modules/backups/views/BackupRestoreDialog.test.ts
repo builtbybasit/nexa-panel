@@ -7,6 +7,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BackupCopy } from '../api'
 import BackupRestoreDialog from './BackupRestoreDialog.vue'
 
+// The dialog refuses a preview whose expiry has passed, so a hardcoded stamp
+// turns these tests into a time bomb: they passed until 2026-07-23T12:05:00Z and
+// failed on every run afterwards, for good. Always five minutes ahead of now.
+function unexpiredPreview(): string {
+  return new Date(Date.now() + 5 * 60 * 1000).toISOString()
+}
+
 afterEach(() => {
   document.body.innerHTML = ''
   vi.unstubAllGlobals()
@@ -73,7 +80,7 @@ describe('backup restore review', () => {
             impact: 'Backup files may overwrite existing files; unrelated destination files are retained.',
           }],
           previewToken: 'bound-preview-token',
-          expiresAt: '2026-07-23T12:05:00Z',
+          expiresAt: unexpiredPreview(),
         })
       }
       return Response.json({
@@ -148,7 +155,7 @@ describe('backup restore review', () => {
             kind: 'site', sourceEntry: 'site-blog.tar.gz', destinationRef: 'site-1', destinationLabel: 'blog',
             clear: false, impact: 'Backup files may overwrite existing files.',
           }],
-          previewToken: 'token', expiresAt: '2026-07-23T12:05:00Z',
+          previewToken: 'token', expiresAt: unexpiredPreview(),
         })
       }
       return Response.json({
