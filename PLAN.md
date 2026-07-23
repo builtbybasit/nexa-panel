@@ -573,6 +573,7 @@ prior install, a real reboot, or a real bad artifact.
 | 8 | `nexa-agent.service` named `User=root` alongside `NoNewPrivileges=true`. Naming the user explicitly makes systemd withhold `CAP_SETUID`, and `NoNewPrivileges` makes it unregainable; apt's http/https methods `seteuid` to `_apt` (uid 42) before fetching. | **No application, PHP extension or database engine could ever be installed from the panel**, on any node. Every apt download died with `E: seteuid 42 failed`. Hidden because `install.sh` does its own apt work as a plain root script, never under the unit, and catalog enumeration uses `apt-cache`, which needs no privilege drop — so the UI listed versions correctly right up to the moment of install. | Fixed — the redundant `User=root` is gone; see 10.5. |
 | 9 | Activation restarts `nexa-agent`, which severs the apply request the agent is still serving, so `nexa self-update` reported `Post "http://unix/v1/self-update/apply": EOF` — a failure — on an update that had already committed. The same restart also expired the agent's 5 s shutdown drain, so it exited 1 and systemd marked the unit failed on every successful update. | **Every successful update was reported as a failed one.** The two obvious operator reactions to that report, retrying and starting recovery, are both wrong on a node that updated correctly. | Fixed — the client resumes from the durable journal over a new `GET /v1/self-update/transaction` route; the agent exits 0 when its drain is outlived. See 10.6. |
 | 10 | The vendor-repository setup script runs `gpg`, and `nexa-agent.service` sets `ProtectHome=true`, so `$HOME/.gnupg` cannot be created. Every `gpg` call died with `Fatal: can't create directory '/root/.gnupg'` before reading anything, which emptied the fingerprint variable. | **No MySQL or MariaDB series from a vendor repository could be installed on any node**, and the error blamed the vendor: `signing key fingerprint mismatch: downloaded none, pinned 177F…`. The pin was fine; gpg had never run. | Fixed — the script exports a private `GNUPGHOME` inside its own work directory rather than widening the unit's sandbox. See 10.7. |
+| 11 | `add-apt-repository ppa:ondrej/php` resolves the PPA through launchpadlib, which caches into `$HOME/.launchpadlib`. With `ProtectHome=true` that is `/root`, read-only, so it aborted with `OSError: [Errno 30] Read-only file system` before it ever reached the network. | **No PHP version could be installed from the panel on any node.** Found within minutes of defect 10 being fixed, by installing PHP 8.5 — the exact follow-up 10.7 said was unproven. | Fixed — repository tooling is handed a writable `HOME` under `/var/lib/nexa-panel-apt`. See 10.8. |
 
 ### 10.2 Proven working on real hardware
 
@@ -793,3 +794,43 @@ to tools that use gpg. PostgreSQL 18 did install from the panel on the test box,
 so PGDG is fine in practice; `add-apt-repository` under the agent's sandbox has
 not been exercised since defect 8 was fixed and should be, by installing a PHP
 version the node does not already carry.
+
+*(That last paragraph was written at 16:20 and was obsolete by 16:45. Installing
+PHP 8.5 is exactly what found defect 11.)*
+
+### 10.8 Defect 11: PHP was uninstallable for the same reason MariaDB was
+
+Found minutes after defect 10 was verified fixed on hardware, by doing the one
+thing 10.7 named as unproven. Installing PHP 8.5 from the Applications page
+failed in nine seconds with a Python traceback ending:
+
+```
+File "/usr/lib/python3/dist-packages/launchpadlib/launchpad.py", line 789, in _get_paths
+    os.makedirs(launchpadlib_dir, 0o700)
+OSError: [Errno 30] Read-only file system: '/root/.launchpadlib'
+```
+
+`add-apt-repository ppa:ondrej/php` resolves the PPA through launchpadlib, which
+caches into `$HOME/.launchpadlib`. `ProtectHome=true` makes that `/root` and
+read-only, so it aborted before reaching the network. Same mechanism as defect
+10, different tool, and equally total: no PHP version could be installed from the
+panel on any node.
+
+Fix: repository tooling is handed a writable `HOME` at `/var/lib/nexa-panel-apt`
+— beside the self-update work root, root-owned, on a path already in the unit's
+`ReadWritePaths`, so the sandbox is not widened.
+
+The directory is created and then `chmod`ed explicitly rather than trusting
+`MkdirAll`'s mode. The agent runs with `UMask=0177`, which masks `MkdirAll(0700)`
+down to `0600` — a directory with no execute bit that nothing can enter.
+`TestToolHomeIsUsableUnderTheAgentUmask` sets that umask around the call and
+asserts the mode; removing the `chmod` fails it with `mode = -rw-------`.
+
+**The pattern is now three deep — defects 8, 10 and 11 are all the same defect.**
+A hardening directive on `nexa-agent.service` withholds something a child process
+needs, and nothing catches it because no test runs those children under the
+unit's sandbox. `CAP_SETUID` for apt's `seteuid`, `$HOME` for gpg, `$HOME` for
+launchpadlib. The next one will be found the same way — by a human clicking a
+button — unless a lifecycle scenario starts installing from each repository
+class under the real unit. That is now the single highest-value piece of test
+work outstanding; see the standing handoff.

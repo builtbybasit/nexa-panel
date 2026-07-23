@@ -113,7 +113,17 @@ func (o *HostOperator) ensureRepo(ctx context.Context, entry catalogEntry) error
 		if output, err := o.runner.Run(ctx, command("apt-get", "install", "-y", "--no-install-recommends", "software-properties-common")); err != nil {
 			return commandError("install repository tooling", output, err)
 		}
-		if output, err := o.runner.Run(ctx, command("add-apt-repository", "-y", "ppa:ondrej/php")); err != nil {
+		// add-apt-repository resolves the PPA through launchpadlib, which
+		// insists on caching into $HOME/.launchpadlib. Under the agent's
+		// ProtectHome=true that is /root and read-only, so it aborts before it
+		// reaches the network; give it a home it is allowed to write.
+		home, err := o.ensureToolHome()
+		if err != nil {
+			return err
+		}
+		add := command("add-apt-repository", "-y", "ppa:ondrej/php")
+		add.Env = append(add.Env, "HOME="+home)
+		if output, err := o.runner.Run(ctx, add); err != nil {
 			return commandError("add the ondrej/php repository", output, err)
 		}
 		return nil

@@ -149,10 +149,15 @@ yet gone start to finish on unmodified code.
    hardware. `PLAN.md` 10.5.
 2. ~~**Clean end-to-end install**~~ — **done** 2026-07-23; the whole six-scenario
    matrix passed on unmodified code.
-2a. **Install one application from the panel** in any future matrix run. Defect 8
-   made every apt install on every node impossible, and all six scenarios passed
-   on a box where the Applications page could not install a thing. No scenario
-   covers this yet.
+2a. **Install one application from each repository class, under the real unit.**
+   Now the highest-value test work outstanding. Defects 8, 10 and 11 are the same
+   defect three times: a hardening directive on `nexa-agent.service` withholds
+   something a child process needs (`CAP_SETUID` for apt, `$HOME` for gpg, `$HOME`
+   for launchpadlib), and nothing catches it because no test runs those children
+   under the unit's sandbox. Each was found by a human clicking a button. A
+   scenario must cover, under the packaged unit rather than a bare root shell:
+   an Ubuntu-archive package, a pinned vendor repository (MariaDB), a PPA
+   (`ondrej/php`), and the PGDG script.
 2b. **Confirm an update reports itself truthfully** (defect 9, `PLAN.md` 10.6).
    The fix is in the tree but has never run on hardware: `nexa self-update` used
    to exit non-zero on updates that fully succeeded, because activation restarts

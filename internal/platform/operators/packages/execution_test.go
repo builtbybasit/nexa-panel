@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,9 @@ type fakeRunner struct {
 	// the server still comes from Ubuntu's archive at an older series.
 	repoAddsNothing bool
 	calls           [][]string
+	// commands keeps the full invocation, including Env, for assertions about
+	// the environment a tool is given rather than just its argv.
+	commands []Command
 }
 
 func newFakeRunner() *fakeRunner {
@@ -48,6 +52,7 @@ func newFakeRunner() *fakeRunner {
 func (f *fakeRunner) Run(_ context.Context, c Command) ([]byte, error) {
 	record := append([]string{c.Name}, c.Args...)
 	f.calls = append(f.calls, record)
+	f.commands = append(f.commands, c)
 	switch {
 	case c.Name == "apt-cache" && len(c.Args) > 0 && c.Args[0] == "search":
 		var builder strings.Builder
@@ -216,7 +221,10 @@ func newOperatorWithIndex(t *testing.T, runner Runner, indexURL string) *HostOpe
 		now:          func() time.Time { return time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC) },
 		client:       &http.Client{Timeout: 5 * time.Second},
 		nodeIndexURL: indexURL,
-		catalogTTL:   time.Minute,
+		// Repository tooling is handed a writable HOME; tests get a disposable
+		// one so nothing reaches the real /var.
+		toolHome:   filepath.Join(t.TempDir(), "apt"),
+		catalogTTL: time.Minute,
 	}
 }
 

@@ -9,6 +9,7 @@ package packages
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -117,6 +118,9 @@ type HostOperator struct {
 	// field so tests can point it at a local server.
 	client       *http.Client
 	nodeIndexURL string
+	// toolHome is a writable HOME handed to repository tooling that insists on
+	// one. It is a field so tests can point it somewhere disposable.
+	toolHome string
 	// The catalog is enumerated from apt and nodejs.org, so it is cached: it is
 	// read on every list, plan, and apply.
 	catalogMu     sync.Mutex
@@ -135,8 +139,35 @@ func NewHostOperator(runner Runner) (*HostOperator, error) {
 		now:          time.Now,
 		client:       &http.Client{Timeout: 15 * time.Second},
 		nodeIndexURL: NodeIndexURL,
+		toolHome:     defaultToolHome,
 		catalogTTL:   5 * time.Minute,
 	}, nil
+}
+
+// defaultToolHome is a writable HOME for repository tooling. The agent unit
+// sets ProtectHome=true, so $HOME is /root and unwritable; add-apt-repository
+// resolves a PPA through launchpadlib, which caches into $HOME/.launchpadlib
+// and dies on the read-only filesystem before it ever reaches the network. It
+// sits beside the self-update work root rather than under /var/lib/nexa-panel,
+// which belongs to the unprivileged nexa account, and /var is already writable
+// to the unit so no unit change is needed.
+const defaultToolHome = "/var/lib/nexa-panel-apt"
+
+// ensureToolHome creates the tooling home and returns it. The mode is set
+// explicitly after creation: the agent runs with UMask=0177, which masks a
+// MkdirAll(0700) down to 0600 -- a directory with no execute bit, which nothing
+// can enter, and which a root-run test would never notice.
+func (o *HostOperator) ensureToolHome() (string, error) {
+	if o.toolHome == "" {
+		return "", errors.New("no repository tooling home is configured")
+	}
+	if err := os.MkdirAll(o.toolHome, 0o700); err != nil {
+		return "", fmt.Errorf("create the repository tooling home: %w", err)
+	}
+	if err := os.Chmod(o.toolHome, 0o700); err != nil {
+		return "", fmt.Errorf("secure the repository tooling home: %w", err)
+	}
+	return o.toolHome, nil
 }
 
 // command builds a non-interactive apt-safe invocation.
