@@ -85,8 +85,13 @@ web-test: web-install
 web-typecheck: web-install
 	cd web && $(BUN) run typecheck
 
+# Node sizes its default old-space heap from the machine's total RAM, so the
+# production bundle built on a 16 GB workstation gets ~4 GB and the same build on
+# a 7 GB CI runner gets ~2 GB — where it died with "Ineffective mark-compacts
+# near heap limit". Pinning the ceiling makes the build depend on the code rather
+# than on who is running it.
 web-build: web-install
-	cd web && $(BUN) run build
+	cd web && NODE_OPTIONS=--max-old-space-size=4096 $(BUN) run build
 
 web-deadcode: web-install
 	cd web && $(BUN) run deadcode
