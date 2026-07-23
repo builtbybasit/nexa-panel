@@ -299,8 +299,10 @@ ls -ld /var/lib/nexa-panel                # nexa:nexa 0700
 ls -l /var/lib/nexa-panel/install/ownership.v1   # root:root 0600
 
 # 8. Publishing record (LIF-002)
-sudo nexa publishing migrate
 sudo nexa publishing show
+#    Must report "Publishing: tls", the hostname you installed with, and
+#    "Source:   install". "Source: inferred from ..." means the installer did not
+#    record the publication and the reinstall in Stage O will downgrade the node.
 
 # 9. First administrator
 sudo cat /root/nexa-panel-first-admin.txt | tee "$CAPTURE/D-admin.txt"
@@ -630,6 +632,10 @@ test ! -e /usr/bin/nexa && echo "binary removed: ok"
 systemctl list-unit-files 'nexa*' --no-legend | grep . && echo "FAIL: units remain"
 test -f /var/lib/nexa-panel/control.db && echo "state retained: ok"
 test -f /etc/nexa-panel/master.key && echo "key retained: ok"
+test -f /etc/nexa-panel/publishing.json && echo "publication retained: ok"
+test ! -e /etc/nginx/sites-available/nexa-panel.conf && echo "panel vhost removed: ok"
+#    Those two together are the point: the vhost that expressed the publication
+#    is gone and the record of it is not.
 cat /srv/nexa/sites/<slug>/public/canary.html    # customer data intact
 sudo nginx -t                                     # still valid
 id www-data                                       # nexa group membership removed
@@ -637,14 +643,22 @@ id www-data                                       # nexa group membership remove
 # 3. Idempotence
 sudo /opt/nexa-src/scripts/uninstall.sh 2>&1 | tail -5    # must exit 0, change nothing
 
-# 4. Reinstall over retained state
+# 4. Reinstall over retained state, with NO publishing flags
+#    Deliberately flagless: the retained record is the only thing that can put
+#    this node back on its hostname over HTTPS. Passing --panel-hostname here
+#    would hide the defect this stage exists to catch.
 cd /opt/nexa-src
-sudo bash scripts/install.sh --panel-hostname "$PANEL_HOST" --tls-email "$TLS_EMAIL" \
-  --allow-existing 2>&1 | tee "$CAPTURE/O-reinstall.txt"
+sudo bash scripts/install.sh 2>&1 | tee "$CAPTURE/O-reinstall.txt"
+
+# Verify it came back on the SAME hostname over HTTPS, with no -k
+curl -fsS -o /dev/null -w '%{http_code}\n' "https://$PANEL_HOST/api/v1/health/ready"
+curl -s -o /dev/null -w '%{http_code}\n' "http://$PANEL_HOST/"   # must be 30x
+sudo nexa publishing show                          # tls, same hostname, Source: install
+#    A loopback listener here is defect 7 regressing: check
+#    grep listen /etc/nginx/sites-available/nexa-panel.conf
 
 # Verify the OLD credentials still work — the master key and DB were retained
-curl -sS -o /dev/null -w '%{http_code}\n' "https://$PANEL_HOST/api/v1/health/ready"
-#    then sign in with the ORIGINAL password from D-admin.txt
+#    sign in with the ORIGINAL password from D-admin.txt
 sudo nexa audit verify
 
 # 5. Purge

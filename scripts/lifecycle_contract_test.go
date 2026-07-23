@@ -119,6 +119,7 @@ exit 0`)
 		"ENABLE nexa-update-recovery.service",
 		"RUN nginx -t",
 		"RUN sshd -t",
+		"RECORD the publishing state in /etc/nexa-panel/publishing.json",
 		"RETAIN hosted sites, databases, backups, panel state, and TLS material",
 	} {
 		if !strings.Contains(output, planned) {
@@ -157,6 +158,115 @@ exit 0`)
 	} {
 		if !strings.Contains(output, planned) {
 			t.Errorf("published dry-run plan omits %q:\n%s", planned, output)
+		}
+	}
+}
+
+// buildLinuxNexa compiles the real binary for the container's architecture. The
+// publishing tests below need a nexa that can actually read the record: a stub
+// that exits zero would prove only that the installer called something.
+func buildLinuxNexa(t *testing.T) string {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "nexa")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/nexa")
+	build.Dir = ".."
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build a linux nexa for the container: %v\n%s", err, output)
+	}
+	return binary
+}
+
+// runInDisposableNodeWithNexa is runInDisposableNode with a working /usr/bin/nexa.
+func runInDisposableNodeWithNexa(t *testing.T, script string) (string, int) {
+	t.Helper()
+	root := requireTestNodeImage(t)
+	binary := buildLinuxNexa(t)
+	command := exec.Command("docker", "run", "--rm",
+		"-v", root+":/repo:ro",
+		"-v", binary+":/usr/bin/nexa:ro",
+		testNodeImage, "bash", "-c", script)
+	output, err := command.CombinedOutput()
+	status := 0
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		status = exitError.ExitCode()
+	} else if err != nil {
+		t.Fatalf("run in %s: %v\n%s", testNodeImage, err, output)
+	}
+	return string(output), status
+}
+
+// A TLS node that has been uninstalled with its data retained: /etc/nexa-panel
+// survives, the panel vhost does not, and the certificate is still on disk.
+const retainedTLSPublication = `
+mkdir -p /etc/nexa-panel /run/systemd/system
+cat > /etc/nexa-panel/publishing.json <<'JSON'
+{
+  "version": 1,
+  "hostname": "panel.example.com",
+  "port": 443,
+  "tls": true,
+  "externalTls": false,
+  "updatedAt": "2026-07-01T00:00:00Z",
+  "source": "install"
+}
+JSON
+rm -f /etc/nginx/sites-available/nexa-panel.conf /etc/nginx/sites-enabled/nexa-panel.conf
+`
+
+// Defect 7. A retain-data uninstall removes the panel vhost, which used to be the
+// only place the publishing mode existed. A flagless reinstall then saw a machine
+// with nothing published, and republished a public HTTPS node on 127.0.0.1:8888 —
+// retaining the certificate, using none of it, and reporting no error at all.
+func TestReinstallOverARetainedRecordRepublishesOverHTTPSNotLoopback(t *testing.T) {
+	output, status := runInDisposableNodeWithNexa(t, stageInstaller+retainedTLSPublication+`
+mkdir -p /etc/letsencrypt/live/panel.example.com
+printf 'not a real certificate\n' > /etc/letsencrypt/live/panel.example.com/fullchain.pem
+/tmp/staged/scripts/install.sh --dry-run
+echo "PLAN_STATUS=$?"
+exit 0`)
+	if status != 0 {
+		t.Fatalf("reinstall dry run container exited %d:\n%s", status, output)
+	}
+	if !strings.Contains(output, "PLAN_STATUS=0") {
+		t.Fatalf("a flagless reinstall over a retained publishing record did not plan:\n%s", output)
+	}
+	if strings.Contains(output, "PUBLISH loopback only") {
+		t.Fatalf("a flagless reinstall downgraded a recorded HTTPS node to loopback:\n%s", output)
+	}
+	for _, planned := range []string{
+		"PUBLISH preserved from /etc/nexa-panel/publishing.json: tls on panel.example.com",
+		"RUN certbot install --nginx --cert-name panel.example.com --redirect",
+		"VERIFY https://panel.example.com/api/v1/health/live",
+	} {
+		if !strings.Contains(output, planned) {
+			t.Errorf("the reinstall plan omits %q:\n%s", planned, output)
+		}
+	}
+}
+
+// The failure this replaces was silent, so the replacement must not be. With the
+// certificate gone there is no way to honour the recorded publication, and the
+// only acceptable outcome is a refusal that names both remedies.
+func TestReinstallRefusesWhenTheRecordedCertificateIsGone(t *testing.T) {
+	output, status := runInDisposableNodeWithNexa(t, stageInstaller+retainedTLSPublication+`
+rm -rf /etc/letsencrypt/live
+/tmp/staged/scripts/install.sh --dry-run
+echo "PLAN_STATUS=$?"
+exit 0`)
+	if status != 0 {
+		t.Fatalf("container exited %d:\n%s", status, output)
+	}
+	if strings.Contains(output, "PLAN_STATUS=0") {
+		t.Fatalf("a reinstall that cannot honour the recorded HTTPS publication reported success:\n%s", output)
+	}
+	if !strings.Contains(output, "recorded as published over HTTPS on panel.example.com") {
+		t.Errorf("the refusal does not explain what it could not honour:\n%s", output)
+	}
+	for _, remedy := range []string{"--tls-email", "--allow-insecure-http"} {
+		if !strings.Contains(output, remedy) {
+			t.Errorf("the refusal does not name the %s way out:\n%s", remedy, output)
 		}
 	}
 }
@@ -576,7 +686,11 @@ func TestUninstallDefaultsToRetainingCustomerData(t *testing.T) {
 		t.Fatalf("dry-run uninstall: %v\n%s", err, output)
 	}
 	text := string(output)
-	for _, retained := range []string{"/var/lib/nexa-panel", "/srv/nexa/sites", "/var/lib/postgresql"} {
+	// The publishing record is the one retained file that decides what a later
+	// reinstall does. The panel vhost is removed by every uninstall, so without
+	// the record a reinstall has nothing left to learn the hostname and TLS mode
+	// from and silently republishes a public HTTPS node on loopback.
+	for _, retained := range []string{"/var/lib/nexa-panel", "/srv/nexa/sites", "/var/lib/postgresql", "/etc/nexa-panel/publishing.json"} {
 		if !strings.Contains(text, "RETAIN "+retained) {
 			t.Errorf("default uninstall does not promise to retain %s:\n%s", retained, text)
 		}

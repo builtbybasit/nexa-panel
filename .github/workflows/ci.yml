@@ -201,6 +201,14 @@ jobs:
             arch: arm64
             runner: ubuntu-24.04-arm
             reason: real Let's Encrypt issuance needs a public DNS name and inbound 80/443
+          - scenario: reinstall
+            arch: amd64
+            runner: ubuntu-24.04
+            reason: needs a retained real certificate and a public HTTPS request to prove the panel came back on its hostname
+          - scenario: reinstall
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            reason: needs a retained real certificate and a public HTTPS request to prove the panel came back on its hostname
           - scenario: reboot
             arch: amd64
             runner: ubuntu-24.04

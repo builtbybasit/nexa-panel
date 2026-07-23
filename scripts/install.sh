@@ -60,6 +60,12 @@ RELEASE_VERSION=""
 GITHUB_TOKEN_FILE=""
 SAVE_TOKEN=1
 RELEASE_TOKEN_PATH="/etc/nexa-panel/release.token"
+# How this node is published, as managed state rather than as something read back
+# out of a file Certbot also writes to. It lives outside /var/lib deliberately: a
+# retain-data uninstall keeps /etc/nexa-panel, so the publication survives an
+# uninstall/reinstall cycle even though the vhost that expressed it does not.
+PUBLISHING_STATE_PATH="/etc/nexa-panel/publishing.json"
+PANEL_VHOST="/etc/nginx/sites-available/nexa-panel.conf"
 LIFECYCLE_LOCK_PATH="/run/lock/nexa-panel-lifecycle.lock"
 RELEASE_HELPER="$ROOT_DIR/scripts/nexa-release-helper.py"
 RELEASE_SIGNERS="$ROOT_DIR/packaging/release-signers"
@@ -770,6 +776,87 @@ panel_vhost_is_tls() {
   grep -qsE '^[[:space:]]*listen[[:space:]].*443.*ssl' "$1"
 }
 
+# The nexa binary this run can ask about the publishing record. The staged
+# candidate is preferred over the installed one: it is the build whose record
+# format this run is about to commit to, and it is already validated by the time
+# any of this is read.
+publishing_binary() {
+  if [[ -n "${CANDIDATE_BINARY:-}" && -x "${CANDIDATE_BINARY:-}" ]]; then
+    printf '%s' "$CANDIDATE_BINARY"
+  elif [[ -x /usr/bin/nexa ]]; then
+    printf '%s' /usr/bin/nexa
+  fi
+}
+
+# read_publishing_record — set NEXA_PUBLISH_* from the managed record, falling
+# back to a one-time read of the vhost for a node installed before the record
+# existed. `publishing show` never writes, so this is safe on a dry run.
+#
+# Returns non-zero when there is nothing to read at all, which the caller treats
+# as "this node has no publication to preserve" rather than as a failure.
+read_publishing_record() {
+  local binary output
+  binary="$(publishing_binary)"
+  [[ -n "$binary" ]] || return 1
+  output="$("$binary" publishing show --shell \
+    --state-file "$PUBLISHING_STATE_PATH" --vhost "$PANEL_VHOST" 2>/dev/null)" || return 1
+  [[ -n "$output" ]] || return 1
+  eval "$output"
+  [[ -n "${NEXA_PUBLISH_HOSTNAME:-}" ]]
+}
+
+# write_publishing_record — record how this run published the panel, so the next
+# one does not have to guess. Journalled first: a run that fails after this point
+# must leave the previous publication recorded, not this run's intent.
+write_publishing_record() {
+  local hostname="$1" listen_address="$2" port="$3" tls="$4" external_tls="$5" binary directive
+  # A re-run that publishes the node exactly as it is already published writes
+  # nothing, so an idempotent install stays idempotent down to the file
+  # timestamps. The comparison is against the record read at resolution time,
+  # which nothing between there and here can have changed.
+  if [[ "${PUBLISHING_RECORDED:-0}" == "1" ]]; then
+    directive="$port"
+    [[ -z "$listen_address" ]] || directive="$listen_address:$directive"
+    [[ "$tls" -ne 1 ]] || directive+=" ssl"
+    if [[ "$hostname" == "${NEXA_PUBLISH_HOSTNAME:-}" && "$directive" == "${NEXA_PUBLISH_LISTEN:-}" &&
+          "$tls" == "${NEXA_PUBLISH_TLS:-}" && "$external_tls" == "${NEXA_PUBLISH_EXTERNAL_TLS:-}" ]]; then
+      return 0
+    fi
+  fi
+  journal_path "$PUBLISHING_STATE_PATH"
+  binary="$(publishing_binary)"
+  if [[ -n "$binary" ]]; then
+    local args=(publishing set --state-file "$PUBLISHING_STATE_PATH"
+      --hostname "$hostname" --port "$port" --source install)
+    [[ -z "$listen_address" ]] || args+=(--listen-address "$listen_address")
+    [[ "$tls" -ne 1 ]] || args+=(--tls)
+    [[ "$external_tls" -ne 1 ]] || args+=(--external-tls)
+    "$binary" "${args[@]}" >/dev/null ||
+      die "could not record the publishing state in $PUBLISHING_STATE_PATH"
+    return 0
+  fi
+  # An image build has no binary yet — the node bind-mounts one at runtime — and
+  # a node that comes up without a record is a node whose first real installer
+  # run has to go back to reading the vhost. The record is small and its shape is
+  # versioned, so write it here rather than leave the gap. `publishing show`
+  # validates what it reads, so a wrong file fails loudly on the next run instead
+  # of becoming a plausible answer.
+  [[ "$hostname" != *[\"\\]* ]] ||
+    die "refusing to record a server name containing quoting characters: $hostname"
+  { printf '{\n'
+    printf '  "version": 1,\n'
+    printf '  "hostname": "%s",\n' "$hostname"
+    [[ -z "$listen_address" ]] || printf '  "listenAddress": "%s",\n' "$listen_address"
+    printf '  "port": %d,\n' "$port"
+    printf '  "tls": %s,\n' "$([[ "$tls" -eq 1 ]] && echo true || echo false)"
+    printf '  "externalTls": %s,\n' "$([[ "$external_tls" -eq 1 ]] && echo true || echo false)"
+    printf '  "updatedAt": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '  "source": "install"\n'
+    printf '}\n'
+  } > "$WORK_DIR/publishing.json"
+  install -m 0644 -o root -g root "$WORK_DIR/publishing.json" "$PUBLISHING_STATE_PATH"
+}
+
 # The ports this publishing mode needs open. Shared by the firewall reconciler
 # and the dry-run plan so the plan cannot promise a different rule set.
 panel_firewall_ports() {
@@ -803,7 +890,27 @@ planned_panel_url() {
 # The same URL, derived from the node itself rather than from this run's flags.
 # --verify-ingress uses it to re-run the check on an installed node.
 published_panel_url() {
-  local vhost="/etc/nginx/sites-available/nexa-panel.conf" listen name port host
+  local vhost="$PANEL_VHOST" listen name port host
+  # The record first: it is what the node says about itself, and it is the only
+  # source that can describe TLS terminated in front of this host.
+  if read_publishing_record; then
+    if [[ "$NEXA_PUBLISH_HOSTNAME" != "_" && "$NEXA_PUBLISH_HOSTNAME" != "localhost" ]]; then
+      if [[ "$NEXA_PUBLISH_TLS" == "1" || "$NEXA_PUBLISH_EXTERNAL_TLS" == "1" ]]; then
+        printf 'https://%s/' "$NEXA_PUBLISH_HOSTNAME"
+      else
+        printf 'http://%s/' "$NEXA_PUBLISH_HOSTNAME"
+      fi
+      return 0
+    fi
+    if [[ "$NEXA_PUBLISH_LISTEN" == 127.0.0.1:* || "$NEXA_PUBLISH_LISTEN" == "[::1]:"* ]]; then
+      host="127.0.0.1"
+    else
+      host="$(detect_local_ip)"
+      [[ -n "$host" ]] || host="127.0.0.1"
+    fi
+    printf 'http://%s:%s/' "$host" "$NEXA_PUBLISH_PORT"
+    return 0
+  fi
   [[ -f "$vhost" ]] || die "no panel vhost at $vhost: this node does not publish the panel"
   listen="$(panel_vhost_listen "$vhost")"
   name="$(panel_vhost_server_name "$vhost")"
@@ -921,8 +1028,14 @@ fi
 # A flagless re-run must not silently replace a TLS vhost with a plaintext
 # listener. Preserve an existing ingress unless the operator explicitly asks to
 # reconfigure it. Fresh flagless installs are loopback-only.
+#
+# The record counts as an existing ingress even when the vhost does not exist. A
+# retain-data uninstall removes the vhost and keeps /etc/nexa-panel, so a
+# reinstall that looked only at the vhost saw a fresh machine and silently
+# republished a public HTTPS node on loopback.
 PRESERVE_INGRESS=0
-if [[ "$MODE" == "install" && "$INGRESS_EXPLICIT" -eq 0 && -f /etc/nginx/sites-available/nexa-panel.conf ]]; then
+if [[ "$MODE" == "install" && "$INGRESS_EXPLICIT" -eq 0 ]] &&
+   [[ -f "$PUBLISHING_STATE_PATH" || -f "$PANEL_VHOST" ]]; then
   PRESERVE_INGRESS=1
 fi
 INSECURE_HTTP="$ALLOW_INSECURE"
@@ -1199,8 +1312,13 @@ print_install_plan() {
   emit "RELEASE ${RELEASE_LABEL:-unknown}"
   emit "HOST Ubuntu ${VERSION_ID:-?} (${VERSION_CODENAME:-?}) $HOST_ARCH"
   if [[ "$MODE" == "sync-packaging" || "$PRESERVE_INGRESS" -eq 1 ]]; then
-    vhost="/etc/nginx/sites-available/nexa-panel.conf"
-    if [[ -f "$vhost" ]]; then
+    vhost="$PANEL_VHOST"
+    if [[ -n "$PRESERVED_SERVER_NAME" ]]; then
+      emit "PUBLISH preserved from ${NEXA_PUBLISH_SOURCE_LABEL}: ${NEXA_PUBLISH_MODE:-plaintext} on $PRESERVED_SERVER_NAME (listen ${NEXA_PUBLISH_LISTEN:-?})"
+      if [[ "$RESTORE_TLS" -eq 1 ]]; then
+        emit "RUN certbot install --nginx --cert-name $PANEL_HOSTNAME --redirect (re-deploy the retained certificate; no issuance)"
+      fi
+    elif [[ -f "$vhost" ]]; then
       emit "PUBLISH preserved: listen $(panel_vhost_listen "$vhost"), server_name $(panel_vhost_server_name "$vhost")"
     else
       emit "PUBLISH nothing (no existing panel vhost to preserve)"
@@ -1212,6 +1330,7 @@ print_install_plan() {
   else
     emit "PUBLISH loopback only on 127.0.0.1:8888 (reach it through an SSH tunnel)"
   fi
+  emit "RECORD the publishing state in $PUBLISHING_STATE_PATH"
 
   if [[ -n "$BINARY" ]]; then
     emit "RUN $BINARY version (validate the candidate before anything is changed)"
@@ -1362,6 +1481,71 @@ if [[ -n "$BINARY" ]]; then
 elif [[ ! -x /usr/bin/nexa ]]; then
   [[ "$START" -eq 0 || ! -d /run/systemd/system ]] || die "no Nexa Panel binary to start; pass --binary PATH"
   warn "no nexa binary at /usr/bin/nexa — install one before starting the enabled services"
+fi
+
+# --- preserved publishing ----------------------------------------------------
+# Resolved here, before the plan is printed, because how this node is published
+# is part of what a dry run promises. The candidate binary is validated by now,
+# so the record can be read with the code that owns its shape rather than with a
+# second, drifting JSON parser written in sed.
+PRESERVED_LISTEN=""
+PRESERVED_SERVER_NAME=""
+PRESERVED_EXTERNAL_TLS=0
+PUBLISHING_RECORDED=0
+NEXA_PUBLISH_SOURCE_LABEL=""
+RESTORE_TLS=0
+if [[ "$PRESERVE_INGRESS" -eq 1 || "$MODE" == "sync-packaging" ]]; then
+  if read_publishing_record; then
+    PUBLISHING_RECORDED="$NEXA_PUBLISH_RECORDED"
+    PRESERVED_SERVER_NAME="$NEXA_PUBLISH_HOSTNAME"
+    PRESERVED_EXTERNAL_TLS="$NEXA_PUBLISH_EXTERNAL_TLS"
+    if [[ "$NEXA_PUBLISH_TLS" == "1" ]]; then
+      TLS_ACTIVE=1
+      # The panel's own certificate lives in the vhost, which Certbot writes. A
+      # rendered template cannot carry it, so a TLS publication is re-established
+      # on port 80 and handed back to Certbot's installer below.
+      PRESERVED_LISTEN="80"
+    else
+      PRESERVED_LISTEN="$NEXA_PUBLISH_LISTEN"
+    fi
+    if [[ "$PRESERVED_SERVER_NAME" != "_" && "$PRESERVED_SERVER_NAME" != "localhost" ]]; then
+      PANEL_HOSTNAME="$PRESERVED_SERVER_NAME"
+    fi
+    # The cleartext opt-in is part of the publication, and it was read back out of
+    # a systemd drop-in that uninstall removes — the same shape of bug as reading
+    # the listener out of a vhost uninstall removes. The record decides it: a
+    # panel whose own listener is plaintext on a network interface needs the
+    # opt-in, whether TLS terminates in front of it or nowhere at all.
+    if [[ "$PUBLISHING_RECORDED" == "1" ]]; then
+      case "${NEXA_PUBLISH_MODE}" in
+        plaintext|external-tls) INSECURE_HTTP=1 ;;
+        *)                      INSECURE_HTTP=0 ;;
+      esac
+      NEXA_PUBLISH_SOURCE_LABEL="$PUBLISHING_STATE_PATH"
+      log "Preserving the recorded publication: ${NEXA_PUBLISH_MODE} on ${PRESERVED_SERVER_NAME}"
+    else
+      NEXA_PUBLISH_SOURCE_LABEL="$PANEL_VHOST (no record yet)"
+      log "No publishing record yet; recovering this node's publication from $PANEL_VHOST once"
+    fi
+    # A TLS node whose vhost was removed by an uninstall can only be republished
+    # over HTTPS if its certificate was retained — and it always is. Failing here
+    # is the whole point of the record: the alternative is the silent downgrade to
+    # loopback that this replaces.
+    if [[ "$MODE" == "install" && "$TLS_ACTIVE" -eq 1 && ! -f "$PANEL_VHOST" ]]; then
+      [[ -s "/etc/letsencrypt/live/$PANEL_HOSTNAME/fullchain.pem" ]] ||
+        die "this node is recorded as published over HTTPS on $PANEL_HOSTNAME, but its vhost is gone and no certificate remains at /etc/letsencrypt/live/$PANEL_HOSTNAME: re-run with --panel-hostname $PANEL_HOSTNAME --tls-email EMAIL to obtain a new one, or with --allow-insecure-http to publish without TLS"
+      RESTORE_TLS=1
+    fi
+  elif [[ -f "$PUBLISHING_STATE_PATH" && "$MODE" == "install" && ! -f "$PANEL_VHOST" ]]; then
+    # Nothing left to publish from and nothing able to read the record: the only
+    # alternative is to republish this node on the loopback default and say
+    # nothing, which is the failure this whole mechanism exists to prevent.
+    die "this node has a publishing record at $PUBLISHING_STATE_PATH that no available nexa binary can read, and no panel vhost to fall back to; pass --binary PATH, or restate the publication with --panel-hostname/--allow-insecure-http"
+  elif [[ -f "$PUBLISHING_STATE_PATH" ]]; then
+    warn "could not read the publishing record at $PUBLISHING_STATE_PATH; the vhost at $PANEL_VHOST is left exactly as it is"
+  elif [[ -f "$PANEL_VHOST" ]]; then
+    warn "could not read this node's publishing state; the vhost at $PANEL_VHOST is left exactly as it is"
+  fi
 fi
 
 # Establish exclusive ownership before apt, sysusers, tmpfiles, or any managed
@@ -1664,18 +1848,28 @@ log "Configuring the panel reverse proxy"
 for managed_directory in /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/snippets; do
   ensure_directory 0755 "$managed_directory"
 done
-PANEL_VHOST="/etc/nginx/sites-available/nexa-panel.conf"
 PANEL_PROXY_SNIPPET="/etc/nginx/snippets/nexa-panel-proxy.conf"
 install_managed "$PACKAGING_DIR/nginx/nexa-panel-proxy.conf.template" 0644 "$PANEL_PROXY_SNIPPET"
 if [[ "$MODE" == "sync-packaging" || "$PRESERVE_INGRESS" -eq 1 ]]; then
   # Refreshing the vhost must not change how the panel is published, so the
-  # listener and server name are read back out of the file the install wrote
-  # rather than re-derived from flags this run was never given. A legacy vhost
-  # Certbot has rewritten is migrated structurally: only the old Nexa proxy
-  # directives move into the managed snippet; its TLS listeners, certificates,
-  # and redirects remain byte-for-byte under Certbot's ownership.
-  if [[ ! -f "$PANEL_VHOST" ]]; then
+  # listener and server name come from the publishing record rather than from
+  # flags this run was never given. A legacy vhost Certbot has rewritten is
+  # migrated structurally: only the old Nexa proxy directives move into the
+  # managed snippet; its TLS listeners, certificates, and redirects remain
+  # byte-for-byte under Certbot's ownership.
+  if [[ ! -f "$PANEL_VHOST" && "$RESTORE_TLS" -eq 0 && -z "$PRESERVED_LISTEN" ]]; then
     warn "no panel vhost at $PANEL_VHOST; run the installer without --sync-packaging to publish the panel"
+  elif [[ ! -f "$PANEL_VHOST" ]]; then
+    # The record outlived the vhost — a retain-data uninstall removes one and
+    # keeps the other. Republish exactly what the node says it was publishing.
+    log "Republishing $PRESERVED_SERVER_NAME from the retained publishing record"
+    render_panel_vhost "$PRESERVED_LISTEN" "$PRESERVED_SERVER_NAME" "$WORK_DIR/nexa-panel.conf"
+    install_managed "$WORK_DIR/nexa-panel.conf" 0644 "$PANEL_VHOST"
+  elif [[ "$TLS_ACTIVE" -eq 1 ]] && ! grep -q 'managed by Certbot' "$PANEL_VHOST"; then
+    # A TLS publication whose vhost Certbot did not write carries certificate
+    # directives no template of ours can reproduce. Re-rendering it would publish
+    # the panel without its certificate, so it is left exactly as it is.
+    warn "leaving the hand-managed TLS panel vhost at $PANEL_VHOST unchanged; its certificate directives are not ours to re-render"
   elif grep -q 'managed by Certbot' "$PANEL_VHOST"; then
     if grep -Fq 'include /etc/nginx/snippets/nexa-panel-proxy.conf;' "$PANEL_VHOST"; then
       log "The certbot-managed panel vhost already uses the managed proxy snippet"
@@ -1693,8 +1887,8 @@ if [[ "$MODE" == "sync-packaging" || "$PRESERVE_INGRESS" -eq 1 ]]; then
       fi
     fi
   else
-    PANEL_LISTEN="$(panel_vhost_listen "$PANEL_VHOST")"
-    PANEL_SERVER_NAME="$(panel_vhost_server_name "$PANEL_VHOST")"
+    PANEL_LISTEN="${PRESERVED_LISTEN:-$(panel_vhost_listen "$PANEL_VHOST")}"
+    PANEL_SERVER_NAME="${PRESERVED_SERVER_NAME:-$(panel_vhost_server_name "$PANEL_VHOST")}"
     if [[ -z "$PANEL_LISTEN" || -z "$PANEL_SERVER_NAME" ]]; then
       warn "could not read the listener out of $PANEL_VHOST; leaving it unchanged"
     else
@@ -1718,13 +1912,46 @@ else
   render_panel_vhost "$PANEL_LISTEN" "$PANEL_SERVER_NAME" "$WORK_DIR/nexa-panel.conf"
   install_managed "$WORK_DIR/nexa-panel.conf" 0644 "$PANEL_VHOST"
 fi
-if [[ "$PRESERVE_INGRESS" -eq 1 && -f "$PANEL_VHOST" ]]; then
-  PRESERVED_SERVER_NAME="$(panel_vhost_server_name "$PANEL_VHOST")"
-  if [[ -n "$PRESERVED_SERVER_NAME" && "$PRESERVED_SERVER_NAME" != "_" && "$PRESERVED_SERVER_NAME" != "localhost" ]]; then
-    PANEL_HOSTNAME="$PRESERVED_SERVER_NAME"
-  fi
-  if panel_vhost_is_tls "$PANEL_VHOST"; then
+# Record how this run publishes the panel, so nothing downstream — this run's own
+# certificate step, the next re-run, a packaging sync, or a reinstall after an
+# uninstall took the vhost with it — has to go back to guessing. Written from the
+# publication this run committed to: on the TLS path Certbot is about to move the
+# listener from :80 to :443, and the record describes where it lands.
+if [[ -f "$PANEL_VHOST" ]]; then
+  # A node whose vhost proves TLS but whose record was never written — the
+  # one-time migration case — is recorded as what it demonstrably is.
+  if [[ "$TLS_ACTIVE" -eq 0 ]] && panel_vhost_is_tls "$PANEL_VHOST"; then
     TLS_ACTIVE=1
+  fi
+  RECORD_HOSTNAME="${PANEL_SERVER_NAME:-${PRESERVED_SERVER_NAME:-}}"
+  if [[ -z "$RECORD_HOSTNAME" ]]; then
+    RECORD_HOSTNAME="$(panel_vhost_server_name "$PANEL_VHOST")"
+  fi
+  if [[ -z "$RECORD_HOSTNAME" ]]; then
+    warn "could not determine a server name for $PANEL_VHOST; leaving the publishing record untouched"
+  else
+    RECORD_LISTEN_ADDRESS=""
+    if [[ "$TLS_ACTIVE" -eq 1 ]]; then
+      # Certbot publishes on 443. A node already recorded as TLS keeps the port it
+      # was recorded with, so an operator who moved the listener does not have it
+      # silently reset by a re-run.
+      RECORD_PORT=443
+      if [[ "$PUBLISHING_RECORDED" == "1" && "${NEXA_PUBLISH_TLS:-0}" == "1" ]]; then
+        RECORD_PORT="$NEXA_PUBLISH_PORT"
+      fi
+    else
+      RECORD_LISTEN="${PANEL_LISTEN:-${PRESERVED_LISTEN:-}}"
+      [[ -n "$RECORD_LISTEN" ]] || RECORD_LISTEN="$(panel_vhost_listen "$PANEL_VHOST")"
+      RECORD_PORT="${RECORD_LISTEN##*:}"
+      RECORD_PORT="${RECORD_PORT%% *}"
+      if [[ "$RECORD_LISTEN" == *:* ]]; then
+        RECORD_LISTEN_ADDRESS="${RECORD_LISTEN%:*}"
+        RECORD_LISTEN_ADDRESS="${RECORD_LISTEN_ADDRESS#[}"
+        RECORD_LISTEN_ADDRESS="${RECORD_LISTEN_ADDRESS%]}"
+      fi
+    fi
+    write_publishing_record "$RECORD_HOSTNAME" "$RECORD_LISTEN_ADDRESS" "$RECORD_PORT" \
+      "$TLS_ACTIVE" "$PRESERVED_EXTERNAL_TLS"
   fi
 fi
 # Only ever link a vhost that exists: a --sync-packaging run on a node the panel
@@ -1910,6 +2137,17 @@ else
     else
       warn "--manage-firewall was supplied, but UFW is inactive; leaving it inactive and unchanged"
     fi
+  fi
+
+  if [[ "$RESTORE_TLS" -eq 1 ]]; then
+    # The record says HTTPS, the certificate is still on disk, and the vhost that
+    # joined them was removed by an uninstall. `certbot install` re-deploys the
+    # existing certificate into the freshly rendered vhost; it issues nothing, so
+    # it neither needs an ACME account nor spends a rate limit.
+    log "Restoring TLS for $PANEL_HOSTNAME from the retained certificate"
+    journal_path "$PANEL_VHOST"
+    certbot install --nginx --non-interactive --cert-name "$PANEL_HOSTNAME" --redirect ||
+      die "could not re-deploy the retained certificate for $PANEL_HOSTNAME; re-run with --panel-hostname $PANEL_HOSTNAME --tls-email EMAIL to reissue it"
   fi
 
   if [[ -n "$TLS_EMAIL" ]]; then

@@ -211,19 +211,32 @@ node_sh "grep -qE '^[[:space:]]*server_name[[:space:]]+_;' /etc/nginx/sites-avai
   fail "the flagless re-run rewrote the published server name"
 node_sh "grep -q '^Environment=NEXA_ALLOW_INSECURE_HTTP=1$' /etc/systemd/system/nexa-api.service.d/10-nexa-panel.conf" ||
   fail "the flagless re-run dropped the recorded plaintext publishing decision"
+# The publication is managed state, not something the next run has to reconstruct
+# from the vhost. `show` reports its source, so a record that was silently
+# inferred rather than written fails here.
+PUBLISHING_SHOWN="$(node /usr/bin/nexa publishing show)"
+grep -q '^Publishing: plaintext$' <<< "$PUBLISHING_SHOWN" ||
+  fail "the node does not record its plaintext publication: $PUBLISHING_SHOWN"
+grep -q '^  Source:   install' <<< "$PUBLISHING_SHOWN" ||
+  fail "the publication is still being inferred rather than recorded: $PUBLISHING_SHOWN"
 assert_admin_can_sign_in "after the installer re-run"
 
 # --- scenario 2: refused install ---------------------------------------------
-scenario "Scenario 2: a failed preflight mutates nothing"
+scenario "Scenario 2: a refused install mutates nothing"
 snapshot "$SNAPSHOT_PACKAGING" "$WORK_DIR/packaging.before"
 snapshot "$SNAPSHOT_STATE" "$WORK_DIR/state.before"
-# Without --allow-existing the preflight refuses to install over a live node.
-if installer --binary "$SOURCE_DIR/bin/nexa" > "$WORK_DIR/preflight.log" 2>&1; then
-  cat "$WORK_DIR/preflight.log" >&2
-  fail "the installer overwrote a live node without --allow-existing"
+# The refusal is candidate validation, not the preflight: a validated ownership
+# marker now implies --allow-existing, precisely so a re-run on a live node
+# succeeds, so "already installed" is no longer a blocker to test against. What
+# still must be refused — and what bricked a live node when it was not — is an
+# artifact that runs and reports a version without being nexa.
+node_sh "printf '#!/bin/sh\nexit 0\n' > /tmp/not-nexa && chmod 0755 /tmp/not-nexa"
+if installer --binary /tmp/not-nexa > "$WORK_DIR/refused.log" 2>&1; then
+  cat "$WORK_DIR/refused.log" >&2
+  fail "the installer accepted a candidate that is not a Nexa Panel binary"
 fi
-grep -q 'preflight' "$WORK_DIR/preflight.log" ||
-  { cat "$WORK_DIR/preflight.log" >&2; fail "the install failed for a reason other than the preflight"; }
+grep -q 'not an executable Nexa Panel binary\|carries no embedded web UI' "$WORK_DIR/refused.log" ||
+  { cat "$WORK_DIR/refused.log" >&2; fail "the install failed for a reason other than candidate validation"; }
 snapshot "$SNAPSHOT_PACKAGING" "$WORK_DIR/packaging.after"
 snapshot "$SNAPSHOT_STATE" "$WORK_DIR/state.after"
 assert_no_drift "the refused install" "$WORK_DIR/packaging.before" "$WORK_DIR/packaging.after"
@@ -256,6 +269,7 @@ assert_present \
   /var/lib/nexa-panel/control.db \
   /var/lib/nexa-panel/install/ownership.v1 \
   /etc/nexa-panel/agent.token \
+  /etc/nexa-panel/publishing.json \
   "$CANARY_FILE"
 [[ "$(node cat "$CANARY_FILE")" == "$CANARY_CONTENT" ]] || fail "hosted site data was altered by uninstall"
 node_sh "getent passwd nexa >/dev/null" || fail "the retain-data uninstall deleted the service account"
@@ -264,10 +278,21 @@ node systemctl is-active --quiet nginx.service || fail "uninstall stopped the ho
 
 # --- scenario 4: reinstall over retained state -------------------------------
 scenario "Scenario 4: reinstalling recovers the retained state and secrets"
-installer --binary "$SOURCE_DIR/bin/nexa" --allow-insecure-http > "$WORK_DIR/reinstall-after-retain.log" 2>&1 ||
+# Deliberately flagless. The uninstall above removed the panel vhost and the API
+# drop-in, which used to be the only two places this node's publication existed;
+# a reinstall that had to re-derive it from them saw a fresh machine and
+# republished on loopback. The retained record is now the only thing that can
+# restore the all-interfaces plaintext listener this node was installed with.
+installer --binary "$SOURCE_DIR/bin/nexa" > "$WORK_DIR/reinstall-after-retain.log" 2>&1 ||
   { tail -50 "$WORK_DIR/reinstall-after-retain.log" >&2; fail "reinstalling over retained state failed"; }
 wait_ready || fail "the reinstalled node never became ready"
 assert_present /usr/bin/nexa /usr/sbin/nexa-uninstall /etc/nginx/sites-enabled/nexa-panel.conf
+node_sh "grep -qE '^[[:space:]]*listen[[:space:]]+8888;' /etc/nginx/sites-available/nexa-panel.conf" ||
+  fail "the reinstall did not restore the recorded all-interfaces listener"
+node_sh "! grep -q '127.0.0.1:8888' /etc/nginx/sites-available/nexa-panel.conf" ||
+  fail "the reinstall silently downgraded the node to the loopback bootstrap listener"
+node_sh "grep -q '^Environment=NEXA_ALLOW_INSECURE_HTTP=1$' /etc/systemd/system/nexa-api.service.d/10-nexa-panel.conf" ||
+  fail "the reinstall dropped the recorded cleartext publishing decision"
 node systemctl is-active --quiet nexa-agent.service nexa-api.service nginx.service ||
   fail "the reinstalled services are not running"
 # The password was never re-seeded: the installer's seed helper finds an

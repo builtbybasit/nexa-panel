@@ -241,6 +241,10 @@ if [[ "$PURGE_DATA" -eq 0 ]]; then
     say "RETAIN $path"
   done
   say "RETAIN hosted-site Nginx/PHP configuration and database packages"
+  # Said separately because it is the one retained file that decides what a later
+  # reinstall does: the panel vhost is removed above, and without the record a
+  # reinstall would have nothing left to learn the hostname and TLS mode from.
+  say "RETAIN /etc/nexa-panel/publishing.json (a reinstall republishes on the same hostname and TLS mode)"
 else
   # Enumerate accounts from panel-owned site roots and verify the exact account
   # contract before deleting anything. Prefix matching every `nexa_*` account

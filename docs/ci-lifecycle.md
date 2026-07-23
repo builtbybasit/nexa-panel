@@ -72,6 +72,7 @@ deleting the entries.
 | Scenario | Entry point | Why the container node cannot prove it |
 | --- | --- | --- |
 | Fresh TLS install (+ reboot) | `test-vm-lifecycle.sh fresh-tls`, then `reboot --arm` / `reboot --verify` | Let's Encrypt must reach the machine on a public DNS name over :80/:443 to issue a real certificate, and restarting a container's PID 1 is not a host boot. |
+| Uninstall then flagless reinstall | `test-vm-lifecycle.sh reinstall` | The recovery is only real if a retained Let's Encrypt certificate is re-deployed and a public HTTPS request comes back on the original hostname; a container has neither. |
 | N-1 → N update | `test-vm-lifecycle.sh update` | The node image bind-mounts `/usr/bin/nexa` read-only, so the atomic binary swap cannot happen; it also needs two distinct built releases. |
 | Injected update failure | `test-vm-lifecycle.sh update-failure` | Requires a live activation to fail and the operator to restore the binary *and* the systemd unit graph on a host it really owns. |
 | Offline rollback | `test-vm-lifecycle.sh offline-rollback` | Only meaningful if `nexa-api` and `nexa-agent` are genuinely stopped on a host that must still recover. |
@@ -79,7 +80,7 @@ deleting the entries.
 ## Running the VM matrix by hand
 
 This is the procedure for one operator with one throwaway Ubuntu 24.04 server.
-It is the only way these five scenarios are currently proven, so run it before
+It is the only way these six scenarios are currently proven, so run it before
 any release tag.
 
 **Preconditions.** All five are hard requirements; the script refuses rather
@@ -109,7 +110,7 @@ sudo bash test-vm-lifecycle.sh all \
   --hostname panel.example.com --tls-email ops@example.com \
   --previous /root/nexa-n-1 --target /root/nexa-n
 # type: destroy this host          (or pass --yes to skip the prompt)
-# ... scenarios 1-4 run, then the machine reboots ...
+# ... scenarios 1-5 run, then the machine reboots ...
 
 # reconnect over SSH, then:
 sudo bash test-vm-lifecycle.sh all --resume
@@ -121,12 +122,13 @@ any scenario failed or never ran:
 ```
 ===== VM lifecycle results =====
 1. PASS     fresh TLS install
-2. PASS     N-1 -> N update
-3. PASS     offline rollback with the services stopped
-4. PASS     injected update failure
-5. PASS     reboot
+2. PASS     uninstall then flagless reinstall
+3. PASS     N-1 -> N update
+4. PASS     offline rollback with the services stopped
+5. PASS     injected update failure
+6. PASS     reboot
 
-5 passed, 0 failed, 0 not run
+6 passed, 0 failed, 0 not run
 ```
 
 A failure stops the chain — later scenarios depend on the state earlier ones
@@ -135,7 +137,7 @@ after it marked `NOT RUN`. The order is fixed and not arbitrary:
 `offline-rollback` consumes the succeeded transaction that `update` wrote, and
 `update-failure` leaves that transaction in its failed state.
 
-Each scenario is still individually runnable (`fresh-tls`, `update`,
+Each scenario is still individually runnable (`fresh-tls`, `reinstall`, `update`,
 `offline-rollback`, `update-failure`, `reboot --arm` / `reboot --verify`) for
 re-testing one thing after a fix; `test-vm-lifecycle.sh --help` prints the
 sequence.

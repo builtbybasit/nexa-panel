@@ -2,11 +2,14 @@
 # Lifecycle scenarios that a container cannot prove, run on a throwaway VM.
 #
 # scripts/test-node-lifecycle.sh covers everything the disposable Docker node
-# can honestly answer. The five scenarios here cannot run there, and are NOT
+# can honestly answer. The six scenarios here cannot run there, and are NOT
 # simulated in CI:
 #
 #   fresh-tls         needs a public DNS name and inbound :80/:443 so Let's
 #                     Encrypt can validate and issue a REAL certificate.
+#   reinstall         needs a real certificate to survive an uninstall and a real
+#                     public HTTPS request to prove the panel came back on the
+#                     same hostname instead of silently on loopback.
 #   reboot            needs a machine that can actually reboot; a container's
 #                     PID 1 restart is not a host boot.
 #   update            needs two signed releases (N-1 and N) and a writable
@@ -39,6 +42,7 @@
 #   sudo bash scripts/test-vm-lifecycle.sh fresh-tls \
 #     --hostname panel.example.com --tls-email ops@example.com \
 #     --binary /root/nexa-n-1
+#   sudo bash scripts/test-vm-lifecycle.sh reinstall --binary /root/nexa-n-1
 #   sudo bash scripts/test-vm-lifecycle.sh update \
 #     --previous /root/nexa-n-1 --target /root/nexa-n
 #   sudo bash scripts/test-vm-lifecycle.sh offline-rollback
@@ -233,6 +237,68 @@ scenario_fresh_tls() {
   log "fresh-tls passed for $HOSTNAME_ARG"
 }
 
+# --- uninstall, then reinstall -----------------------------------------------
+# A retain-data uninstall removes the panel vhost and the API drop-in, which were
+# once the only places this node's publication existed. A flagless reinstall then
+# saw a machine with nothing published and republished a public HTTPS node on
+# 127.0.0.1:8888 — certificate retained, certificate unused, no error reported.
+# Only a real box can prove the recovery: it needs a real certificate and a real
+# public request to come back over TLS afterwards.
+scenario_reinstall() {
+  local host="$HOSTNAME_ARG"
+  if [[ -z "$host" && -f "$STATE_DIR/hostname" ]]; then
+    host="$(head -n 1 "$STATE_DIR/hostname")"
+  fi
+  [[ -n "$host" ]] || fail "reinstall needs --hostname, or a prior fresh-tls run to take it from"
+  [[ -x /usr/sbin/nexa-uninstall ]] || fail "reinstall needs an installed panel; run fresh-tls first"
+
+  log "Recording the publication before the uninstall"
+  local before
+  before="$(nexa publishing show)"
+  grep -q '^Publishing: tls$' <<< "$before" ||
+    fail "this node is not published over TLS, so the reinstall would prove nothing: $before"
+  assert_canary_intact "before the uninstall"
+
+  log "Uninstalling with customer data retained"
+  /usr/sbin/nexa-uninstall || fail "the retain-data uninstall failed"
+  [[ ! -e /etc/nginx/sites-available/nexa-panel.conf ]] ||
+    fail "the uninstall left the panel vhost behind, so the reinstall would learn nothing new"
+  [[ -f /etc/nexa-panel/publishing.json ]] ||
+    fail "the uninstall discarded the publishing record; a reinstall has nothing left to republish from"
+  [[ -s "/etc/letsencrypt/live/$host/fullchain.pem" ]] ||
+    fail "the uninstall discarded the certificate"
+
+  log "Reinstalling with no publishing flags at all"
+  local binary_args=()
+  if [[ -n "$BINARY" ]]; then
+    binary_args=(--binary "$BINARY")
+  fi
+  installer "${binary_args[@]}"
+
+  log "Asserting the node came back on the same hostname over HTTPS"
+  # No -k, and no --resolve: an ordinary client, over the public name, trusting
+  # the retained certificate. A downgrade to loopback fails here with a refused
+  # connection, which is exactly what the old behaviour produced silently.
+  curl -fsS "https://$host/api/v1/health/ready" >/dev/null ||
+    fail "the reinstalled panel is not publicly ready over HTTPS on $host"
+  local redirect
+  redirect="$(curl -s -o /dev/null -w '%{http_code}' "http://$host/")"
+  [[ "$redirect" == 30* ]] || fail "plain HTTP no longer redirects to HTTPS after the reinstall (HTTP $redirect)"
+  local after
+  after="$(nexa publishing show)"
+  grep -q '^Publishing: tls$' <<< "$after" ||
+    fail "the reinstall did not restore the recorded TLS publication: $after"
+  grep -q "^  Hostname: $host\$" <<< "$after" ||
+    fail "the reinstall republished on a different hostname: $after"
+  grep -q '^  Source:   install' <<< "$after" ||
+    fail "the publication is inferred rather than recorded after the reinstall: $after"
+
+  assert_services_healthy "reinstall over retained state"
+  assert_admin_can_sign_in "reinstall over retained state" "https://$host"
+  assert_canary_intact "after the reinstall"
+  log "reinstall passed for $host"
+}
+
 # --- reboot ------------------------------------------------------------------
 # Two phases on purpose. A script cannot survive `systemctl reboot`, so the VM
 # runner arms the scenario, waits for SSH to come back, then verifies. Anything
@@ -402,6 +468,7 @@ scenario_offline_rollback() {
 # reboot it requests, which is why --resume exists.
 ALL_PLAN=(
   'fresh TLS install|scenario_fresh_tls'
+  'uninstall then flagless reinstall|scenario_reinstall'
   'N-1 -> N update|scenario_update'
   'offline rollback with the services stopped|scenario_offline_rollback'
   'injected update failure|scenario_update_failure'
@@ -457,11 +524,11 @@ scenario_all() {
     [[ -f "$RESULT_FILE" ]] || fail "--resume without a prior run; nothing to resume"
     # The armed reboot is the only thing --resume can be resuming.
     PHASE=verify
-    log "Scenario 5/5: reboot (verifying the machine that just came back)"
+    log "Scenario ${#ALL_PLAN[@]}/${#ALL_PLAN[@]}: reboot (verifying the machine that just came back)"
     if scenario_reboot; then
-      record_result 5 PASS 'reboot'
+      record_result "${#ALL_PLAN[@]}" PASS 'reboot'
     else
-      record_result 5 FAIL 'reboot'
+      record_result "${#ALL_PLAN[@]}" FAIL 'reboot'
     fi
     print_summary
     return
@@ -504,9 +571,10 @@ scenario_all() {
 case "$SCENARIO" in
   all)              scenario_all ;;
   fresh-tls)        scenario_fresh_tls ;;
+  reinstall)        scenario_reinstall ;;
   reboot)           scenario_reboot ;;
   update)           scenario_update ;;
   update-failure)   scenario_update_failure ;;
   offline-rollback) scenario_offline_rollback ;;
-  *) fail "unknown scenario '$SCENARIO' (all, fresh-tls, reboot, update, update-failure, offline-rollback)" ;;
+  *) fail "unknown scenario '$SCENARIO' (all, fresh-tls, reinstall, reboot, update, update-failure, offline-rollback)" ;;
 esac

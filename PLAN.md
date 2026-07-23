@@ -569,7 +569,7 @@ prior install, a real reboot, or a real bad artifact.
 | 4 | The SPA fallback served `index.html` with HTTP 200 for unmatched `/api/*` paths. | A typo, a removed endpoint, and a version mismatch were **indistinguishable from success** to any JSON client. | Fixed — JSON 404 for unrouted API paths. |
 | 5 | `nexa-agent` listed `/run/containers` in `ReadWritePaths`, which Podman creates lazily, so the first boot died with `226/NAMESPACE`. The agent recovered on its own restart, but `nexa-api` used `Requires=`, and systemd never retries a job cancelled by a failed `Requires=` dependency. | **The panel was dead after every reboot** — with zero failed units, so nothing looked wrong — until an operator logged in and started it by hand. | Fixed — `-` prefix on lazily-created `/run` trees; `Wants=` with `After=`. |
 | 6 | `validateBinary` accepted any candidate whose `version` exited zero, and the activation helper *is* the newly installed binary, so a candidate that runs without being nexa never advances the journal; `waitForActivation` then expired and returned, leaving the bad binary live. | **Bricked the node.** A 22-byte shell script was installed as `/usr/bin/nexa`; the panel survived only because the running processes held the deleted inode. | Fixed — version-shape validation, and a stalled activation now restores itself. |
-| 7 | Uninstall removes the panel vhost, which is the only source of publishing truth. A reinstall over retained state therefore cannot recover the publishing mode. | **Reinstall silently downgraded a public HTTPS node to loopback-only `127.0.0.1:8888`.** The certificate was retained but unused; the panel became unreachable from the internet with no error. | **OPEN** — see 10.3. |
+| 7 | Uninstall removes the panel vhost, which is the only source of publishing truth. A reinstall over retained state therefore cannot recover the publishing mode. | **Reinstall silently downgraded a public HTTPS node to loopback-only `127.0.0.1:8888`.** The certificate was retained but unused; the panel became unreachable from the internet with no error. | Fixed — the installer writes and reads `/etc/nexa-panel/publishing.json`; see 10.3. |
 
 ### 10.2 Proven working on real hardware
 
@@ -603,26 +603,48 @@ prior install, a real reboot, or a real bad artifact.
 Resource use at idle: `nexa-api` 73 MB, `nexa-agent` 6 MB, against caps of 512 MB
 and 1.5 GB.
 
-### 10.3 Open: publishing state is still inferred, not recorded
+### 10.3 Fixed: publishing state is recorded, not inferred
 
-Defect 7 is the concrete failure of the LIF-002 item "TLS publishing state is
+Defect 7 was the concrete failure of the LIF-002 item "TLS publishing state is
 represented as managed data, not reverse-engineered from a Certbot-mutated file."
+The `internal/platform/publishing` package and the `nexa publishing
+show|set|migrate` CLI existed, but nothing wired them into the install path:
+`install.sh` decided TLS by grepping the vhost for `managed by Certbot`, and
+uninstall removes that vhost, so the publication could not survive an
+uninstall/reinstall cycle.
 
-An `internal/platform/publishing` package and a `nexa publishing
-show|set|migrate` CLI now exist, but **nothing wires them into the install
-path**: `install.sh` still decides TLS by grepping the vhost for `managed by
-Certbot`, and `nexa publishing show` reports `Source: inferred from
-/etc/nginx/sites-available/nexa-panel.conf`. Because uninstall removes that
-vhost, the publishing mode cannot survive an uninstall/reinstall cycle.
+What landed:
 
-Done means:
+- `scripts/install.sh` records the publication — hostname, listen address, port,
+  TLS, external-TLS — in `/etc/nexa-panel/publishing.json` at the moment it
+  renders the vhost, describing where the listener *lands* (a TLS install records
+  :443, which is where Certbot moves it). It reads that record back in preference
+  to inspecting the vhost, through `nexa publishing show --shell`.
+- An existing publication is now preserved when **either** the record or the
+  vhost is present, so a retain-data uninstall no longer looks like a fresh
+  machine. When the record outlived the vhost, the vhost is re-rendered from it
+  and `certbot install --nginx --cert-name HOST --redirect` re-deploys the
+  retained certificate — no issuance, so no rate limit is spent.
+- The cleartext opt-in travels with the publication rather than being re-read
+  from a systemd drop-in that uninstall also removes: a recorded `plaintext` or
+  `external-tls` publication implies `NEXA_ALLOW_INSECURE_HTTP=1`.
+- A recorded HTTPS node whose certificate is *also* gone is refused with an
+  error naming both remedies, instead of being silently downgraded.
+- Vhost inspection survives only as the one-time migration for a pre-record node,
+  and as the fallback when no nexa binary can read the record and the vhost is
+  still there to be left alone.
+- `uninstall.sh` states the retention explicitly, and the record is snapshotted
+  by self-update so a rolled-back update restores it alongside the vhost it
+  describes.
 
-- The installer writes the publishing record (hostname, TLS, port, external-TLS)
-  as managed state, and reads it back in preference to inspecting the vhost.
-- The record survives a retain-data uninstall, so a reinstall restores HTTPS on
-  the original hostname instead of silently falling back to loopback.
-- Vhost inspection remains only as a one-time migration for a pre-record node.
-- A live scenario covers uninstall → reinstall → still published over HTTPS.
+Proven by: `scripts/test-node-lifecycle.sh` scenario 4, which now uninstalls and
+reinstalls **with no publishing flags at all** and asserts the all-interfaces
+listener and the cleartext decision both came back; two container tests in
+`scripts/lifecycle_contract_test.go` covering the recorded-HTTPS reinstall and
+the refusal when the certificate is gone; and `test-vm-lifecycle.sh reinstall`,
+which is the live-hardware half — uninstall, flagless reinstall, then a public
+`curl` with no `-k` on the original hostname. That last one has **not** run yet;
+it needs the fresh box.
 
 ### 10.4 What this says about the acceptance strategy
 
@@ -632,6 +654,6 @@ product unusable for its first customer. OPS-001 remains the highest-value open
 gate: until the lifecycle runs on real or virtualised hosts in CI, this class of
 defect is found by users.
 
-Re-run the full sequence on a clean box now that six fixes have landed. The
+Re-run the full sequence on a clean box now that all seven fixes have landed. The
 procedure is `docs/live-test-plan.md`; the session handoff is
 `docs/live-test-handoff.md`.

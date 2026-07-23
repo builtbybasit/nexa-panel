@@ -114,6 +114,11 @@ var defaultManagedPackagingPaths = []string{
 	"/etc/systemd/system/nexa-api.service.d/10-nexa-panel.conf",
 	"/etc/systemd/system/nexa-api.service.d/10-insecure-http.conf",
 	"/etc/nexa-panel/release-signers",
+	// The publishing record travels with the vhost it describes: a rolled-back
+	// update that restored the old listener and left a newer record behind would
+	// hand the next installer a description of a publication that no longer
+	// exists.
+	"/etc/nexa-panel/publishing.json",
 	"/etc/nginx/sites-available/nexa-panel.conf",
 	"/etc/nginx/sites-enabled/nexa-panel.conf",
 	"/etc/nginx/snippets/nexa-panel-proxy.conf",

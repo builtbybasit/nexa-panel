@@ -83,6 +83,7 @@ func TestUncoveredScenariosAreVisiblySkippedMatrixEntries(t *testing.T) {
 	// architectures the release gate requires.
 	for _, scenario := range []string{
 		"scenario: fresh-tls",
+		"scenario: reinstall",
 		"scenario: reboot",
 		"scenario: update",
 		"scenario: update-failure",
@@ -92,7 +93,7 @@ func TestUncoveredScenariosAreVisiblySkippedMatrixEntries(t *testing.T) {
 			t.Fatalf("%q appears in %d matrix entries; expected one per architecture", scenario, got)
 		}
 	}
-	if got := strings.Count(workflow, "reason:"); got < 10 {
+	if got := strings.Count(workflow, "reason:"); got < 12 {
 		t.Fatalf("only %d skipped entries state a reason; every uncovered scenario must say why", got)
 	}
 	if !strings.Contains(workflow, "${{ matrix.reason }}") {
@@ -134,6 +135,7 @@ func TestVMOnlyScenariosAreImplementedAndNotFakedInCI(t *testing.T) {
 	script := readRepoFile(t, "scripts/test-vm-lifecycle.sh")
 	for _, scenario := range []string{
 		"scenario_fresh_tls",
+		"scenario_reinstall",
 		"scenario_reboot",
 		"scenario_update",
 		"scenario_update_failure",

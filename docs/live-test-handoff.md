@@ -8,8 +8,9 @@
 
 ## 1. Where things stand
 
-Six release blockers were found and fixed on real hardware in one session; a
-seventh is open. All work is committed on `main` (merged from
+Seven release blockers were found on real hardware in one session. Six were
+fixed during that session; the seventh — publishing state — was fixed afterwards
+and is described below. All work is committed on `main` (merged from
 `release/v1-hardening`). `main` is **ahead of `origin/main` and has not been
 pushed** — that was left as the user's call.
 
@@ -26,23 +27,37 @@ frontend `test`/`typecheck`/`build`, OpenAPI lint, staticcheck, deadcode.
 | `345aa4b` | Reboot: lazily-created `/run` trees and the `Requires=` edge that killed the API |
 | `b8dfa64` | Self-update installed any exit-zero binary and never recovered a stalled activation |
 
+Fixed after that session:
+
+| Commit | What it fixes |
+| --- | --- |
+| (this branch) | Defect 7 — publishing state is recorded in `/etc/nexa-panel/publishing.json` instead of inferred from the vhost |
+
 Earlier in the same branch: the systemd `StateDirectory` ownership conflict that
 handed `/var/lib/nexa-panel/install` to `www-data`.
 
-### The one open defect
+### Defect 7, now fixed — read this before the reinstall test
 
-**Publishing state is inferred from the vhost, not recorded.** A retain-data
-uninstall removes the panel vhost, so a reinstall cannot recover the publishing
-mode and silently drops a public HTTPS node to loopback `127.0.0.1:8888`. The
-certificate is retained but unused, and nothing reports an error.
+**Publishing state used to be inferred from the vhost.** A retain-data uninstall
+removes the panel vhost, so a reinstall could not recover the publishing mode and
+silently dropped a public HTTPS node to loopback `127.0.0.1:8888`.
 
-`internal/platform/publishing` and `nexa publishing show|set|migrate` already
-exist — they are simply **not wired into `scripts/install.sh`**, which still
-greps the vhost for `managed by Certbot`. `nexa publishing show` will tell you
-`Source: inferred from …`. Acceptance criteria are in `PLAN.md` section 10.3.
+The installer now writes `/etc/nexa-panel/publishing.json` when it publishes, and
+reads it back in preference to the vhost. `/etc/nexa-panel` survives a
+retain-data uninstall, so the record does too; when the record outlives the
+vhost, the vhost is re-rendered from it and `certbot install --nginx --cert-name
+HOST --redirect` re-deploys the retained certificate without issuing anything. A
+recorded HTTPS node whose certificate is also gone is now **refused with an
+error** rather than downgraded. Full detail in `PLAN.md` section 10.3.
 
-This is the first thing to fix, because it makes the uninstall → reinstall
-scenario fail every time.
+`nexa publishing show` should report `Source: install`, never `Source: inferred
+from …`. If you see the latter on a node, its record has not been written yet —
+one installer run, or `sudo nexa publishing migrate`, fixes it.
+
+Proven in the container (`scripts/test-node-lifecycle.sh` scenario 4 now
+reinstalls with **no publishing flags** and asserts the listener came back).
+**Not yet proven on hardware**: `test-vm-lifecycle.sh reinstall` is the live
+half, and it needs the fresh box.
 
 ---
 
@@ -122,15 +137,17 @@ serving PHP 8.3.32, and retain-data uninstall preserving site data byte-for-byte
 Full detail with evidence: `PLAN.md` section 10.2.
 
 A clean end-to-end pass on a fresh box is still worth doing, because six fixes
-landed *during* the previous run — no single install has yet gone start to finish
-on unmodified code.
+landed *during* the previous run and a seventh after it — no single install has
+yet gone start to finish on unmodified code.
 
 ---
 
 ## 5. What to test next, in order
 
-1. **Fix defect 7**, then uninstall → reinstall → assert still published over
-   HTTPS on the original hostname.
+1. **Uninstall → reinstall over HTTPS** — `sudo bash scripts/test-vm-lifecycle.sh
+   reinstall` after `fresh-tls`, which asserts the panel comes back on the
+   original hostname over public HTTPS with no publishing flags given. This is
+   defect 7's fix; it has only been proven in a container so far.
 2. **Clean end-to-end install** on the fresh box with no intervening fixes.
 3. **Injected update failure mid-activation** — kill the activation helper, pull
    power (hard reset via the provider console), and confirm the node returns to
