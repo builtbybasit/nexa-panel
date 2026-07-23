@@ -29,6 +29,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/modules/php"
 	"github.com/nexa-panel/nexa-panel/internal/modules/postgres"
 	"github.com/nexa-panel/nexa-panel/internal/modules/runtimes"
+	"github.com/nexa-panel/nexa-panel/internal/modules/safeguard"
 	"github.com/nexa-panel/nexa-panel/internal/modules/schedules"
 	"github.com/nexa-panel/nexa-panel/internal/modules/services"
 	sftpmodule "github.com/nexa-panel/nexa-panel/internal/modules/sftp"
@@ -197,7 +198,15 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize PHP module: %w", err)
 	}
-	servicesModule, err := services.New(jobsModule, servicesoperator.NewUnixClient(*agentSocket, *agentToken))
+	// One guard is shared by every domain that can lock the operator out, so a
+	// single table and a single reconcile-on-boot cover them all. Constructing it
+	// here is what makes the confirm-or-revert flow real: without it both modules
+	// refuse lockout-capable changes outright.
+	lockoutGuard, err := safeguard.New(database, logger)
+	if err != nil {
+		return fmt.Errorf("initialize lockout safeguard: %w", err)
+	}
+	servicesModule, err := services.New(jobsModule, servicesoperator.NewUnixClient(*agentSocket, *agentToken), services.WithLockoutGuard(lockoutGuard))
 	if err != nil {
 		return fmt.Errorf("initialize services module: %w", err)
 	}
@@ -216,7 +225,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 	// A deployer-mode site holds a sudoers drop-in, which outlives its vhost, so
 	// the sites module's delete job asks this module to withdraw it first.
 	sitesModule.SetDeployTeardown(deployModule)
-	firewallModule, err := firewall.New(jobsModule, firewalloperator.NewUnixClient(*agentSocket, *agentToken))
+	firewallModule, err := firewall.New(jobsModule, firewalloperator.NewUnixClient(*agentSocket, *agentToken), firewall.WithLockoutGuard(lockoutGuard))
 	if err != nil {
 		return fmt.Errorf("initialize firewall module: %w", err)
 	}

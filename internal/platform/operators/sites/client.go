@@ -40,6 +40,10 @@ func (c *UnixClient) Rollback(ctx context.Context, plan Plan) (Observation, erro
 	return observation, err
 }
 
+func (c *UnixClient) Purge(ctx context.Context, site Site) error {
+	return c.call(ctx, http.MethodPost, "/v1/sites/purge", site, nil)
+}
+
 func (c *UnixClient) call(ctx context.Context, method, path string, input, output any) error {
 	return c.client.JSON(ctx, method, path, input, output)
 }

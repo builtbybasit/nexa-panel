@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -130,9 +131,8 @@ func RecentMFA(ctx context.Context, now time.Time, maxAge time.Duration) bool {
 }
 
 // MFAEnrolled reports whether the current session's account has a confirmed
-// second factor. Authorization uses it to require step-up for sensitive actions
-// only when the account opted into MFA: because MFA is optional, a password-only
-// account must not be blocked from actions it is otherwise authorized for.
+// second factor. Authorization uses it to require step-up for enrolled accounts:
+// an account that never opted into MFA has no factor to step up with.
 func MFAEnrolled(ctx context.Context) bool {
 	value, ok := ctx.Value(principalContextKey{}).(principal)
 	return ok && value.TOTPConfirmedAt != nil
@@ -230,6 +230,11 @@ func (m *Module) Register(registry module.Registry) error {
 		{"POST /api/v1/auth/mfa/enroll", http.HandlerFunc(m.mfaEnrollHTTP), false},
 		{"POST /api/v1/auth/mfa/confirm", http.HandlerFunc(m.mfaConfirmHTTP), false},
 		{"POST /api/v1/auth/mfa/verify", http.HandlerFunc(m.mfaVerifyHTTP), false},
+		// Recovery consumes one stored code, revokes every other session, and hands
+		// back fresh enrollment material. Open to every enrolled role: the recovery
+		// code is the credential, so an operator or developer who lost a phone can
+		// re-pair without an administrator.
+		{"POST /api/v1/auth/mfa/recover", http.HandlerFunc(m.mfaRecoverHTTP), false},
 		// Disabling requires a fully authenticated session (the middleware enforces
 		// a completed MFA challenge when one is enrolled), so a stolen password
 		// alone can never strip the second factor.
@@ -278,10 +283,10 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 			return
 		}
-		// Multi-factor authentication is optional: an account is never forced to
-		// enroll. But once an account HAS enrolled, every request must carry a
-		// completed challenge, so a stolen password alone can't ride an
-		// MFA-protected account.
+		// Enrollment is optional for every role, including admin: an account without
+		// a confirmed factor authenticates on its password alone. Enforcement is
+		// strict the moment a factor exists — the challenge below cannot be skipped,
+		// and disabling the factor is itself gated on having completed one.
 		if person.TOTPConfirmedAt != nil && person.MFAVerifiedAt == nil {
 			writeError(w, http.StatusUnauthorized, "mfa_required", "Complete multi-factor authentication to continue.")
 			return
@@ -290,7 +295,13 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "invalid_origin", "The request origin is not allowed.")
 			return
 		}
-		if !validCSRFToken(r, person) {
+		// Admin tools are same-origin reverse-proxied applications with their own
+		// CSRF tokens. Requiring the panel's private double-submit header here would
+		// reject every pgAdmin/phpMyAdmin POST before it reached that application.
+		// The strict Origin check above and SameSite tool-session cookie still block
+		// cross-site requests at the gateway.
+		toolProxy := strings.HasPrefix(r.URL.Path, "/tools/")
+		if !toolProxy && !validCSRFToken(r, person) {
 			m.logger.Warn("rejected request without a valid CSRF token", "user", person.Username, "path", r.URL.Path, "remote", remoteAddress(r))
 			writeError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
 			return

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { apiRequest } from './request'
 import { registerMFAStepUpHandler } from './mfaStepUp'
+import { registerUnauthorizedHandler } from './unauthorized'
 
 // Spelled out rather than imported from the modules under test: these are the
 // wire contract the server matches on, so a rename has to fail here.
@@ -93,6 +94,40 @@ describe('apiRequest', () => {
     await expect(apiRequest<{ id: number }>('/api/v1/protected', { method: 'POST' })).resolves.toEqual({ id: 42 })
     expect(stepUp).toHaveBeenCalledOnce()
     expect(fetchMock).toHaveBeenCalledTimes(2)
+    unregister()
+  })
+
+  it('expires the local session when an authenticated API request returns 401', async () => {
+    const expireSession = vi.fn()
+    const unregister = registerUnauthorizedHandler(expireSession)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({ code: 'session_expired', message: 'Sign in again.' }, { status: 401 }),
+      ),
+    )
+
+    await expect(apiRequest('/api/v1/sites')).rejects.toMatchObject({ status: 401 })
+
+    expect(expireSession).toHaveBeenCalledOnce()
+    unregister()
+  })
+
+  it('can suppress session expiry for expected authentication failures', async () => {
+    const expireSession = vi.fn()
+    const unregister = registerUnauthorizedHandler(expireSession)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({ code: 'invalid_credentials', message: 'Incorrect credentials.' }, { status: 401 }),
+      ),
+    )
+
+    await expect(
+      apiRequest('/api/v1/auth/login', { method: 'POST' }, { handleUnauthorized: false }),
+    ).rejects.toMatchObject({ status: 401 })
+
+    expect(expireSession).not.toHaveBeenCalled()
     unregister()
   })
 })

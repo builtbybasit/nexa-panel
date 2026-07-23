@@ -1,8 +1,10 @@
 package services
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/nexa-panel/nexa-panel/internal/modules/safeguard"
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
@@ -15,6 +17,8 @@ func (m *Module) registerHTTP(registry module.Registry) error {
 	}{
 		{"GET /api/v1/services", "services.read", http.HandlerFunc(m.listHTTP)},
 		{"POST /api/v1/services/action", "services.write", http.HandlerFunc(m.actionHTTP)},
+		{"GET /api/v1/services/reverts", "services.read", http.HandlerFunc(m.revertsHTTP)},
+		{"POST /api/v1/services/reverts/confirm", "services.write", http.HandlerFunc(m.confirmRevertHTTP)},
 	}
 	for _, route := range routes {
 		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
@@ -36,9 +40,14 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 // actionRequest carries the unit and action in the body rather than the path
 // because template unit names (e.g. postgresql@16-main.service) contain "@",
 // an awkward path-encoding edge case the other routes avoid.
+//
+// ConfirmLockoutRisk is the caller's acknowledgement that a stop the server
+// judged access-critical should proceed anyway, behind an armed automatic
+// revert.
 type actionRequest struct {
-	Unit   string `json:"unit"`
-	Action string `json:"action"`
+	Unit               string `json:"unit"`
+	Action             string `json:"action"`
+	ConfirmLockoutRisk bool   `json:"confirmLockoutRisk"`
 }
 
 func (m *Module) actionHTTP(w http.ResponseWriter, r *http.Request) {
@@ -52,12 +61,55 @@ func (m *Module) actionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	job, err := m.Toggle(r.Context(), request.Unit, request.Action, actor)
+	submission, err := m.Toggle(r.Context(), request.Unit, request.Action, actor, request.ConfirmLockoutRisk)
+	var risk *safeguard.RiskError
+	if errors.As(err, &risk) {
+		// 409 rather than 422: the request is well-formed and will be accepted
+		// unchanged once the caller acknowledges the consequence.
+		// The reasons are repeated inside message because the shared client error
+		// envelope carries only code and message; a caller that reads just the
+		// message still learns exactly why the stop was refused.
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"code":                "lockout_risk",
+			"message":             "Stopping this service can cut off your access to this server. " + risk.Error(),
+			"reasons":             risk.Reasons,
+			"revertWindowSeconds": m.RevertWindowSeconds(),
+		})
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "service_action_invalid", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"job": job})
+	writeJSON(w, http.StatusAccepted, submission)
+}
+
+func (m *Module) revertsHTTP(w http.ResponseWriter, r *http.Request) {
+	reverts, err := m.Reverts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "reverts_unavailable", "Pending automatic rollbacks could not be read.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": reverts, "windowSeconds": m.RevertWindowSeconds()})
+}
+
+// confirmRevertHTTP disarms one pending revert. The route is authenticated and
+// permission-checked, so reaching it proves the operator still has a working
+// panel session — the verified alternative the guard was waiting for.
+func (m *Module) confirmRevertHTTP(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		ID string `json:"id"`
+	}
+	if decodeJSON(w, r, &request) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+		return
+	}
+	revert, err := m.ConfirmRevert(r.Context(), request.ID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "revert_not_found", "That automatic rollback is no longer pending.")
+		return
+	}
+	writeJSON(w, http.StatusOK, revert)
 }
 
 func actorID(r *http.Request) (*string, bool) {

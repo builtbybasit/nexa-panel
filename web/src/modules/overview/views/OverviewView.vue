@@ -4,7 +4,8 @@ import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { listCertificates } from '@/modules/certificates/api'
-import { listJobs, type Job } from '@/modules/jobs/api'
+import { listJobs } from '@/modules/jobs/api'
+import { useIdentityStore } from '@/modules/identity/store'
 import { listSites } from '@/modules/sites/api'
 import { getSystemOverview } from '@/modules/system/api'
 import { formatBytes, formatDateTime, formatJobKind } from '@/shared/formatters'
@@ -21,10 +22,16 @@ import {
   StatusPill,
 } from '@/shared/ui'
 
+const identity = useIdentityStore()
 const systemQuery = useQuery({ queryKey: ['system', 'overview'], queryFn: getSystemOverview, retry: false, refetchInterval: 15_000 })
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
 const jobsQuery = useQuery({ queryKey: ['jobs'], queryFn: listJobs, retry: false, refetchInterval: 10_000 })
-const certificatesQuery = useQuery({ queryKey: ['certificates'], queryFn: () => listCertificates(), retry: false })
+const certificatesQuery = useQuery({
+  queryKey: ['certificates'],
+  queryFn: () => listCertificates(),
+  enabled: computed(() => identity.can('certificates.read')),
+  retry: false,
+})
 
 const sites = computed(() => sitesQuery.data.value ?? [])
 const jobs = computed(() => jobsQuery.data.value ?? [])
@@ -37,24 +44,15 @@ const runningJobs = computed(() => jobs.value.filter((job) => job.state === 'que
 const recentJobs = computed(() => jobs.value.slice(0, 6))
 const expiringCertificates = computed(() => certificates.value.filter((certificate) => certificate.expiringSoon).length)
 
-const quickActions = [
-  { label: 'Create site', icon: 'layers', to: '/sites?create=1' },
-  { label: 'Add domain', icon: 'globe', to: '/domains?create=1' },
-  { label: 'Enable HTTPS', icon: 'lock', to: '/certificates?create=1' },
-  { label: 'New database', icon: 'database', to: '/databases?create=1' },
-  { label: 'Schedule a task', icon: 'clock', to: '/schedules?create=1' },
-  { label: 'Browse files', icon: 'folder', to: '/files' },
-]
+const quickActions = computed(() => [
+  { label: 'Create site', icon: 'layers', to: '/sites/new', permission: 'sites.write' as const },
+  { label: 'Add domain', icon: 'globe', to: '/domains?create=1', permission: 'domains.write' as const },
+  { label: 'Enable HTTPS', icon: 'lock', to: '/certificates?create=1', permission: 'certificates.write' as const },
+  { label: 'New database', icon: 'database', to: '/databases?create=1', permission: 'databases.write' as const },
+  { label: 'Schedule a task', icon: 'clock', to: '/schedules?create=1', permission: 'schedules.write' as const },
+  { label: 'Browse files', icon: 'folder', to: '/files', permission: 'files.read' as const },
+].filter((action) => identity.can(action.permission)))
 
-const targetKeys = ['displayName', 'slug', 'hostname', 'name'] as const
-
-function jobTarget(job: Job): string | undefined {
-  for (const key of targetKeys) {
-    const value = job.request[key]
-    if (typeof value === 'string' && value) return value
-  }
-  return undefined
-}
 </script>
 
 <template>
@@ -92,9 +90,9 @@ function jobTarget(job: Job): string | undefined {
         :value="jobsQuery.isError.value ? '—' : runningJobs.length"
         :detail="jobsQuery.isError.value ? 'Job history unavailable' : `${jobs.length} recorded operations`"
       />
-      <SkeletonCard v-if="certificatesQuery.isPending.value" />
+      <SkeletonCard v-if="identity.can('certificates.read') && certificatesQuery.isPending.value" />
       <MetricCard
-        v-else
+        v-else-if="identity.can('certificates.read')"
         label="TLS certificates"
         icon="shield"
         to="/certificates"
@@ -141,7 +139,7 @@ function jobTarget(job: Job): string | undefined {
               <span class="min-w-0 flex-1">
                 <strong class="block truncate text-[13px] font-semibold text-ink">{{ formatJobKind(job.kind) }}</strong>
                 <small class="block truncate text-xs text-ink-muted">
-                  {{ formatDateTime(job.createdAt) }}<template v-if="jobTarget(job)"> · {{ jobTarget(job) }}</template>
+                  {{ formatDateTime(job.createdAt) }}
                 </small>
               </span>
               <StatusPill :status="job.state" />

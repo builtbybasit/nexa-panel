@@ -18,6 +18,9 @@ type NodeSystem interface {
 	ReloadPHP(ctx context.Context, version string) error
 	ReloadNginx(ctx context.Context) error
 	VerifyHost(ctx context.Context, site Site) error
+	// RemoveSite is PrepareSite's counterpart: it deletes the account and the
+	// directory tree PrepareSite created, and nothing else.
+	RemoveSite(ctx context.Context, site Site) error
 }
 
 type HostOperator struct {
@@ -110,7 +113,20 @@ func (o *HostOperator) PlanTeardown(ctx context.Context, site Site) (Plan, error
 		plan.RetiredBefore[index] = Snapshot{Path: path}
 	}
 	plan.EnabledBefore = false
+	plan.Teardown = true
 	return plan, nil
+}
+
+// Purge removes the site's managed Unix account and its managed site root, the
+// two pieces of host state no artifact covers. It runs after the teardown
+// rollback has stripped the configuration, and is verified rather than trusted:
+// the site is re-validated against this renderer, so only the account and root
+// derived from a well-formed slug can ever be named.
+func (o *HostOperator) Purge(ctx context.Context, site Site) error {
+	if err := o.renderer.validate(site); err != nil {
+		return err
+	}
+	return o.system.RemoveSite(ctx, site)
 }
 
 func (o *HostOperator) Apply(ctx context.Context, plan Plan) (Observation, error) {
@@ -182,7 +198,19 @@ func (o *HostOperator) Rollback(ctx context.Context, plan Plan) (Observation, er
 		if err != nil {
 			return Observation{}, err
 		}
-		if !current.Exists || current.Digest != digestString(artifact.Content) {
+		// A teardown converges: an artifact it wants gone that is already gone is
+		// the end state it is driving towards, not drift. This is what lets a
+		// retried or resumed teardown finish instead of refusing forever once the
+		// first attempt has removed anything. An artifact that is still present
+		// gets the ordinary rollback's digest gate either way, so drifted content
+		// is never blindly deleted.
+		if !current.Exists {
+			if plan.Teardown {
+				continue
+			}
+			return Observation{}, errors.New("managed site changed after activation; automatic rollback is unsafe")
+		}
+		if current.Digest != digestString(artifact.Content) {
 			return Observation{}, errors.New("managed site changed after activation; automatic rollback is unsafe")
 		}
 	}

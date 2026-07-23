@@ -79,20 +79,12 @@ const collection = useCollection(() => filteredJobs.value, {
 // --- Expandable rows ---
 
 const expandedIds = ref(new Set<number>())
-const expandedResults = ref(new Set<number>())
 
 function toggleExpanded(id: number) {
   const next = new Set(expandedIds.value)
   if (next.has(id)) next.delete(id)
   else next.add(id)
   expandedIds.value = next
-}
-
-function toggleResult(id: number) {
-  const next = new Set(expandedResults.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  expandedResults.value = next
 }
 
 function formatDuration(job: Job): string {
@@ -112,22 +104,7 @@ function jobFacts(job: Job): Fact[] {
     { label: 'Started', value: job.startedAt ? formatDateTime(job.startedAt) : '—' },
     { label: 'Completed', value: job.completedAt ? formatDateTime(job.completedAt) : '—' },
   ]
-  for (const [key, value] of Object.entries(job.request)) {
-    if (typeof value === 'string') facts.push({ label: key, value, mono: true })
-  }
   return facts
-}
-
-const RESULT_PREVIEW_LIMIT = 400
-
-function resultText(job: Job): string {
-  return job.result && Object.keys(job.result).length ? JSON.stringify(job.result, null, 2) : ''
-}
-
-function resultPreview(job: Job): string {
-  const text = resultText(job)
-  if (text.length <= RESULT_PREVIEW_LIMIT || expandedResults.value.has(job.id)) return text
-  return `${text.slice(0, RESULT_PREVIEW_LIMIT)}…`
 }
 
 // --- /jobs?job=<id> deep link: expand + highlight + scroll; pin when older than the page ---
@@ -337,18 +314,6 @@ async function runDiagnostics() {
 
             <div v-if="expandedIds.has(row.job.id)" :id="`job-details-${row.job.id}`" class="mt-3 space-y-3 pl-10">
               <FactList :facts="jobFacts(row.job)" />
-              <div v-if="resultText(row.job)">
-                <p class="text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Result</p>
-                <pre class="mt-1 overflow-x-auto rounded-lg border border-outline bg-canvas/60 p-3 font-mono text-xs leading-5 whitespace-pre-wrap break-all text-ink-secondary">{{ resultPreview(row.job) }}</pre>
-                <button
-                  v-if="resultText(row.job).length > RESULT_PREVIEW_LIMIT"
-                  type="button"
-                  class="mt-1 text-xs font-medium text-accent-300 transition-colors hover:text-accent-200"
-                  @click="toggleResult(row.job.id)"
-                >
-                  {{ expandedResults.has(row.job.id) ? 'Show less' : 'Show full result' }}
-                </button>
-              </div>
               <AppAlert v-if="row.job.failure" tone="danger">{{ row.job.failure }}</AppAlert>
             </div>
           </div>

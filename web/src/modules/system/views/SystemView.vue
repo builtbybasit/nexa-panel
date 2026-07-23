@@ -24,12 +24,7 @@ const updateAvailable = computed(() => data.value?.updateAvailable ?? false)
 
 const runner = useJobRunner()
 
-// The self-update job records success just before the agent bounces both units,
-// so the live SSE stream almost always drops mid-restart. That is expected, not
-// a failure: treat a disconnect during a running update as "restarting".
-const restarting = computed(
-  () => Boolean(runner.jobId.value) && !runner.busy.value && !runner.error.value && Boolean(runner.progress.value) && runner.progress.value?.state !== 'failed',
-)
+const restarting = computed(() => Boolean(runner.jobId.value) && runner.reconnecting.value)
 
 async function update() {
   if (!canUpdate.value || runner.busy.value) return
@@ -97,7 +92,7 @@ async function update() {
             icon="refresh-cw"
             variant="primary"
             :loading="runner.busy.value"
-            :disabled="runner.busy.value || restarting"
+            :disabled="runner.busy.value"
             @click="update"
           >
             Install {{ latest?.version }}

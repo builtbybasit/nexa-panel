@@ -124,6 +124,25 @@ func TestMetricsRejectsUntrustedCaller(t *testing.T) {
 	}
 }
 
+func TestMetricsAcceptsLoopbackScraperThroughTrustedUnixSocketProxy(t *testing.T) {
+	server, err := New("test", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://panel.example/metrics", nil)
+	// A Unix peer address is deliberately not loopback by itself. The trusted
+	// socket marker and the address supplied by the shipped Nginx location must
+	// jointly identify the real loopback scraper.
+	request.RemoteAddr = "@"
+	request.Header.Set("X-Forwarded-For", "127.0.0.1")
+	request = request.WithContext(httpapi.WithTrustedProxy(request.Context()))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "nexa_build_info") {
+		t.Fatalf("trusted loopback metrics = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestPanicRecoveryWritesOneSafeResponse(t *testing.T) {
 	server, err := New("test", nil, nil)
 	if err != nil {

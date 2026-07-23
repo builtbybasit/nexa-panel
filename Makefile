@@ -2,6 +2,7 @@
 
 GO ?= go
 BUN ?= bun
+PYTHON ?= python3
 STATICCHECK_VERSION ?= v0.7.0
 DEADCODE_VERSION ?= v0.48.0
 GOVULNCHECK_VERSION ?= v1.6.0
@@ -9,7 +10,8 @@ GOVULNCHECK_VERSION ?= v1.6.0
 .PHONY: build release release-linux test test-race test-embed fmt fmt-check mod-check vet \
 	go-staticcheck go-deadcode go-vulncheck \
 	web-install web-dev web-test web-typecheck web-build web-deadcode web-audit openapi-lint \
-	scripts-check check ci
+	scripts-check check ci \
+	test-db-acceptance test-node-lifecycle
 
 build:
 	$(GO) build -o bin/nexa ./cmd/nexa
@@ -31,6 +33,20 @@ test-race:
 # tests only compile once web-build has produced the dist tree.
 test-embed: web-build
 	$(GO) test -tags embed ./...
+
+# Destructive real-engine suites. They are NOT part of `check`/`ci`: each one
+# destroys a real database and needs a Docker daemon, so `go test ./...` skips
+# them until NEXA_MYSQL_INTEGRATION / NEXA_POSTGRES_INTEGRATION are set. This
+# target and the CI job of the same name are the only things that set them.
+#   make test-db-acceptance SUITE=mysql
+test-db-acceptance:
+	GO="$(GO)" bash scripts/test-db-acceptance.sh $(SUITE)
+
+# Executed host lifecycle scenarios against the disposable systemd node. Needs
+# the nexa-node image (docker build -t nexa-node .) and a Linux release binary.
+#   make test-node-lifecycle BINARY=dist/nexa-linux-arm64
+test-node-lifecycle:
+	bash scripts/test-node-lifecycle.sh $(BINARY)
 
 fmt:
 	GO="$(GO)" bash scripts/check-go-format.sh --write
@@ -83,7 +99,10 @@ openapi-lint: web-install
 
 scripts-check:
 	bash -n scripts/*.sh
-	@if command -v shellcheck >/dev/null 2>&1; then shellcheck scripts/*.sh; else echo "shellcheck not installed; syntax check only"; fi
+	PYTHONPYCACHEPREFIX="$${TMPDIR:-/tmp}/nexa-panel-pycache" $(PYTHON) -m py_compile scripts/*.py
+	@if command -v shellcheck >/dev/null 2>&1; then shellcheck scripts/*.sh; \
+	elif [ "$${SHELLCHECK_REQUIRED:-0}" = 1 ]; then echo "shellcheck is required for CI/release validation" >&2; exit 1; \
+	else echo "shellcheck not installed; syntax check only"; fi
 
 # The cheap Go gates fail fast first, then the frontend runs: web-build has to
 # produce internal/platform/webui/dist before any -tags embed target, because

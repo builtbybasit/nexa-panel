@@ -503,9 +503,13 @@ func TestRestoreJobResolvesDestinations(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	choices := restoreChoices{Sites: []siteSelection{{Entry: "site-blog.tar.gz", SiteID: "site_1", Clear: true}}}
+	reviewed, problem := module.buildRestorePlan(ctx, *record, choices)
+	if problem != nil {
+		t.Fatalf("build restore plan: %v", problem)
+	}
 	payload, _ := json.Marshal(restorePayload{
-		CopyID: "bkcopy_1",
-		Sites:  []siteSelection{{Entry: "site-blog.tar.gz", SiteID: "site_1", Clear: true}},
+		CopyID: "bkcopy_1", Sites: choices.Sites, PreviewDigest: reviewed.digest,
 	})
 	if _, err := module.restoreJob(ctx, payload, func(int, string) error { return nil }); err != nil {
 		t.Fatalf("restoreJob: %v", err)

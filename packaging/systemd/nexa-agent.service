@@ -19,8 +19,11 @@ ExecStartPre=/usr/bin/nexa agent-token --path /etc/nexa-panel/agent.token
 ExecStart=/usr/bin/nexa agent --socket /run/nexa-panel/agent.sock --token /etc/nexa-panel/agent.token
 Restart=on-failure
 RestartSec=3s
-ConfigurationDirectory=nexa-panel
-ConfigurationDirectoryMode=0711
+# No ConfigurationDirectory=: it would make systemd own /etc/nexa-panel and
+# chown it to this unit's root:nexa, overwriting the root:root 0711 tmpfiles
+# contract that the admin-tool subdirectories (owned by the phpMyAdmin and
+# pgAdmin uids) and the root-executed generated/ tree depend on. The agent runs
+# as root with /etc already in ReadWritePaths, so it gains nothing here.
 # apt, dpkg and podman run inside this cgroup, so the ceiling has to clear their
 # real peaks: an unpack plus a container image pull sits in the low hundreds of
 # megabytes. 1G soft-throttles into reclaim before the node starts swapping,

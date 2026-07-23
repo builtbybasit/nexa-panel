@@ -96,6 +96,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		mux.HandleFunc("POST /v1/sites/teardown-plan", s.siteTeardownPlanHTTP)
 		mux.HandleFunc("POST /v1/sites/apply", s.siteApplyHTTP)
 		mux.HandleFunc("POST /v1/sites/rollback", s.siteRollbackHTTP)
+		mux.HandleFunc("POST /v1/sites/purge", s.sitePurgeHTTP)
 	}
 	if s.sftp != nil {
 		mux.HandleFunc("POST /v1/sftp/apply", s.sftpApplyHTTP)
@@ -197,7 +198,6 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.selfUpdate != nil {
 		mux.HandleFunc("GET /v1/self-update/latest", s.selfUpdateLatestHTTP)
 		mux.HandleFunc("POST /v1/self-update/apply", s.selfUpdateApplyHTTP)
-		mux.HandleFunc("POST /v1/self-update/rollback", s.selfUpdateRollbackHTTP)
 	}
 	httpServer := &http.Server{
 		// Auth stays innermost so authentication failures are still logged,

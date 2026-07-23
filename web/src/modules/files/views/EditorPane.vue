@@ -316,29 +316,36 @@ defineExpose({ open, hasDirtyTabs: () => tabs.value.some((tab) => isDirty(tab)) 
     :class="expanded ? 'fixed inset-0 z-50' : 'h-full flex-1'"
   >
     <!-- Tab strip -->
-    <div class="flex items-center overflow-x-auto border-b border-outline bg-surface/60 pl-1">
-      <button
+    <div role="tablist" aria-label="Open files" class="flex items-center overflow-x-auto border-b border-outline bg-surface/60 pl-1">
+      <div
         v-for="tab in tabs"
         :key="tab.path"
-        class="group flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 transition-colors"
+        class="group flex shrink-0 items-center border-b-2 transition-colors"
         :class="tab.path === activePath ? 'border-accent-400' : 'border-transparent hover:bg-white/[0.03]'"
-        :title="tab.path"
-        @click="activate(tab)"
       >
-        <AppIcon name="file-code-2" :size="14" :class="tab.path === activePath ? 'text-accent-300' : 'text-ink-muted'" />
-        <span class="font-mono text-[13px]" :class="tab.path === activePath ? 'text-ink' : 'text-ink-secondary'">
-          {{ tab.name }}</span
+        <button
+          type="button"
+          role="tab"
+          class="flex items-center gap-2 py-2.5 pl-3"
+          :aria-selected="tab.path === activePath"
+          :title="tab.path"
+          @click="activate(tab)"
         >
-        <span v-if="isDirty(tab)" class="h-1.5 w-1.5 rounded-full bg-amber-300" aria-label="Unsaved changes" />
-        <span
-          class="ml-0.5 rounded p-0.5 text-ink-muted transition-colors hover:bg-white/[0.08] hover:text-ink"
-          role="button"
+          <AppIcon name="file-code-2" :size="14" :class="tab.path === activePath ? 'text-accent-300' : 'text-ink-muted'" />
+          <span class="font-mono text-[13px]" :class="tab.path === activePath ? 'text-ink' : 'text-ink-secondary'">
+            {{ tab.name }}
+          </span>
+          <span v-if="isDirty(tab)" class="h-1.5 w-1.5 rounded-full bg-amber-300" aria-label="Unsaved changes" />
+        </button>
+        <button
+          type="button"
+          class="mx-1 rounded p-0.5 text-ink-muted transition-colors hover:bg-white/[0.08] hover:text-ink"
           :aria-label="`Close ${tab.name}`"
-          @click.stop="requestCloseTab(tab)"
+          @click="requestCloseTab(tab)"
         >
           <AppIcon name="x" :size="14" />
-        </span>
-      </button>
+        </button>
+      </div>
     </div>
 
     <!-- Toolbar -->

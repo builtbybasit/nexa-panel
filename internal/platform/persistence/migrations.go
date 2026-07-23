@@ -107,6 +107,30 @@ func RunMigrations(ctx context.Context, database *bun.DB, opts ...MigrateOption)
 	return runMigrations(ctx, database, set, legacyLedger, settings)
 }
 
+// AssertMigrationsCurrent reports an error unless every embedded migration is
+// recorded as applied in the ledger. It is the schema half of API readiness: a
+// binary whose migrations have not run — or which was rolled back onto a
+// database a newer build already migrated — must not be reported healthy, and
+// must therefore fail an update's activation health gate.
+//
+// It only reads: an install whose ledger table does not exist yet is not ready
+// either, and says so rather than creating one.
+func AssertMigrationsCurrent(ctx context.Context, database *bun.DB) error {
+	set := migrate.NewMigrations()
+	if err := set.Discover(migrations.FS); err != nil {
+		return fmt.Errorf("discover migrations: %w", err)
+	}
+	migrator := migrate.NewMigrator(database, set)
+	status, err := migrator.MigrationsWithStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect migration status: %w", err)
+	}
+	if pending := status.Unapplied(); len(pending) > 0 {
+		return fmt.Errorf("%d migration(s) are not applied, starting at %q", len(pending), pending[0].Name)
+	}
+	return nil
+}
+
 // runMigrations is the testable core: reconcile pre-bun installs, then apply any
 // unapplied migrations under an advisory lock so two boots cannot race. When a
 // pre-migration snapshot is configured and an existing install is actually being

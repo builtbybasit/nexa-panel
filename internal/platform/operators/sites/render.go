@@ -238,10 +238,19 @@ type Plan struct {
 	Retired       []string   `json:"retired,omitempty"`
 	RetiredBefore []Snapshot `json:"retiredBefore,omitempty"`
 	EnabledBefore bool       `json:"enabledBefore"`
-	Warnings      []string   `json:"warnings"`
-	PlannedAt     time.Time  `json:"plannedAt"`
-	ExpiresAt     time.Time  `json:"expiresAt"`
-	Signature     string     `json:"signature,omitempty"`
+	// Teardown marks the synthetic plan PlanTeardown issues, and changes exactly
+	// one thing about Rollback: an artifact that is already absent counts as the
+	// desired end state instead of drift. A teardown is retried whenever its job
+	// is interrupted, so without this the second attempt could never converge —
+	// every path the first attempt removed looked like a site somebody deleted by
+	// hand. The flag is inside the signed plan, so a caller cannot set it on an
+	// ordinary rollback: the agent issues it, and any edit invalidates the
+	// signature.
+	Teardown  bool      `json:"teardown,omitempty"`
+	Warnings  []string  `json:"warnings"`
+	PlannedAt time.Time `json:"plannedAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	Signature string    `json:"signature,omitempty"`
 }
 
 const PlanKind = "nexa.site.activation.v1"
@@ -278,6 +287,13 @@ type Operator interface {
 	PlanTeardown(ctx context.Context, site Site) (Plan, error)
 	Apply(ctx context.Context, plan Plan) (Observation, error)
 	Rollback(ctx context.Context, plan Plan) (Observation, error)
+	// Purge removes the host identity a site owns outside its rendered artifacts:
+	// the managed Unix account PrepareSite created and the managed site root. No
+	// plan removed either, so before it existed every deleted site left its
+	// account and all of its files behind, unowned. It is idempotent — an account
+	// or a root that is already gone is success — and refuses to touch anything
+	// that does not match the account contract derived from the site's slug.
+	Purge(ctx context.Context, site Site) error
 }
 
 type Renderer struct {

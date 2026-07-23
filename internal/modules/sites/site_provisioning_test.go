@@ -38,6 +38,7 @@ func (operator fakeSiteOperator) PlanTeardown(ctx context.Context, site siteoper
 		plan.RetiredBefore[index] = siteoperator.Snapshot{Path: path}
 	}
 	plan.EnabledBefore = false
+	plan.Teardown = true
 	return plan, nil
 }
 
@@ -160,3 +161,5 @@ func waitForJob(t *testing.T, queue *jobs.Module, id int64) {
 	}
 	t.Fatal("planning job did not complete")
 }
+
+func (fakeSiteOperator) Purge(context.Context, siteoperator.Site) error { return nil }

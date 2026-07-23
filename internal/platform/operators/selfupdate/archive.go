@@ -37,7 +37,7 @@ const (
 // release job or an attempt to drop a file somewhere useful.
 var (
 	releaseTreePrefixes = []string{"bin/", "packaging/", "scripts/"}
-	releaseTreeFiles    = []string{"RELEASE"}
+	releaseTreeFiles    = []string{releaseManifestEntry}
 )
 
 // executableEntries are the extracted members that must be runnable. Everything

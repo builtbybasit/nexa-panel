@@ -263,6 +263,11 @@ backups_copies_copyId_restore:
   post:
     operationId: restoreBackupCopy
     summary: Restore Backup Copy
+    description: >-
+      Queues only the exact restore plan bound by a current preview token. The
+      control plane resolves and hashes the source copy, account, selections,
+      and destination state again at submission and in the worker before the
+      node operator may mutate a destination.
     tags:
     - Backups
     x-permission: operations.apply
@@ -277,7 +282,7 @@ backups_copies_copyId_restore:
     - name: Idempotency-Key
       in: header
       required: false
-      description: Repeating the same key and request returns the original durable job.
+      description: Repeating the same key and request returns the original durable job. When omitted, the preview token supplies a safe default key.
       schema:
         type: string
         maxLength: 200
@@ -292,7 +297,13 @@ backups_copies_copyId_restore:
             - sites
             - databases
             - allowUnverified
+            - previewToken
             properties:
+              previewToken:
+                type: string
+                minLength: 1
+                maxLength: 2048
+                description: Short-lived actor- and plan-bound token returned by the restore preview endpoint.
               allowUnverified:
                 type: boolean
                 description: Explicit acknowledgement required when the copy has no passing integrity check.
@@ -324,9 +335,105 @@ backups_copies_copyId_restore:
       '202':
         description: A backup.restore job was queued
       '409':
-        description: The idempotency key conflicts or an unverified restore was not explicitly acknowledged
+        description: The preview is missing, expired, or no longer matches; the idempotency key conflicts; or an unverified restore was not acknowledged
       '422':
         description: A selected item is not part of the copy, or nothing was selected
+backups_copies_copyId_restore_preview:
+  post:
+    operationId: previewBackupRestore
+    summary: Preview Backup Restore
+    description: >-
+      Resolves and validates the selected source entries and live destinations
+      without queueing a job or invoking the node restore operator. Returns a
+      redacted impact plan and a short-lived token bound to the authenticated
+      actor and exact resolved state.
+    tags:
+    - Backups
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: copyId
+      in: path
+      required: true
+      schema:
+        type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - sites
+            - databases
+            - allowUnverified
+            properties:
+              allowUnverified:
+                type: boolean
+                description: Explicit acknowledgement required when the copy has no passing integrity check.
+              sites:
+                type: array
+                maxItems: 128
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [entry, siteId, clear]
+                  properties:
+                    entry: {type: string, minLength: 1}
+                    siteId: {type: string, minLength: 1}
+                    clear: {type: boolean}
+              databases:
+                type: array
+                maxItems: 128
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [entry, databaseRef, clear]
+                  properties:
+                    entry: {type: string, minLength: 1}
+                    databaseRef: {type: string, pattern: '^(postgres|mysql):.+'}
+                    clear: {type: boolean}
+    responses:
+      '200':
+        description: A redacted, resolved, non-mutating restore plan with a short-lived binding token
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [copyId, copyName, integrityState, warnings, items, previewToken, expiresAt]
+              properties:
+                copyId: {type: string}
+                copyName: {type: string}
+                integrityState: {type: string, enum: [unverified, passed, failed]}
+                warnings:
+                  type: array
+                  items: {type: string}
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 128
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [kind, sourceEntry, destinationRef, destinationLabel, clear, impact]
+                    properties:
+                      kind: {type: string, enum: [site, database]}
+                      sourceEntry: {type: string}
+                      destinationRef: {type: string}
+                      destinationLabel: {type: string}
+                      clear: {type: boolean}
+                      impact: {type: string}
+                previewToken: {type: string, minLength: 1, maxLength: 2048}
+                expiresAt: {type: string, format: date-time}
+      '404':
+        description: The backup copy does not exist
+      '409':
+        description: Integrity acknowledgement is required, or the source or a destination is currently unavailable
+      '422':
+        description: The selection is empty, duplicated, incompatible, or not part of the copy
 backups_copies_copyId:
   delete:
     operationId: deleteBackupCopy

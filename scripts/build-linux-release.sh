@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Build the Linux release artifacts for one architecture.
 #
-# Produces four files under dist/:
+# Produces three files under dist/:
 #
-#   nexa-linux-<arch>                     the bare binary (convenience/debug)
-#   nexa-linux-<arch>.sha256
+#   nexa-linux-<arch>                     the bare binary
 #   nexa-panel-linux-<arch>.tar.gz        the installable bundle
 #   nexa-panel-linux-<arch>.tar.gz.sha256
 #
@@ -14,6 +13,12 @@
 # the private repo as the only working install path. The tarball carries every
 # repo file install.sh touches, laid out exactly as install.sh expects to find
 # them relative to itself.
+#
+# The bare binary is a local build product only — the Docker test node and
+# `self-update --binary` consume it off this machine. It is deliberately NOT a
+# release asset and gets no checksum sidecar: a released bare binary would sit
+# beside the signed bundles carrying no signature at all, which is an invitation
+# to install the one artifact whose authenticity nothing verifies.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -70,8 +75,6 @@ write_checksum() {
   fi
 }
 
-write_checksum "${OUTPUT}"
-
 # --- installable bundle -------------------------------------------------------
 # The file list is not a guess: it is every path scripts/install.sh resolves out
 # of its own checkout ("$ROOT_DIR/..."). The whole packaging tree ships verbatim
@@ -86,6 +89,8 @@ install -d -m 0755 "${BUNDLE_DIR}/bin" "${BUNDLE_DIR}/scripts"
 install -m 0755 "${OUTPUT}" "${BUNDLE_DIR}/bin/nexa"
 install -m 0755 "${ROOT_DIR}/scripts/install.sh" "${BUNDLE_DIR}/scripts/install.sh"
 install -m 0755 "${ROOT_DIR}/scripts/nexa-seed-admin.sh" "${BUNDLE_DIR}/scripts/nexa-seed-admin.sh"
+install -m 0755 "${ROOT_DIR}/scripts/nexa-release-helper.py" "${BUNDLE_DIR}/scripts/nexa-release-helper.py"
+install -m 0755 "${ROOT_DIR}/scripts/uninstall.sh" "${BUNDLE_DIR}/scripts/uninstall.sh"
 
 cp -R "${ROOT_DIR}/packaging" "${BUNDLE_DIR}/packaging"
 # Drop editor and macOS cruft the checkout may carry, then normalise modes so the

@@ -49,7 +49,11 @@ type Database struct {
 	EngineID       string `json:"engineId"`
 	Name           string `json:"name"`
 	OwnerAccountID string `json:"ownerAccountId"`
-	Status         Status `json:"status"`
+	// The site this database was created for, empty when it belongs to no site.
+	// It is the relation site teardown blocks on, so it travels with the row
+	// rather than being re-derived from the name by whoever needs it.
+	SiteID string `json:"siteId,omitempty"`
+	Status Status `json:"status"`
 	// A pointer rather than the int64-with-omitempty used for backup sizes: an
 	// empty database really does measure zero bytes, and callers must be able
 	// to tell that apart from one that has never been probed.
@@ -134,6 +138,7 @@ type databaseModel struct {
 	EngineID       string
 	Name           string
 	OwnerAccountID string
+	SiteID         *string
 	Status         string
 	SizeBytes      *int64
 	SizeObservedAt *time.Time
@@ -191,7 +196,7 @@ func (m accountModel) toAccount() Account {
 }
 
 func (m databaseModel) toDatabase() Database {
-	return Database{ID: m.ID, EngineID: m.EngineID, Name: m.Name, OwnerAccountID: m.OwnerAccountID, Status: Status(m.Status), SizeBytes: m.SizeBytes, SizeObservedAt: m.SizeObservedAt, LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+	return Database{ID: m.ID, EngineID: m.EngineID, Name: m.Name, OwnerAccountID: m.OwnerAccountID, SiteID: pointerString(m.SiteID), Status: Status(m.Status), SizeBytes: m.SizeBytes, SizeObservedAt: m.SizeObservedAt, LastJobID: m.LastJobID, Failure: pointerString(m.Failure), CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 
 func (m grantModel) toGrant() Grant {

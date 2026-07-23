@@ -82,6 +82,7 @@ func (s fakeSiteOperator) PlanTeardown(ctx context.Context, site siteoperator.Si
 		plan.RetiredBefore[index] = siteoperator.Snapshot{Path: path}
 	}
 	plan.EnabledBefore = false
+	plan.Teardown = true
 	return plan, nil
 }
 
@@ -110,6 +111,7 @@ func (r *recordingSiteOperator) PlanTeardown(ctx context.Context, site siteopera
 		plan.RetiredBefore[index] = siteoperator.Snapshot{Path: path}
 	}
 	plan.EnabledBefore = false
+	plan.Teardown = true
 	return plan, nil
 }
 
@@ -251,3 +253,7 @@ func waitCertificateJobFailure(t *testing.T, queue *jobs.Module, id int64) {
 	}
 	t.Fatal("job timeout")
 }
+
+func (fakeSiteOperator) Purge(context.Context, siteoperator.Site) error { return nil }
+
+func (*recordingSiteOperator) Purge(context.Context, siteoperator.Site) error { return nil }

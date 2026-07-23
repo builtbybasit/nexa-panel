@@ -9,23 +9,83 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 )
 
-// Apply installs a new panel binary and arms a detached, delayed restart of both
-// units, returning before that restart fires so the enclosing job can record
-// success while the current process is still alive. It dispatches on the change:
-// a BinaryPath installs a binary already staged on the host; otherwise the
-// target release is downloaded from the trusted repository and verified first.
+// Apply installs a signed release as a crash-recoverable host transaction. It
+// does not return success until the detached activation helper has restarted the
+// new services and the API readiness check has authenticated the new agent.
 func (o *HostOperator) Apply(ctx context.Context, change Change) (Result, error) {
 	o.applyMu.Lock()
-	defer o.applyMu.Unlock()
-
-	if strings.TrimSpace(change.BinaryPath) != "" {
-		return o.applyLocalBinary(ctx, change.BinaryPath)
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			o.applyMu.Unlock()
+		}
+	}()
+	hostLock, hostUnlock, err := o.acquireHostLock(ctx)
+	if err != nil {
+		return Result{}, err
 	}
-	return o.applyRelease(ctx, change)
+	hostUnlocked := false
+	defer func() {
+		if !hostUnlocked {
+			hostUnlock()
+		}
+	}()
+
+	requested := normalizeVersion(change.Version)
+	if requested != "" {
+		if current, err := readTransaction(o.transactionPath()); err == nil && current.TargetVersion == requested {
+			switch current.Phase {
+			case phaseSucceeded:
+				hostUnlock()
+				hostUnlocked = true
+				o.applyMu.Unlock()
+				unlocked = true
+				return current.Result, nil
+			case phasePrepared:
+				recoveryErr := o.restorePreparedTransaction(ctx, current)
+				current.Phase = phaseFailed
+				current.FailureReported = true
+				current.Failure = "an interrupted update was restored before activation"
+				if recoveryErr != nil {
+					current.Failure += "; recovery failed: " + recoveryErr.Error()
+				} else {
+					current.Result.RolledBack = true
+					current.Result.Swapped = false
+				}
+				_ = writeTransaction(o.transactionPath(), current)
+				return current.Result, errors.New(current.Failure)
+			case phaseActivating:
+				hostUnlock()
+				hostUnlocked = true
+				o.applyMu.Unlock()
+				unlocked = true
+				return o.waitForActivation(ctx, o.transactionPath())
+			case phaseFailed:
+				if !current.FailureReported {
+					current.FailureReported = true
+					_ = writeTransaction(o.transactionPath(), current)
+					hostUnlock()
+					hostUnlocked = true
+					o.applyMu.Unlock()
+					unlocked = true
+					return current.Result, errors.New(current.Failure)
+				}
+			}
+		}
+	}
+
+	result, statePath, err := o.applyRelease(ctx, change, hostLock)
+	if err != nil {
+		return result, err
+	}
+	hostUnlock()
+	hostUnlocked = true
+	o.applyMu.Unlock()
+	unlocked = true
+	return o.waitForActivation(ctx, statePath)
 }
 
 // applyRelease resolves, downloads, and verifies a release from the trusted
@@ -33,82 +93,185 @@ func (o *HostOperator) Apply(ctx context.Context, change Change) (Result, error)
 // archive must match its published checksum, and the binary it carries must run
 // and report the expected version.
 //
-// The order matters. The binary is swapped first and the packaging applied
-// second, because the packaging describes the new binary: units, tmpfiles rules
-// and prerequisites for a version that is not on disk yet would be the wrong
-// half of the upgrade to land first. A packaging failure therefore leaves a
-// node whose binary moved and whose units did not — that is reported as an
-// error naming the rollback, not swallowed.
-func (o *HostOperator) applyRelease(ctx context.Context, change Change) (Result, error) {
+// Packaging is applied before the live binary moves, after an exact snapshot of
+// every managed destination. Any failure restores that snapshot while the old
+// services and binary are still running; there is no half-upgraded success path.
+func (o *HostOperator) applyRelease(ctx context.Context, change Change, lifecycleLock *os.File) (Result, string, error) {
 	release, err := o.resolve(ctx, change)
 	if err != nil {
-		return Result{}, err
+		return Result{}, "", err
 	}
 	if !isNewer(release.Version, o.installed) {
 		if release.Version == o.installed {
-			return Result{}, fmt.Errorf("this node already runs version %s", o.installed)
+			return Result{}, "", fmt.Errorf("this node already runs version %s", o.installed)
 		}
-		return Result{}, fmt.Errorf("version %s is older than the installed %s; downgrades are not supported", release.Version, o.installed)
+		return Result{}, "", fmt.Errorf("version %s is older than the installed %s; downgrades are not supported", release.Version, o.installed)
 	}
 
 	expected, err := o.expectedChecksum(ctx, release)
 	if err != nil {
-		return Result{}, err
+		return Result{}, "", err
 	}
 	archive, err := o.downloader.Fetch(ctx, release.AssetURL, maxArchiveBytes)
 	if err != nil {
-		return Result{}, err
+		return Result{}, "", err
 	}
 	if err := verifyChecksum(archive, expected); err != nil {
-		return Result{}, err
+		return Result{}, "", err
+	}
+	signature, err := o.downloader.Fetch(ctx, release.SignatureURL, maxSignatureBytes)
+	if err != nil {
+		return Result{}, "", fmt.Errorf("download release signature: %w", err)
+	}
+	if err := o.verifyReleaseSignature(ctx, archive, signature); err != nil {
+		return Result{}, "", err
 	}
 
 	staging, err := o.stage(archive)
 	if err != nil {
-		return Result{}, err
+		return Result{}, "", err
 	}
-	// The staging tree is only removed on a failure; on success it is retained
-	// as the node's "current" packaging so a later rollback has something to
-	// restore.
-	staged := false
-	defer func() {
-		if !staged {
-			_ = os.RemoveAll(staging)
-		}
-	}()
+	defer os.RemoveAll(staging)
 
 	binary, err := readStagedBinary(filepath.Join(staging, filepath.FromSlash(releaseBinaryEntry)))
 	if err != nil {
-		return Result{}, err
+		return Result{}, "", err
+	}
+	reported, err := o.validateBinary(ctx, binary, release.Version)
+	if err != nil {
+		return Result{}, "", err
+	}
+	// Every statement of what this bundle is has to agree before its install.sh
+	// runs as root. Signature and checksum prove the bytes are a genuine,
+	// unmodified release; only this proves they are the release that was asked
+	// for, built for this architecture.
+	manifest, err := readReleaseManifest(filepath.Join(staging, filepath.FromSlash(releaseManifestEntry)))
+	if err != nil {
+		return Result{}, "", err
+	}
+	if err := verifyReleaseAgreement(release, manifest, o.arch, reported, expected, archive); err != nil {
+		return Result{}, "", err
+	}
+	transactionID, err := newTransactionID()
+	if err != nil {
+		return Result{}, "", err
+	}
+	snapshotDir, err := o.createHostSnapshot(transactionID)
+	if err != nil {
+		return Result{}, "", err
+	}
+	preservedBinary, err := o.preserveTransactionBinary(transactionID)
+	if err != nil {
+		return Result{}, "", err
+	}
+	databaseSnapshot, err := o.createControlDatabaseSnapshot(ctx, transactionID)
+	if err != nil {
+		return Result{}, "", err
+	}
+	result := Result{
+		PreviousVersion: o.installed,
+		TargetVersion:   release.Version,
+		PackagingSynced: false,
+	}
+	state := updateTransaction{
+		ID:               transactionID,
+		TargetVersion:    release.Version,
+		PreviousVersion:  o.installed,
+		Phase:            phasePrepared,
+		SnapshotDir:      snapshotDir,
+		PreservedBinary:  preservedBinary,
+		DatabaseSnapshot: databaseSnapshot,
+		Result:           result,
+		CreatedAt:        o.now().UTC(),
+	}
+	statePath := o.transactionPath()
+	// The journal records that the installer — and with it dpkg/apt — is about
+	// to run, so a reboot or a kill during it is repairable at recovery.
+	state.PackagingRunning = true
+	if err := writeTransaction(statePath, state); err != nil {
+		return Result{}, "", err
+	}
+	syncErr := o.syncPackaging(ctx, staging, lifecycleLock)
+	state.PackagingRunning = false
+	if syncErr != nil {
+		err := syncErr
+		// A cancelled context SIGKILLs the installer's whole process group, so
+		// its EXIT trap never runs and dpkg can be left half-configured.
+		if ctx.Err() != nil {
+			if recoveryErr := o.recoverPackageManager(ctx); recoveryErr != nil {
+				err = fmt.Errorf("%w; repair the interrupted package manager: %v", err, recoveryErr)
+			}
+		}
+		restoreErr := restoreHostSnapshot(snapshotDir)
+		state.Phase = phaseFailed
+		state.Failure = err.Error()
+		state.FailureReported = true
+		state.Result.RolledBack = restoreErr == nil
+		_ = writeTransaction(statePath, state)
+		if restoreErr != nil {
+			return Result{}, "", fmt.Errorf("%w; restore previous packaging: %v", err, restoreErr)
+		}
+		return Result{}, "", err
 	}
 	if _, err := o.installStagedBinary(ctx, binary, release.Version); err != nil {
-		return Result{}, err
+		restoreErr := o.restorePreparedTransaction(ctx, state)
+		state.Phase = phaseFailed
+		state.Failure = err.Error()
+		state.FailureReported = true
+		state.Result.RolledBack = restoreErr == nil
+		_ = writeTransaction(statePath, state)
+		if restoreErr != nil {
+			return Result{}, "", fmt.Errorf("%w; restore previous packaging: %v", err, restoreErr)
+		}
+		return Result{}, "", err
 	}
-	if err := o.syncPackaging(ctx, staging); err != nil {
-		return Result{
-			PreviousVersion: o.installed,
-			TargetVersion:   release.Version,
-			Swapped:         true,
-			PackagingNote:   "the binary is now " + release.Version + " but its packaging was not applied; run `nexa self-update rollback` or re-run the release installer by hand",
-		}, err
-	}
-	if err := o.retainPackaging(staging); err != nil {
-		return Result{}, err
-	}
-	staged = true
-
-	result, err := o.finishSwap(ctx, release.Version)
+	result.Swapped = true
 	result.PackagingSynced = true
-	return result, err
+	state.Phase = phaseActivating
+	state.Result = result
+	if err := writeTransaction(statePath, state); err != nil {
+		_ = o.restorePreparedTransaction(ctx, state)
+		return Result{}, "", err
+	}
+	if err := o.launchActivation(ctx, statePath, transactionID); err != nil {
+		restoreErr := o.restorePreparedTransaction(ctx, state)
+		state.Phase = phaseFailed
+		state.Failure = err.Error()
+		state.FailureReported = true
+		state.Result.RolledBack = restoreErr == nil
+		if restoreErr != nil {
+			state.Failure += "; restore previous state: " + restoreErr.Error()
+		}
+		_ = writeTransaction(statePath, state)
+		return Result{}, "", err
+	}
+	return result, statePath, nil
 }
 
-// applyLocalBinary installs a binary an operator has already staged on the host
+// ApplyLocalBinary installs a binary an operator has already staged on the host
 // (via scp/rsync, then `nexa self-update --binary PATH`). There is no download,
 // no checksum, and no newer-than guard: pushing a build is an explicit act, so a
 // same- or dev-version re-deploy is allowed. The path is validated only as an
 // absolute, regular, size-bounded file, and the binary must run and report a
 // version before it replaces the live one.
-func (o *HostOperator) applyLocalBinary(ctx context.Context, path string) (Result, error) {
+func (o *HostOperator) ApplyLocalBinary(ctx context.Context, path string) (Result, error) {
+	o.applyMu.Lock()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			o.applyMu.Unlock()
+		}
+	}()
+	_, hostUnlock, err := o.acquireHostLock(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	hostUnlocked := false
+	defer func() {
+		if !hostUnlocked {
+			hostUnlock()
+		}
+	}()
 	if !filepath.IsAbs(path) {
 		return Result{}, errors.New("the binary path must be absolute")
 	}
@@ -126,44 +289,109 @@ func (o *HostOperator) applyLocalBinary(ctx context.Context, path string) (Resul
 	if err != nil {
 		return Result{}, fmt.Errorf("the binary at %s could not be read: %w", path, err)
 	}
-	reported, err := o.installStagedBinary(ctx, binary, "")
+	transactionID, err := newTransactionID()
+	if err != nil {
+		return Result{}, err
+	}
+	snapshotDir, err := o.createHostSnapshot(transactionID)
+	if err != nil {
+		return Result{}, err
+	}
+	preservedBinary, err := o.preserveTransactionBinary(transactionID)
+	if err != nil {
+		return Result{}, err
+	}
+	databaseSnapshot, err := o.createControlDatabaseSnapshot(ctx, transactionID)
+	if err != nil {
+		return Result{}, err
+	}
+	reported, err := o.validateBinary(ctx, binary, "")
 	if err != nil {
 		return Result{}, err
 	}
 	if reported == "" {
 		reported = "the supplied binary"
 	}
-	result, err := o.finishSwap(ctx, reported)
-	// A local push is a binary, not a release: there is no packaging tree to
-	// apply. Say so rather than let the caller assume a full upgrade.
-	result.PackagingNote = "only the binary was replaced; if this build changes systemd units, tmpfiles rules or the nginx template, run its scripts/install.sh " + releaseInstallerFlag
-	return result, err
+	result := Result{PreviousVersion: o.installed, TargetVersion: reported}
+	result.PackagingNote = "only the binary was replaced; if this build changes systemd units, tmpfiles rules or the nginx template, install the complete signed release instead"
+	state := updateTransaction{ID: transactionID, TargetVersion: reported, PreviousVersion: o.installed, Phase: phasePrepared, SnapshotDir: snapshotDir, PreservedBinary: preservedBinary, DatabaseSnapshot: databaseSnapshot, Result: result, CreatedAt: o.now().UTC()}
+	statePath := o.transactionPath()
+	if err := writeTransaction(statePath, state); err != nil {
+		return Result{}, err
+	}
+	if _, err := o.installStagedBinary(ctx, binary, ""); err != nil {
+		restoreErr := o.restorePreparedTransaction(ctx, state)
+		state.Phase = phaseFailed
+		state.Failure = err.Error()
+		state.FailureReported = true
+		state.Result.RolledBack = restoreErr == nil
+		if restoreErr != nil {
+			state.Failure += "; restore previous state: " + restoreErr.Error()
+		}
+		_ = writeTransaction(statePath, state)
+		return Result{}, err
+	}
+	result.Swapped = true
+	state.Phase = phaseActivating
+	state.Result = result
+	if err := writeTransaction(statePath, state); err != nil {
+		_ = o.restorePreparedTransaction(ctx, state)
+		return Result{}, err
+	}
+	if err := o.launchActivation(ctx, statePath, transactionID); err != nil {
+		restoreErr := o.restorePreparedTransaction(ctx, state)
+		state.Phase = phaseFailed
+		state.Failure = err.Error()
+		state.FailureReported = true
+		state.Result.RolledBack = restoreErr == nil
+		if restoreErr != nil {
+			state.Failure += "; restore previous state: " + restoreErr.Error()
+		}
+		_ = writeTransaction(statePath, state)
+		return Result{}, err
+	}
+	hostUnlock()
+	hostUnlocked = true
+	o.applyMu.Unlock()
+	unlocked = true
+	return o.waitForActivation(ctx, statePath)
 }
 
-// Rollback reinstalls the binary preserved by the previous swap, and, when the
-// release that binary came from is still retained, re-applies its packaging too.
-// It validates the preserved binary runs before the atomic replacement — which
-// itself re-preserves the now-current binary as the new .prev, and swaps the two
-// retained packaging trees, so a rollback can be undone — then arms the same
-// detached restart as a normal apply. It errors when no previous binary is
-// available.
-//
-// Packaging is rolled back with the binary rather than left alone because the
-// two are one artifact: reverting only /usr/bin/nexa onto units, tmpfiles rules
-// and an nginx template from the newer release is the same half-upgrade this
-// operator exists to prevent, just in the other direction. When there is no
-// retained previous tree — the node's first self-update, where the packaging it
-// came with was never captured — the binary is still restored, and the Result
-// says plainly that the packaging was not.
+// Rollback restores the exact binary and managed host files captured by the
+// successful transaction. Before doing so it snapshots the current state, so
+// the rollback is itself undoable. The same detached activation and readiness
+// gate applies in both directions.
 func (o *HostOperator) Rollback(ctx context.Context) (Result, error) {
 	o.applyMu.Lock()
-	defer o.applyMu.Unlock()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			o.applyMu.Unlock()
+		}
+	}()
+	_, hostUnlock, err := o.acquireHostLock(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	hostUnlocked := false
+	defer func() {
+		if !hostUnlocked {
+			hostUnlock()
+		}
+	}()
+	current, err := readTransaction(o.transactionPath())
+	if err != nil || current.Phase != phaseSucceeded {
+		return Result{}, errors.New("no completed update transaction is available to roll back")
+	}
+	if !current.DatabaseSnapshot.Captured {
+		return Result{}, errors.New("this update predates rollback-safe control database snapshots and cannot be rolled back automatically")
+	}
 
-	previous := o.previousBinaryPath()
+	previous := current.PreservedBinary
 	info, err := os.Stat(previous)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return Result{}, errors.New("no previous binary is available to roll back to")
+			return Result{}, errors.New("no transaction-preserved previous binary is available to roll back to")
 		}
 		return Result{}, fmt.Errorf("the previous binary at %s could not be read: %w", previous, err)
 	}
@@ -174,60 +402,87 @@ func (o *HostOperator) Rollback(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("the previous binary at %s could not be read: %w", previous, err)
 	}
+	transactionID, err := newTransactionID()
+	if err != nil {
+		return Result{}, err
+	}
+	undoSnapshot, err := o.createHostSnapshot(transactionID)
+	if err != nil {
+		return Result{}, err
+	}
+	preservedCurrentBinary, err := o.preserveTransactionBinary(transactionID)
+	if err != nil {
+		return Result{}, err
+	}
+	databaseSnapshot, err := o.createControlDatabaseSnapshot(ctx, transactionID)
+	if err != nil {
+		return Result{}, err
+	}
+	targetVersion := current.PreviousVersion
+	if targetVersion == "" {
+		targetVersion = "the previous binary"
+	}
+	result := Result{PreviousVersion: current.TargetVersion, TargetVersion: targetVersion, PackagingSynced: true}
+	targetDatabase := current.DatabaseSnapshot
+	state := updateTransaction{ID: transactionID, TargetVersion: targetVersion, PreviousVersion: current.TargetVersion, Phase: phasePrepared, SnapshotDir: undoSnapshot, PreservedBinary: preservedCurrentBinary, DatabaseSnapshot: databaseSnapshot, ActivationDatabaseRestore: &targetDatabase, Result: result, CreatedAt: o.now().UTC()}
+	statePath := o.transactionPath()
+	if err := writeTransaction(statePath, state); err != nil {
+		return Result{}, err
+	}
 	reported, err := o.installStagedBinary(ctx, binary, "")
 	if err != nil {
+		restoreErr := o.restorePreparedTransaction(ctx, state)
+		state.Phase = phaseFailed
+		state.Failure = err.Error()
+		state.FailureReported = true
+		state.Result.RolledBack = restoreErr == nil
+		_ = writeTransaction(statePath, state)
+		if restoreErr != nil {
+			return Result{}, fmt.Errorf("%w; restore current state: %v", err, restoreErr)
+		}
 		return Result{}, err
 	}
 	if reported == "" {
 		reported = "the previous binary"
 	}
-	synced, note, err := o.rollbackPackaging(ctx)
-	if err != nil {
-		return Result{
-			PreviousVersion: o.installed,
-			TargetVersion:   reported,
-			Swapped:         true,
-			PackagingNote:   "the previous binary is back in place but its packaging could not be re-applied; re-run the release installer by hand",
-		}, err
+	if err := restoreHostSnapshot(current.SnapshotDir); err != nil {
+		restoreErr := o.restorePreparedTransaction(ctx, state)
+		state.Phase = phaseFailed
+		state.Failure = err.Error()
+		state.FailureReported = true
+		state.Result.RolledBack = restoreErr == nil
+		_ = writeTransaction(statePath, state)
+		if restoreErr != nil {
+			return Result{}, fmt.Errorf("restore previous packaging: %w; restore current state: %v", err, restoreErr)
+		}
+		return Result{}, fmt.Errorf("restore previous packaging: %w", err)
 	}
-	result, err := o.finishSwap(ctx, reported)
-	result.PackagingSynced = synced
-	result.PackagingNote = note
-	return result, err
-}
-
-// rollbackPackaging re-applies the retained previous release tree and swaps it
-// with the current one so the rollback is itself undoable. It reports whether
-// packaging moved, and the note the caller must show when it did not.
-func (o *HostOperator) rollbackPackaging(ctx context.Context) (bool, string, error) {
-	previous := filepath.Join(o.workRoot, previousPackagingDir)
-	if _, err := os.Stat(filepath.Join(previous, filepath.FromSlash(releaseInstallerEntry))); err != nil {
-		return false, "only the binary was rolled back: this node has no retained packaging for the previous version, so its systemd units, tmpfiles rules and nginx template are still the newer release's", nil
+	if current.PreviousVersion != "" {
+		reported = current.PreviousVersion
 	}
-	if err := o.syncPackaging(ctx, previous); err != nil {
-		return false, "", err
+	result.TargetVersion = reported
+	result.Swapped = true
+	state.TargetVersion = reported
+	state.Phase = phaseActivating
+	state.Result = result
+	if err := writeTransaction(statePath, state); err != nil {
+		_ = o.restorePreparedTransaction(ctx, state)
+		return Result{}, err
 	}
-	if err := o.swapRetainedPackaging(); err != nil {
-		return false, "", err
+	if err := o.launchActivation(ctx, statePath, transactionID); err != nil {
+		restoreErr := o.restorePreparedTransaction(ctx, state)
+		state.Phase = phaseFailed
+		state.Failure = err.Error()
+		state.FailureReported = true
+		state.Result.RolledBack = restoreErr == nil
+		_ = writeTransaction(statePath, state)
+		return Result{}, err
 	}
-	return true, "", nil
-}
-
-// finishSwap arms the restart and assembles the Result after a successful swap.
-// The swap has already happened, so a restart-scheduling failure is reported but
-// still returns Swapped: the operator can bounce the units by hand.
-func (o *HostOperator) finishSwap(ctx context.Context, targetVersion string) (Result, error) {
-	result := Result{PreviousVersion: o.installed, TargetVersion: targetVersion, Swapped: true}
-	// Surface whether a rollback target exists so callers can offer it.
-	if info, err := os.Stat(o.previousBinaryPath()); err == nil && info.Mode().IsRegular() {
-		result.PreviousBinaryPath = o.previousBinaryPath()
-	}
-	if err := o.scheduleRestart(ctx); err != nil {
-		return result, fmt.Errorf("binary was updated to %s but the automatic restart could not be scheduled: %w", targetVersion, err)
-	}
-	result.RestartScheduled = true
-	result.RestartDelay = o.restartDelay.String()
-	return result, nil
+	hostUnlock()
+	hostUnlocked = true
+	o.applyMu.Unlock()
+	unlocked = true
+	return o.waitForActivation(ctx, statePath)
 }
 
 // resolve turns a change into a concrete release, gating an explicit version
@@ -282,6 +537,65 @@ func verifyChecksum(binary []byte, expected string) error {
 	return nil
 }
 
+// validateBinary executes a staged copy without changing the live path. Release
+// packaging is allowed to land only after this check has proved the artifact is
+// executable and reports the version its signed metadata promised.
+func (o *HostOperator) validateBinary(ctx context.Context, binary []byte, expectVersion string) (string, error) {
+	directory := filepath.Dir(o.binaryPath)
+	temp, err := os.CreateTemp(directory, ".nexa-validate-*")
+	if err != nil {
+		return "", fmt.Errorf("stage the new binary for validation: %w", err)
+	}
+	path := temp.Name()
+	defer os.Remove(path)
+	if _, err := temp.Write(binary); err != nil {
+		_ = temp.Close()
+		return "", fmt.Errorf("write the validation binary: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return "", fmt.Errorf("flush the validation binary: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return "", fmt.Errorf("close the validation binary: %w", err)
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		return "", fmt.Errorf("make the validation binary executable: %w", err)
+	}
+	output, err := o.runner.Run(ctx, Command{Name: path, Args: []string{"version"}})
+	if err != nil {
+		return "", fmt.Errorf("the binary is not a runnable nexa binary: %w", err)
+	}
+	if expectVersion != "" && !strings.Contains(string(output), expectVersion) {
+		return "", errors.New("the binary reports an unexpected version")
+	}
+	return firstField(string(output)), nil
+}
+
+// restorePreparedTransaction is used before activation starts. No service has
+// consumed the new unit graph yet, so restoring the binary and packaging files
+// is sufficient and avoids bouncing a healthy old control plane.
+//
+// It runs on a context detached from the caller's: the failure it is undoing is
+// frequently the caller's own cancellation or the apply deadline, and a restore
+// that inherited that context could not exec the binary it is reinstalling —
+// leaving the new binary live on a host that was supposed to roll back.
+func (o *HostOperator) restorePreparedTransaction(caller context.Context, state updateTransaction) error {
+	ctx, cancel := restoreContext(caller)
+	defer cancel()
+	previous, err := os.ReadFile(state.PreservedBinary)
+	if err != nil {
+		return fmt.Errorf("read the preserved binary: %w", err)
+	}
+	if _, err := o.installStagedBinary(ctx, previous, ""); err != nil {
+		return fmt.Errorf("restore the preserved binary: %w", err)
+	}
+	if err := restoreHostSnapshot(state.SnapshotDir); err != nil {
+		return fmt.Errorf("restore previous packaging: %w", err)
+	}
+	return nil
+}
+
 // installStagedBinary writes bytes to a sibling temp file, validates the binary
 // runs (and, when expectVersion is non-empty, that it reports that version),
 // then atomically renames it over the target. The rename is atomic because the
@@ -302,6 +616,11 @@ func (o *HostOperator) installStagedBinary(ctx context.Context, binary []byte, e
 		cleanup()
 		return "", fmt.Errorf("write the new binary: %w", err)
 	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		cleanup()
+		return "", fmt.Errorf("flush the new binary: %w", err)
+	}
 	if err := temp.Close(); err != nil {
 		cleanup()
 		return "", fmt.Errorf("flush the new binary: %w", err)
@@ -319,64 +638,14 @@ func (o *HostOperator) installStagedBinary(ctx context.Context, binary []byte, e
 		cleanup()
 		return "", fmt.Errorf("the binary reports an unexpected version")
 	}
-	// Preserve the binary being replaced before overwriting it, so a bad upgrade
-	// can be rolled back. A failure here aborts the swap: an un-rollbackable
-	// upgrade must never happen silently.
-	if err := o.preservePreviousBinary(); err != nil {
-		cleanup()
-		return "", err
-	}
 	if err := os.Rename(tempPath, o.binaryPath); err != nil {
 		cleanup()
 		return "", fmt.Errorf("install the new binary: %w", err)
 	}
+	if err := syncDirectory(directory); err != nil {
+		return "", fmt.Errorf("flush the installed binary directory: %w", err)
+	}
 	return firstField(string(output)), nil
-}
-
-// previousBinaryPath is where the binary being replaced is preserved on each
-// swap, enabling `nexa self-update rollback`.
-func (o *HostOperator) previousBinaryPath() string {
-	return o.binaryPath + ".prev"
-}
-
-// preservePreviousBinary copies the binary currently at o.binaryPath aside to
-// o.previousBinaryPath() before it is overwritten, retaining a rollback target.
-// It is a no-op when no binary is installed yet (a first install). The copy is
-// staged and atomically renamed so a crash mid-copy never leaves a truncated
-// .prev in place.
-func (o *HostOperator) preservePreviousBinary() error {
-	current, err := os.ReadFile(o.binaryPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("read the current binary to preserve it: %w", err)
-	}
-	directory := filepath.Dir(o.binaryPath)
-	temp, err := os.CreateTemp(directory, ".nexa-prev-*")
-	if err != nil {
-		return fmt.Errorf("stage the previous binary: %w", err)
-	}
-	tempPath := temp.Name()
-	cleanup := func() { _ = os.Remove(tempPath) }
-	if _, err := temp.Write(current); err != nil {
-		_ = temp.Close()
-		cleanup()
-		return fmt.Errorf("write the previous binary: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		cleanup()
-		return fmt.Errorf("flush the previous binary: %w", err)
-	}
-	if err := os.Chmod(tempPath, 0o755); err != nil {
-		cleanup()
-		return fmt.Errorf("make the previous binary executable: %w", err)
-	}
-	if err := os.Rename(tempPath, o.previousBinaryPath()); err != nil {
-		cleanup()
-		return fmt.Errorf("preserve the previous binary: %w", err)
-	}
-	return nil
 }
 
 // stage extracts a verified release archive into a fresh directory under the
@@ -432,57 +701,23 @@ func readStagedBinary(path string) ([]byte, error) {
 //
 // It is invoked through bash by path rather than executed directly: the work
 // root lives under /var, which a hardened node may well mount noexec.
-func (o *HostOperator) syncPackaging(ctx context.Context, tree string) error {
+func (o *HostOperator) syncPackaging(ctx context.Context, tree string, lifecycleLock *os.File) error {
+	if lifecycleLock == nil {
+		return errors.New("apply release packaging without the lifecycle lock")
+	}
 	script := filepath.Join(tree, filepath.FromSlash(releaseInstallerEntry))
-	output, err := o.runner.Run(ctx, Command{Name: "/bin/bash", Args: []string{script, releaseInstallerFlag, releaseInstallerNoStart}})
+	output, err := o.runner.Run(ctx, Command{
+		Name:       "/bin/bash",
+		Args:       []string{script, releaseInstallerFlag, releaseInstallerNoStart},
+		Env:        []string{"NEXA_LIFECYCLE_LOCK_FD=3"},
+		ExtraFiles: []*os.File{lifecycleLock},
+	})
 	if err != nil {
 		return fmt.Errorf("apply the release packaging: %s: %w", lastLine(string(output)), err)
 	}
-	return nil
-}
-
-// retainPackaging promotes a freshly applied staging tree to "current",
-// demoting whatever was current to "previous" — the tree a rollback re-applies.
-// Only those two generations are kept; anything older is removed.
-func (o *HostOperator) retainPackaging(staging string) error {
-	current := filepath.Join(o.workRoot, currentPackagingDir)
-	previous := filepath.Join(o.workRoot, previousPackagingDir)
-	if err := os.RemoveAll(previous); err != nil {
-		return fmt.Errorf("clear the retained previous packaging: %w", err)
-	}
-	if _, err := os.Stat(current); err == nil {
-		if err := os.Rename(current, previous); err != nil {
-			return fmt.Errorf("retain the displaced packaging: %w", err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect the retained packaging: %w", err)
-	}
-	if err := os.Rename(staging, current); err != nil {
-		return fmt.Errorf("retain the applied packaging: %w", err)
-	}
-	return nil
-}
-
-// swapRetainedPackaging exchanges the current and previous trees after a
-// rollback has re-applied the previous one, mirroring how the swap re-preserves
-// the displaced binary as the new .prev: whatever was rolled back to is now
-// current, and what was rolled away from is what a second rollback would
-// restore.
-func (o *HostOperator) swapRetainedPackaging() error {
-	current := filepath.Join(o.workRoot, currentPackagingDir)
-	previous := filepath.Join(o.workRoot, previousPackagingDir)
-	interim := filepath.Join(o.workRoot, ".swapping")
-	if err := os.RemoveAll(interim); err != nil {
-		return fmt.Errorf("clear the packaging swap directory: %w", err)
-	}
-	if err := os.Rename(previous, interim); err != nil {
-		return fmt.Errorf("swap the retained packaging: %w", err)
-	}
-	if err := os.Rename(current, previous); err != nil {
-		return fmt.Errorf("swap the retained packaging: %w", err)
-	}
-	if err := os.Rename(interim, current); err != nil {
-		return fmt.Errorf("swap the retained packaging: %w", err)
+	output, err = o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"enable", "nexa-update-recovery.service"}})
+	if err != nil {
+		return fmt.Errorf("enable interrupted-update recovery: %s: %w", lastLine(string(output)), err)
 	}
 	return nil
 }
@@ -508,25 +743,4 @@ func firstField(s string) string {
 		return ""
 	}
 	return fields[0]
-}
-
-// scheduleRestart arms a transient, detached systemd timer that restarts both
-// units after restartDelay. Running it detached is essential: a synchronous
-// `systemctl restart nexa-agent` would kill this very process mid-RPC, before
-// the enclosing job could record the result.
-func (o *HostOperator) scheduleRestart(ctx context.Context) error {
-	seconds := int(o.restartDelay.Seconds())
-	if seconds < 1 {
-		seconds = 1
-	}
-	args := []string{
-		"--collect",
-		"--on-active=" + strconv.Itoa(seconds),
-		"systemctl", "restart",
-	}
-	args = append(args, managedUnits...)
-	if output, err := o.runner.Run(ctx, Command{Name: "systemd-run", Args: args}); err != nil {
-		return fmt.Errorf("schedule restart: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	return nil
 }

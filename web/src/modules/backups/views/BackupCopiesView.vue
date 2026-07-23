@@ -52,6 +52,11 @@ const copies = computed(() => copiesQuery.data.value ?? [])
 const restoreRunner = useJobRunner()
 const restoring = ref<BackupCopy>()
 
+function openRestore(copy: BackupCopy) {
+  restoreRunner.reset()
+  restoring.value = copy
+}
+
 async function submitRestore(body: BackupRestoreRequest) {
   const copy = restoring.value
   if (!copy || !canRestore.value) return
@@ -150,7 +155,7 @@ async function doDelete() {
             size="sm"
             icon="rotate-ccw"
             :disabled="restoreRunner.busy.value"
-            @click="restoring = copy"
+            @click="openRestore(copy)"
           >
             Restore
           </AppButton>
@@ -171,6 +176,7 @@ async function doDelete() {
       v-if="restoring && canRestore"
       :copy="restoring"
       :busy="restoreRunner.busy.value"
+      :failure="restoreRunner.error.value"
       @restore="submitRestore"
       @close="restoring = undefined"
     />

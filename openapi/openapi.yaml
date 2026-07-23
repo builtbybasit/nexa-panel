@@ -30,6 +30,8 @@ paths:
     $ref: ./paths/identity.yaml#/auth_mfa_confirm
   /auth/mfa/verify:
     $ref: ./paths/identity.yaml#/auth_mfa_verify
+  /auth/mfa/recover:
+    $ref: ./paths/identity.yaml#/auth_mfa_recover
   /auth/mfa/disable:
     $ref: ./paths/identity.yaml#/auth_mfa_disable
   /auth/password:
@@ -200,6 +202,8 @@ paths:
     $ref: ./paths/backups.yaml#/backups_plans_id_run
   /backups/plans/{id}/copies:
     $ref: ./paths/backups.yaml#/backups_plans_id_copies
+  /backups/copies/{copyId}/restore/preview:
+    $ref: ./paths/backups.yaml#/backups_copies_copyId_restore_preview
   /backups/copies/{copyId}/restore:
     $ref: ./paths/backups.yaml#/backups_copies_copyId_restore
   /backups/copies/{copyId}:

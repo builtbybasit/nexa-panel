@@ -10,7 +10,7 @@ export const identityModule: FeatureModule = {
       path: '/users',
       name: 'users',
       component: () => import('./views/UsersView.vue'),
-      meta: { moduleId: 'identity' },
+      meta: { moduleId: 'identity', permission: 'users.manage' },
     },
     {
       // Per-account security (MFA); available to every signed-in role, so it is
@@ -18,7 +18,7 @@ export const identityModule: FeatureModule = {
       path: '/account/security',
       name: 'account-security',
       component: () => import('./views/AccountSecurityView.vue'),
-      meta: { moduleId: 'identity' },
+      meta: { moduleId: 'identity', permission: 'system.read' },
     },
   ],
 }

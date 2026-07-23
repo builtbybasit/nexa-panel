@@ -64,8 +64,10 @@ func TestReleaseFromPayloadResolvesArchAsset(t *testing.T) {
 	payload := gitHubRelease{TagName: "v0.3.0", Assets: []gitHubAsset{
 		{Name: "nexa-panel-linux-amd64.tar.gz", URL: "https://api.github.com/repos/o/r/releases/assets/1"},
 		{Name: "nexa-panel-linux-amd64.tar.gz.sha256", URL: "https://api.github.com/repos/o/r/releases/assets/2"},
-		{Name: "nexa-panel-linux-arm64.tar.gz", URL: "https://api.github.com/repos/o/r/releases/assets/3"},
-		{Name: "nexa-panel-linux-arm64.tar.gz.sha256", URL: "https://api.github.com/repos/o/r/releases/assets/4"},
+		{Name: "nexa-panel-linux-amd64.tar.gz.sig", URL: "https://api.github.com/repos/o/r/releases/assets/3"},
+		{Name: "nexa-panel-linux-arm64.tar.gz", URL: "https://api.github.com/repos/o/r/releases/assets/4"},
+		{Name: "nexa-panel-linux-arm64.tar.gz.sha256", URL: "https://api.github.com/repos/o/r/releases/assets/5"},
+		{Name: "nexa-panel-linux-arm64.tar.gz.sig", URL: "https://api.github.com/repos/o/r/releases/assets/6"},
 		// The browser_download_url is deliberately absent from the struct: it
 		// cannot serve a private repository's asset, so it is not read at all.
 	}}
@@ -73,7 +75,7 @@ func TestReleaseFromPayloadResolvesArchAsset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("releaseFromPayload: %v", err)
 	}
-	if release.AssetURL != "https://api.github.com/repos/o/r/releases/assets/3" || release.ChecksumURL != "https://api.github.com/repos/o/r/releases/assets/4" {
+	if release.AssetURL != "https://api.github.com/repos/o/r/releases/assets/4" || release.ChecksumURL != "https://api.github.com/repos/o/r/releases/assets/5" || release.SignatureURL != "https://api.github.com/repos/o/r/releases/assets/6" {
 		t.Fatalf("unexpected asset resolution: %+v", release)
 	}
 	if release.Version != "0.3.0" {

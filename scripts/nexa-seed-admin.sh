@@ -11,8 +11,9 @@
 # It therefore works on a TLS-fronted node as well as a plaintext one — which
 # matters, because a remote browser can NOT complete first-run setup on a
 # published hostname: the endpoint demands a bootstrap token the SPA has no field
-# for. Idempotent: an existing administrator (409) is left unchanged. Always
-# exits 0 on a soft failure so it never blocks a boot.
+# for. Idempotent: an existing administrator (409) is left unchanged. Readiness
+# or bootstrap failures are fatal: installation must not report an unusable
+# panel as ready.
 #
 #   nexa-seed-admin.sh [PANEL_URL]
 #
@@ -25,6 +26,8 @@ TOKEN_PATH="/var/lib/nexa-panel/bootstrap.token"
 # place for a password on its own: when this runs as a systemd unit, everything
 # it prints is retained in the journal indefinitely.
 CREDENTIALS_PATH="${NEXA_SEED_CREDENTIALS_FILE:-/root/nexa-panel-first-admin.txt}"
+READY_ATTEMPTS="${NEXA_SEED_READY_ATTEMPTS:-60}"
+READY_DELAY="${NEXA_SEED_READY_DELAY:-1}"
 
 log()  { echo "==> $*"; }
 warn() { echo "warning: $*" >&2; }
@@ -49,16 +52,16 @@ fi
 
 log "Waiting for the API to become ready"
 ready=0
-for _ in $(seq 1 60); do
+for _ in $(seq 1 "$READY_ATTEMPTS"); do
   if curl -sf --unix-socket "$SOCKET" http://localhost/api/v1/health/ready >/dev/null 2>&1; then
     ready=1
     break
   fi
-  sleep 1
+  sleep "$READY_DELAY"
 done
 if [[ "$ready" -ne 1 ]]; then
-  warn "the API did not become ready in time; create the administrator from the panel on first visit"
-  exit 0
+  warn "the API did not become ready in time; inspect nexa-api and nexa-agent before retrying the install"
+  exit 1
 fi
 
 # Read a bounded slice of /dev/urandom and cut the password out of it with
@@ -69,6 +72,7 @@ random_alnum="$(LC_ALL=C tr -dc 'A-Za-z0-9' < <(head -c 1024 /dev/urandom))"
 admin_pass="${random_alnum:0:20}"
 boot_token="$(cat "$TOKEN_PATH" 2>/dev/null || true)"
 resp_body="$(mktemp)"
+trap 'rm -f "$resp_body"' EXIT
 http_code="$(curl -s -o "$resp_body" -w '%{http_code}' \
   --unix-socket "$SOCKET" \
   -X POST http://localhost/api/v1/auth/bootstrap \
@@ -128,6 +132,6 @@ EOF
     warn "    -H 'X-Forwarded-For: 127.0.0.1' -H 'Content-Type: application/json' \\"
     warn "    -d '{\"username\":\"admin\",\"password\":\"CHOOSE-A-STRONG-PASSWORD\"}'"
     warn "then sign in at ${PANEL_URL}"
+    exit 1
     ;;
 esac
-rm -f "$resp_body"

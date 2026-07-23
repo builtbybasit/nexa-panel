@@ -1,6 +1,7 @@
 import { activityHeaders } from './activity'
 import { csrfHeaders } from './csrf'
 import { requestMFAStepUp } from './mfaStepUp'
+import { handleUnauthorized } from './unauthorized'
 
 /**
  * Shared JSON request helper for feature-module API clients.
@@ -20,6 +21,8 @@ export interface ApiRequestOptions {
   errorPrefix?: string
   createError?: (message: string, status: number, code?: string) => Error
   retryAfterMFAStepUp?: boolean
+  /** Authentication endpoints set this false because a 401 is an expected form error. */
+  handleUnauthorized?: boolean
 }
 
 class ApiRequestError extends Error {
@@ -53,6 +56,9 @@ export async function apiRequest<T>(
     const resolved = typeof options === 'string' ? { errorPrefix: options } : options
     const message = payload?.message ?? `${resolved.errorPrefix ?? 'Request'} failed with status ${response.status}`
     const error = resolved.createError?.(message, response.status, payload?.code) ?? new ApiRequestError(message, response.status, payload?.code)
+    if (response.status === 401 && resolved.handleUnauthorized !== false) {
+      await handleUnauthorized()
+    }
     if (payload?.code === 'mfa_step_up_required' && resolved.retryAfterMFAStepUp !== false) {
       try {
         if (await requestMFAStepUp()) {

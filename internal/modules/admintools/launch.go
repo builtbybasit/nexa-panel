@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -25,6 +27,20 @@ import (
 const (
 	launchCookieName  = "nexa_tool_launch"
 	sessionCookieName = "nexa_tool_session"
+)
+
+const (
+	// toolSessionIdleWindow is how long a tool session survives without proxy
+	// traffic. It matches the container idle-stop timer so the panel session and
+	// the tool behind it die together instead of the session dying first.
+	toolSessionIdleWindow = 15 * time.Minute
+	// toolSessionMaxLifetime caps the sliding window: however active a session
+	// is, it is never usable more than this long after its launch.
+	toolSessionMaxLifetime = 8 * time.Hour
+	// toolSessionRenewAfter keeps the slide off the hot path — the deadline is
+	// only rewritten once this much of the idle window has been consumed, so a
+	// page load's asset burst costs a single database write at most.
+	toolSessionRenewAfter = 5 * time.Minute
 )
 
 type LaunchRequest struct {
@@ -103,7 +119,7 @@ func (m *Module) CreateLaunch(ctx context.Context, kind admintooloperator.Kind, 
 		value := observation.UpstreamCookieName
 		upstream = &value
 	}
-	model := launchModel{ID: id, ActorUserID: user.ID, PanelUser: panelUser, ToolKind: string(kind), SourceEngine: request.SourceEngine, DatabaseID: request.DatabaseID, AccountID: request.AccountID, LaunchTokenHash: tokenHash(launchToken), SessionTokenHash: tokenHash(sessionToken), SessionCiphertext: ciphertext, UpstreamCookieName: upstream, ExpiresAt: now.Add(60 * time.Second), SessionExpiresAt: now.Add(15 * time.Minute), CreatedAt: now}
+	model := launchModel{ID: id, ActorUserID: user.ID, PanelUser: panelUser, ToolKind: string(kind), SourceEngine: request.SourceEngine, DatabaseID: request.DatabaseID, AccountID: request.AccountID, LaunchTokenHash: tokenHash(launchToken), SessionTokenHash: tokenHash(sessionToken), SessionCiphertext: ciphertext, UpstreamCookieName: upstream, ExpiresAt: now.Add(60 * time.Second), SessionExpiresAt: now.Add(toolSessionIdleWindow), CreatedAt: now}
 	if _, err := m.database.NewInsert().Model(&model).Exec(ctx); err != nil {
 		return "", "", err
 	}
@@ -161,13 +177,13 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	model, sessionToken, exchanged, err := m.authorizeProxy(r.Context(), kind, user.ID, r)
+	model, sessionToken, issueCookie, err := m.authorizeProxy(r.Context(), kind, user.ID, r)
 	if err != nil {
 		writeError(w, 401, "admin_tool_session_invalid", err.Error())
 		return
 	}
-	if exchanged {
-		m.setProxySession(w, r, kind, sessionToken)
+	if issueCookie {
+		m.setProxySession(w, r, kind, sessionToken, model.SessionExpiresAt)
 	}
 	if kind == admintooloperator.PHPMyAdmin && r.PathValue("path") == "nexa-signon-failed" {
 		writeError(w, 502, "admin_tool_signon_failed", "phpMyAdmin could not connect with the selected database account.")
@@ -205,13 +221,16 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	secure := httpapi.IsHTTPS(r)
 	proxy.Director = func(request *http.Request) {
 		original(request)
-		request.Host = target.Host
 		request.URL.Path = strings.TrimPrefix(request.URL.Path, prefix)
 		if request.URL.Path == "" {
 			request.URL.Path = "/"
 		}
 		sanitizeAdminToolProxyRequest(request, kind, model.UpstreamCookieName)
 		if kind == admintooloperator.PGAdmin {
+			// HTML is rewritten as a compatibility fallback when pgAdmin emits
+			// root-relative assets despite X-Script-Name. Force an uncompressed
+			// upstream representation so that rewrite is deterministic.
+			request.Header.Set("Accept-Encoding", "identity")
 			setPGAdminProxyMetadata(request, prefix, secure)
 			_, _ = setPGAdminSessionIdentity(request, sessionToken)
 		}
@@ -220,8 +239,7 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	proxy.ModifyResponse = func(response *http.Response) error {
-		rewriteAdminToolProxyResponse(response, kind, prefix, secure)
-		return nil
+		return rewriteAdminToolProxyResponse(response, kind, prefix, secure)
 	}
 	proxy.ErrorHandler = func(writer http.ResponseWriter, _ *http.Request, _ error) {
 		writeError(writer, 502, "admin_tool_upstream_failed", "Admin tool did not respond.")
@@ -280,7 +298,7 @@ func setPGAdminProxyMetadata(request *http.Request, prefix string, secure bool) 
 // rewriteAdminToolProxyResponse confines redirects and cookies to the tool
 // prefix. It also removes response controls that an upstream could otherwise
 // ask the outer Nginx proxy to interpret.
-func rewriteAdminToolProxyResponse(response *http.Response, kind admintooloperator.Kind, prefix string, secure bool) {
+func rewriteAdminToolProxyResponse(response *http.Response, kind admintooloperator.Kind, prefix string, secure bool) error {
 	for _, name := range []string{"X-Accel-Redirect", "X-Accel-Expires", "X-Accel-Limit-Rate", "X-Sendfile"} {
 		response.Header.Del(name)
 	}
@@ -316,6 +334,46 @@ func rewriteAdminToolProxyResponse(response *http.Response, kind admintooloperat
 		cookie.SameSite = http.SameSiteStrictMode
 		response.Header.Add("Set-Cookie", cookie.String())
 	}
+	if kind != admintooloperator.PGAdmin || response.Body == nil {
+		return nil
+	}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || mediaType != "text/html" {
+		return nil
+	}
+	const maxPGAdminHTMLBytes = 4 * 1024 * 1024
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxPGAdminHTMLBytes+1))
+	_ = response.Body.Close()
+	if err != nil {
+		return fmt.Errorf("read pgAdmin HTML: %w", err)
+	}
+	if len(payload) > maxPGAdminHTMLBytes {
+		return errors.New("pgAdmin HTML exceeded the rewrite limit")
+	}
+	rewritten := prefixPGAdminRootURLs(string(payload), prefix)
+	response.Body = io.NopCloser(strings.NewReader(rewritten))
+	response.ContentLength = int64(len(rewritten))
+	response.Header.Set("Content-Length", fmt.Sprint(len(rewritten)))
+	response.Header.Del("ETag")
+	response.Header.Del("Content-MD5")
+	response.Header.Del("Accept-Ranges")
+	return nil
+}
+
+var pgAdminRootAttribute = regexp.MustCompile(`(?i)\b(?:href|src|action)\s*=\s*["']/[^"']*`)
+
+func prefixPGAdminRootURLs(page, prefix string) string {
+	return pgAdminRootAttribute.ReplaceAllStringFunc(page, func(attribute string) string {
+		quote := strings.IndexAny(attribute, `"'`)
+		if quote < 0 || quote+1 >= len(attribute) {
+			return attribute
+		}
+		path := attribute[quote+1:]
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return attribute
+		}
+		return attribute[:quote+1] + prefix + path
+	})
 }
 
 func allowedToolCookie(kind admintooloperator.Kind, name string) bool {
@@ -378,8 +436,13 @@ func (m *Module) authorizeProxy(ctx context.Context, kind admintooloperator.Kind
 	}
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		model, loadErr := m.sessionByHash(ctx, tokenHash(cookie.Value))
-		if loadErr == nil && model.ActorUserID == userID && model.ToolKind == string(kind) && m.now().UTC().Before(model.SessionExpiresAt) {
-			return model, cookie.Value, false, nil
+		now := m.now().UTC()
+		if loadErr == nil && model.ActorUserID == userID && model.ToolKind == string(kind) && now.Before(model.SessionExpiresAt) {
+			renewed, err := m.renewSession(ctx, &model, now)
+			if err != nil {
+				return launchModel{}, "", false, err
+			}
+			return model, cookie.Value, renewed, nil
 		}
 	}
 	if launchErr != nil {
@@ -388,11 +451,43 @@ func (m *Module) authorizeProxy(ctx context.Context, kind admintooloperator.Kind
 	return launchModel{}, "", false, errors.New("admin tool launch is invalid or already used")
 }
 
-// setProxySession writes the exchange cookies after authorizeProxy has consumed a launch.
-func (m *Module) setProxySession(w http.ResponseWriter, r *http.Request, kind admintooloperator.Kind, sessionToken string) {
+// renewSession slides the tool session deadline forward on proxy activity, the
+// panel-side mirror of the container idle timer: a tool in continuous use must
+// not die on a fixed wall-clock deadline. The slide is bounded by
+// toolSessionMaxLifetime and is only persisted once toolSessionRenewAfter of the
+// window has elapsed, so a burst of asset requests does not write per request.
+func (m *Module) renewSession(ctx context.Context, model *launchModel, now time.Time) (bool, error) {
+	deadline := now.Add(toolSessionIdleWindow)
+	if limit := model.CreatedAt.UTC().Add(toolSessionMaxLifetime); deadline.After(limit) {
+		deadline = limit
+	}
+	if !deadline.After(model.SessionExpiresAt) || model.SessionExpiresAt.Sub(now) > toolSessionIdleWindow-toolSessionRenewAfter {
+		return false, nil
+	}
+	// The deadline predicate keeps an expiry decided elsewhere — a relaunch
+	// rotating the pgAdmin catalog, a tool lifecycle change — from being undone
+	// by an asset request that was already in flight.
+	result, err := m.database.NewUpdate().Model((*launchModel)(nil)).
+		Set("session_expires_at = ?", deadline).
+		Where("id = ?", model.ID).Where("session_expires_at > ?", now).Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return false, errors.New("admin tool session has expired")
+	}
+	model.SessionExpiresAt = deadline
+	return true, nil
+}
+
+// setProxySession writes the session cookie after authorizeProxy has consumed a
+// launch or slid the deadline forward. Its lifetime tracks the server-side
+// deadline so the browser never drops a cookie the gateway still honours.
+func (m *Module) setProxySession(w http.ResponseWriter, r *http.Request, kind admintooloperator.Kind, sessionToken string, expiresAt time.Time) {
 	secure := httpapi.IsHTTPS(r)
 	path := "/tools/" + string(kind) + "/"
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: sessionToken, Path: path, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: 900})
+	maxAge := max(int(expiresAt.Sub(m.now().UTC()).Seconds()), 1)
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: sessionToken, Path: path, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: maxAge})
 	http.SetCookie(w, &http.Cookie{Name: launchCookieName, Value: "", Path: path, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 }
 

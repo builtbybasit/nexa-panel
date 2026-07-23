@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
-import { computed, markRaw, nextTick, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onScopeDispose, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { useIdentityStore } from '@/modules/identity/store'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { useToasts } from '@/shared/composables/useToasts'
 import { formatBytes, formatDateTime } from '@/shared/formatters'
+import { registerUnsavedChanges } from '@/shared/navigation/unsavedChanges'
 import {
   AppAlert,
   AppButton,
@@ -381,6 +382,9 @@ const editorOpen = ref(false)
 const editorPane = ref<InstanceType<typeof EditorPane>>()
 const openTabPaths = ref<string[]>([])
 const activeTabPath = ref('')
+
+const unregisterUnsavedEditor = registerUnsavedChanges(() => editorPane.value?.hasDirtyTabs() ?? false)
+onScopeDispose(unregisterUnsavedEditor)
 
 const isPathReadOnly = (target: string) => !canWriteFiles.value || !isWritablePath(target)
 
@@ -829,7 +833,7 @@ const toolbarButton =
       <template #action>
         <RouterLink
           v-if="!hasAnySites && identity.can('sites.write')"
-          to="/sites?create=1"
+          to="/sites/new"
           class="text-[13px] font-medium text-accent-300 underline-offset-2 hover:text-accent-200 hover:underline"
         >
           Create a site →

@@ -1,0 +1,63 @@
+Nexa Panel — Proprietary Software License
+
+Copyright (c) 2026 Abdul Basit Rana. All rights reserved.
+
+Nexa Panel, including its source code, documentation, configuration, packaging,
+build scripts, and release artifacts (the "Software"), is proprietary and
+confidential. It is not open source. No open-source or free-software license is
+granted by publication, distribution, or availability of the Software in any
+repository, archive, or release.
+
+1. No implied license
+
+   No right to use, copy, modify, merge, publish, distribute, sublicense, sell,
+   host, or create derivative works of the Software is granted by this file. Any
+   such right exists only where the copyright holder has granted it in a
+   separate, signed, written agreement, and only for the term, scope, and number
+   of installations that agreement states.
+
+2. Permitted use
+
+   If you hold a current written agreement with the copyright holder, you may
+   use the Software solely as that agreement permits. If you do not hold such an
+   agreement and have received a copy of the Software, you have no licence to use
+   it and must delete every copy in your possession.
+
+3. Prohibited acts
+
+   Except to the extent that mandatory applicable law overrides this clause, you
+   must not: redistribute or publish the Software or any part of it; sublicense,
+   rent, lease, lend, or offer it as a service to third parties; remove or alter
+   any copyright, licence, or attribution notice; or reverse engineer, decompile,
+   or disassemble any compiled form of the Software.
+
+4. Confidentiality
+
+   The Software, including credentials, keys, and tokens distributed with or for
+   it, is confidential information of the copyright holder and must be protected
+   with at least the care you apply to your own confidential material.
+
+5. No warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+6. Limitation of liability
+
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE COPYRIGHT
+   HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, DATA LOSS, SERVICE INTERRUPTION, OR
+   OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE,
+   ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+7. Termination
+
+   Any permission granted terminates immediately, without notice, on breach of
+   this licence or of the governing written agreement. On termination you must
+   stop using the Software and destroy every copy under your control.
+
+Third-party components distributed with the Software remain under their own
+licences; nothing in this file changes those terms.
+
+Licence enquiries: contact the copyright holder through the private
+github.com/builtbybasit/nexa-panel repository.

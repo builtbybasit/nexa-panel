@@ -99,9 +99,9 @@ func siteDeletable(status Status) bool {
 
 // dependentBlocker returns a descriptive message when the site still owns
 // resources that must be removed through their own node-aware teardown first,
-// or an empty string when the site is free to delete. Extra domains and live
-// certificates carry Nginx server blocks and Let's Encrypt material that a bare
-// site teardown would strand on the node.
+// or an empty string when the site is free to delete. This includes database
+// references whose rows do not cascade: retaining either would create a task or
+// backup plan that names a site which no longer exists.
 func (m *Module) dependentBlocker(ctx context.Context, siteID string) (string, error) {
 	hostnames := make([]string, 0)
 	if err := m.database.NewSelect().TableExpr("domains").Column("hostname").
@@ -131,7 +131,42 @@ func (m *Module) dependentBlocker(ctx context.Context, siteID string) (string, e
 	if err != nil {
 		return "", err
 	}
-	blockers := make([]string, 0, 4)
+	scheduledTasks := make([]string, 0)
+	if err := m.database.NewSelect().TableExpr("scheduled_tasks").Column("name").
+		Where("site_id = ?", siteID).OrderExpr("name ASC").Scan(ctx, &scheduledTasks); err != nil {
+		return "", err
+	}
+	// backup_plan_sites is the trigger-maintained relation behind the plans'
+	// site_ids JSON. Joining it replaces a full scan-and-decode of every plan row
+	// and, more importantly, it is the same relation the database trigger refuses
+	// a site deletion on, so the message a caller gets and the constraint that
+	// would fire cannot disagree.
+	backupPlans := make([]string, 0)
+	if err := m.database.NewSelect().TableExpr("backup_plans AS plan").Column("plan.name").
+		Join("JOIN backup_plan_sites AS target ON target.plan_id = plan.id").
+		Where("target.site_id = ?", siteID).OrderExpr("plan.name ASC").Scan(ctx, &backupPlans); err != nil {
+		return "", err
+	}
+	// Stored copies are keyed on the plan, never on the site, so they are counted
+	// through the same relation. A plan holding copies cannot be deleted (see
+	// backup_plans_require_no_copies), which means the copies decide whether the
+	// plan reference above can be cleared at all — saying so turns an otherwise
+	// circular refusal into an actionable one.
+	backupCopies, err := m.database.NewSelect().TableExpr("backup_copies AS copy").
+		Join("JOIN backup_plan_sites AS target ON target.plan_id = copy.plan_id").
+		Where("target.site_id = ?", siteID).Count(ctx)
+	if err != nil {
+		return "", err
+	}
+	// Databases are the site's own data, not a rendered artifact, so a teardown
+	// never removes them: it reports them and leaves the operator to decide.
+	// What changed is how they are found — site_id, the relation the database
+	// trigger also refuses the site deletion on, rather than a guess at the name.
+	databases, err := m.databasesOwnedBySite(ctx, siteID)
+	if err != nil {
+		return "", err
+	}
+	blockers := make([]string, 0, 8)
 	if len(hostnames) > 0 {
 		blockers = append(blockers, fmt.Sprintf("remove its attached domains first (%s)", strings.Join(hostnames, ", ")))
 	}
@@ -144,10 +179,40 @@ func (m *Module) dependentBlocker(ctx context.Context, siteID string) (string, e
 	if sftpEnabled > 0 {
 		blockers = append(blockers, "disable its SFTP access first")
 	}
+	if len(scheduledTasks) > 0 {
+		blockers = append(blockers, fmt.Sprintf("remove its scheduled tasks first (%s)", strings.Join(scheduledTasks, ", ")))
+	}
+	if len(backupPlans) > 0 {
+		blockers = append(blockers, fmt.Sprintf("remove it from backup plans first (%s)", strings.Join(backupPlans, ", ")))
+	}
+	if backupCopies > 0 {
+		blockers = append(blockers, fmt.Sprintf("delete the %d stored backup copies taken for it first", backupCopies))
+	}
+	if len(databases) > 0 {
+		blockers = append(blockers, fmt.Sprintf("delete the databases it owns first (%s)", strings.Join(databases, ", ")))
+	}
 	if len(blockers) == 0 {
 		return "", nil
 	}
 	return "The site cannot be deleted yet: " + strings.Join(blockers, "; ") + ".", nil
+}
+
+// databasesOwnedBySite reports the managed PostgreSQL and MySQL databases the
+// site owns. Both engines' tables carry site_id, recorded when the database is
+// created for a site and backfilled for older rows from the "nexa_<slug>"
+// account-name convention this replaced — so a database named anything at all
+// is still visible here, which the name match could never promise.
+func (m *Module) databasesOwnedBySite(ctx context.Context, siteID string) ([]string, error) {
+	names := make([]string, 0)
+	for _, table := range []string{"managed_databases", "mysql_databases"} {
+		found := make([]string, 0)
+		if err := m.database.NewSelect().TableExpr(table).Column("name").
+			Where("site_id = ?", siteID).OrderExpr("name ASC").Scan(ctx, &found); err != nil {
+			return nil, err
+		}
+		names = append(names, found...)
+	}
+	return names, nil
 }
 
 // deleteJob removes the managed Nginx and PHP-FPM configuration from the node and
@@ -166,6 +231,18 @@ func (m *Module) deleteJob(ctx context.Context, request json.RawMessage, report 
 		return map[string]any{"siteId": payload.SiteID, "removed": true, "alreadyGone": true}, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+	// Re-check inside the durable job. The request-time check prevents an
+	// intentional unsafe delete; this check closes the interval in which an
+	// already-running write could attach a dependent before the site's status
+	// became deleting.
+	if blocker, err := m.dependentBlocker(ctx, site.ID); err != nil {
+		m.markFailed(context.WithoutCancel(ctx), site.ID, err)
+		return nil, err
+	} else if blocker != "" {
+		err := errors.New(blocker)
+		m.markFailed(context.WithoutCancel(ctx), site.ID, err)
 		return nil, err
 	}
 	// Withdraw the deploy-side grants first. They live outside this module's
@@ -189,6 +266,18 @@ func (m *Module) deleteJob(ctx context.Context, request json.RawMessage, report 
 			m.markFailed(context.WithoutCancel(ctx), site.ID, err)
 			return nil, err
 		}
+	}
+	// The account and the site root are purged whatever the payload says, because
+	// they are not created by an activation: a site whose first activation failed
+	// still has both, since Apply prepares the identity before it writes anything
+	// and its own rollback only restores files. Purge is idempotent, so on a site
+	// that never reached the node it does nothing.
+	if err := report(70, "Removing this site's system account and files."); err != nil {
+		return nil, err
+	}
+	if err := m.purgeHost(ctx, site); err != nil {
+		m.markFailed(context.WithoutCancel(ctx), site.ID, err)
+		return nil, err
 	}
 	if err := report(85, "Removing the site record."); err != nil {
 		return nil, err
@@ -227,6 +316,22 @@ func (m *Module) teardownHost(ctx context.Context, site Site) error {
 	}
 	if _, err := m.operator.Rollback(ctx, plan); err != nil {
 		return fmt.Errorf("remove managed site configuration: %w", err)
+	}
+	return nil
+}
+
+// purgeHost removes the host state no rendered artifact covers: the site's Unix
+// account and its site root. It runs after teardownHost so the vhost is already
+// gone when the files disappear, and it is a separate operator call because
+// there is no before-state to snapshot — the node verifies the identity against
+// the site itself and refuses anything it does not own.
+func (m *Module) purgeHost(ctx context.Context, site Site) error {
+	definition, err := m.Definition(ctx, site.ID, nil, nil, nil)
+	if err != nil {
+		return fmt.Errorf("assemble site teardown definition: %w", err)
+	}
+	if err := m.operator.Purge(ctx, definition); err != nil {
+		return fmt.Errorf("remove site account and files: %w", err)
 	}
 	return nil
 }

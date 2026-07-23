@@ -82,10 +82,9 @@ func (p *Policy) Middleware(permission string, next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "permission_denied", "Your role cannot perform this action.")
 			return
 		}
-		// Step-up applies only to accounts that opted into MFA. Because MFA is
-		// optional, a password-only account would otherwise be permanently blocked
-		// from sensitive actions it is authorized for (it can never satisfy
-		// RecentMFA). An enrolled account still must re-confirm recently.
+		// Enrollment is optional for every role, so an account without a confirmed
+		// factor has nothing to step up with and is never asked to. Once enrolled,
+		// a sensitive action always needs a recent challenge.
 		if sensitivePermission(Permission(permission)) && identity.MFAEnrolled(r.Context()) && !identity.RecentMFA(r.Context(), p.now(), p.stepUpTTL) {
 			writeError(w, http.StatusForbidden, "mfa_step_up_required", "Confirm multi-factor authentication again to perform this sensitive action.")
 			return

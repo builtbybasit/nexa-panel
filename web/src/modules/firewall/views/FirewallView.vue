@@ -20,7 +20,16 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/shared/ui/select'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 
-import { firewallAction, getFirewallStatus, type FirewallRule } from '../api'
+import LockoutRevertPanel from '@/modules/safeguard/LockoutRevertPanel.vue'
+
+import {
+  confirmFirewallRevert,
+  firewallAction,
+  getFirewallReverts,
+  getFirewallStatus,
+  LockoutRiskError,
+  type FirewallRule,
+} from '../api'
 
 const identity = useIdentityStore()
 const canWrite = computed(() => identity.can('firewall.write'))
@@ -41,11 +50,11 @@ const rules = computed(() => status.value?.rules ?? [])
 const runner = useJobRunner()
 
 // The new-rule form. Protocol "" means both; action is allow or deny.
-const form = reactive({ port: '', protocol: '', action: 'allow', from: '', comment: '' })
+const form = reactive({ port: '', protocol: 'both', action: 'allow', from: '', comment: '' })
 const formError = ref('')
 
 const protocolOptions = [
-  { value: '', label: 'TCP + UDP' },
+  { value: 'both', label: 'TCP + UDP' },
   { value: 'tcp', label: 'TCP' },
   { value: 'udp', label: 'UDP' },
 ]
@@ -54,8 +63,24 @@ const actionOptions = [
   { value: 'deny', label: 'Deny' },
 ]
 
+// The armed reverts are the server's, not this page's: it polls them so a
+// reload, a second browser, or a colleague's session all see the same countdown
+// and the same confirm button.
+const revertsQuery = useQuery({
+  queryKey: ['firewall-reverts'],
+  queryFn: getFirewallReverts,
+  refetchInterval: 5_000,
+  retry: false,
+})
+const reverts = computed(() => revertsQuery.data.value?.items ?? [])
+const confirmingRevert = ref('')
+
 const pending = ref('')
 const confirmDisable = ref(false)
+const ruleToRemove = ref<FirewallRule>()
+// Set when the server refuses a change as lockout-capable: it holds the rule to
+// retry with the acknowledgement, plus the server's own explanation of why.
+const lockoutRisk = ref<{ rule: FirewallRule; message: string }>()
 
 function ruleKey(rule: FirewallRule): string {
   return `${rule.action}:${rule.port}/${rule.protocol}:${rule.from}:${rule.v6 ? 'v6' : 'v4'}`
@@ -75,7 +100,7 @@ async function submit() {
     formError.value = 'Enter a port (1-65535) or a range like 8000:8100.'
     return
   }
-  if (form.from.trim() && !form.protocol) {
+  if (form.from.trim() && form.protocol === 'both') {
     formError.value = 'A rule limited to a source address must specify TCP or UDP.'
     return
   }
@@ -85,7 +110,7 @@ async function submit() {
       (
         await firewallAction(form.action as 'allow' | 'deny', {
           port: form.port.trim(),
-          protocol: form.protocol,
+          protocol: form.protocol === 'both' ? '' : form.protocol,
           from: form.from.trim(),
           comment: form.comment.trim() || undefined,
         })
@@ -104,17 +129,68 @@ async function submit() {
   form.comment = ''
 }
 
-async function remove(rule: FirewallRule) {
+async function remove(rule: FirewallRule, acknowledgeLockout = false) {
   if (!canWrite.value || runner.busy.value) return
   pending.value = ruleKey(rule)
-  await runner.run(async () => (await firewallAction('delete', rule)).job.id, {
-    onSettled: async () => {
-      await statusQuery.refetch()
+  await runner.run(
+    async () => {
+      try {
+        const submission = await firewallAction('delete', rule, acknowledgeLockout)
+        // An accepted risky delete comes back with an armed revert; showing the
+        // countdown immediately matters more here than anywhere else on the page.
+        await revertsQuery.refetch()
+        return submission.job.id
+      } catch (caught) {
+        // The server refused because this rule carries access. That is not a
+        // failure to report: it is a second, better-informed question to ask.
+        if (caught instanceof LockoutRiskError) {
+          lockoutRisk.value = { rule, message: caught.message }
+          return undefined
+        }
+        throw caught
+      }
     },
-    successToast: `Rule removed for ${describeTarget(rule)}`,
-    failureMessage: 'Could not remove the firewall rule',
-  })
+    {
+      onSettled: async () => {
+        await Promise.all([statusQuery.refetch(), revertsQuery.refetch()])
+      },
+      successToast: `Rule removed for ${describeTarget(rule)}`,
+      failureMessage: 'Could not remove the firewall rule',
+    },
+  )
   pending.value = ''
+}
+
+function requestRemove(rule: FirewallRule) {
+  if (rule.action.toLowerCase() === 'allow') {
+    ruleToRemove.value = rule
+    return
+  }
+  void remove(rule)
+}
+
+function confirmRemoveRule() {
+  const rule = ruleToRemove.value
+  ruleToRemove.value = undefined
+  if (rule) void remove(rule)
+}
+
+// The operator has read the server's reasons and still wants the change. It goes
+// through with the acknowledgement set, which is what arms the timed rollback.
+function acceptLockoutRisk() {
+  const risk = lockoutRisk.value
+  lockoutRisk.value = undefined
+  if (risk) void remove(risk.rule, true)
+}
+
+async function confirmRevert(id: string) {
+  confirmingRevert.value = id
+  try {
+    await confirmFirewallRevert(id)
+  } finally {
+    confirmingRevert.value = ''
+    await revertsQuery.refetch()
+  }
 }
 
 async function toggleFirewall() {
@@ -162,6 +238,13 @@ async function confirmDisableFirewall() {
         :pulse="false"
       />
     </PageHeader>
+
+    <LockoutRevertPanel
+      :reverts="reverts"
+      :confirming="confirmingRevert"
+      :disabled="!canWrite"
+      @confirm="confirmRevert"
+    />
 
     <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" :job-id="runner.jobId.value" />
     <JobProgress
@@ -301,7 +384,7 @@ async function confirmDisableFirewall() {
                   title="Remove rule"
                   :disabled="!canWrite || runner.busy.value"
                   :loading="pending === ruleKey(rule)"
-                  @click="remove(rule)"
+                  @click="requestRemove(rule)"
                 />
               </td>
             </tr>
@@ -309,6 +392,30 @@ async function confirmDisableFirewall() {
         </table>
       </div>
     </template>
+
+    <AppConfirmDialog
+      :open="Boolean(ruleToRemove)"
+      :title="`Remove access rule for ${ruleToRemove ? describeTarget(ruleToRemove) : ''}?`"
+      confirm-label="Remove access rule"
+      :type-to-confirm="ruleToRemove ? describeTarget(ruleToRemove) : undefined"
+      @confirm="confirmRemoveRule"
+      @close="ruleToRemove = undefined"
+    >
+      Removing an allow rule can close the panel or SSH path you are using. Keep an independent server session open and
+      type the port/protocol target to confirm.
+    </AppConfirmDialog>
+
+    <AppConfirmDialog
+      :open="Boolean(lockoutRisk)"
+      :title="`This will cut off access to ${lockoutRisk ? describeTarget(lockoutRisk.rule) : ''}`"
+      confirm-label="Remove it anyway, with a rollback"
+      :type-to-confirm="lockoutRisk ? describeTarget(lockoutRisk.rule) : undefined"
+      @confirm="acceptLockoutRisk"
+      @close="lockoutRisk = undefined"
+    >
+      {{ lockoutRisk?.message }} If you continue, the rule is removed and then restored automatically unless you
+      confirm from a working session within the rollback window shown at the top of this page.
+    </AppConfirmDialog>
 
     <AppConfirmDialog
       :open="confirmDisable"

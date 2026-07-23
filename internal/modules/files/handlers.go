@@ -76,15 +76,17 @@ func (m *Module) statHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) readHTTP(w http.ResponseWriter, r *http.Request) {
-	_, scope, _, ok := m.resolveSite(w, r)
+	site, scope, user, ok := m.resolveSite(w, r)
 	if !ok {
 		return
 	}
-	result, err := m.operator.Read(r.Context(), scope, r.URL.Query().Get("path"))
+	path := r.URL.Query().Get("path")
+	result, err := m.operator.Read(r.Context(), scope, path)
 	if err != nil {
 		writeOperatorError(w, err)
 		return
 	}
+	m.recordAuditRead(r, user, "files.read", site, map[string]any{"path": path})
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -102,26 +104,30 @@ func (m *Module) writeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !m.recordAudit(w, r, user, "files.write", site, map[string]any{"path": request.Path}) {
+		return
+	}
 	result, err := m.operator.Write(r.Context(), scope, request.Path, request.Content, request.ExpectedETag)
 	if err != nil {
 		writeOperatorError(w, err)
 		return
 	}
-	m.recordAudit(r, user, "files.write", site, map[string]any{"path": request.Path})
 	writeJSON(w, http.StatusOK, result)
 }
 
 func (m *Module) downloadHTTP(w http.ResponseWriter, r *http.Request) {
-	_, scope, _, ok := m.resolveSite(w, r)
+	site, scope, user, ok := m.resolveSite(w, r)
 	if !ok {
 		return
 	}
-	reader, entry, err := m.operator.Download(r.Context(), scope, r.URL.Query().Get("path"))
+	path := r.URL.Query().Get("path")
+	reader, entry, err := m.operator.Download(r.Context(), scope, path)
 	if err != nil {
 		writeOperatorError(w, err)
 		return
 	}
 	defer reader.Close()
+	m.recordAuditRead(r, user, "files.download", site, map[string]any{"path": path, "size": entry.Size})
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(entry.Size, 10))
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": entry.Name}))
@@ -156,12 +162,14 @@ func (m *Module) mkdirHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !m.recordAudit(w, r, user, "files.mkdir", site, map[string]any{"path": request.Path}) {
+		return
+	}
 	entry, err := m.operator.Mkdir(r.Context(), scope, request.Path)
 	if err != nil {
 		writeOperatorError(w, err)
 		return
 	}
-	m.recordAudit(r, user, "files.mkdir", site, map[string]any{"path": request.Path})
 	writeJSON(w, http.StatusOK, entry)
 }
 
@@ -179,12 +187,14 @@ func (m *Module) moveHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !m.recordAudit(w, r, user, "files.move", site, map[string]any{"from": request.From, "to": request.To}) {
+		return
+	}
 	entry, err := m.operator.Move(r.Context(), scope, request.From, request.To, request.Overwrite)
 	if err != nil {
 		writeOperatorError(w, err)
 		return
 	}
-	m.recordAudit(r, user, "files.move", site, map[string]any{"from": request.From, "to": request.To})
 	writeJSON(w, http.StatusOK, entry)
 }
 
@@ -201,12 +211,14 @@ func (m *Module) chmodHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !m.recordAudit(w, r, user, "files.chmod", site, map[string]any{"path": request.Path, "mode": request.Mode}) {
+		return
+	}
 	entry, err := m.operator.Chmod(r.Context(), scope, request.Path, request.Mode)
 	if err != nil {
 		writeOperatorError(w, err)
 		return
 	}
-	m.recordAudit(r, user, "files.chmod", site, map[string]any{"path": request.Path, "mode": request.Mode})
 	writeJSON(w, http.StatusOK, entry)
 }
 
@@ -223,12 +235,14 @@ func (m *Module) copyHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !m.recordAudit(w, r, user, "files.copy", site, map[string]any{"from": request.From, "to": request.To}) {
+		return
+	}
 	result, err := m.operator.Copy(r.Context(), scope, request.From, request.To)
 	if err != nil {
 		writeOperatorError(w, err)
 		return
 	}
-	m.recordAudit(r, user, "files.copy", site, map[string]any{"from": request.From, "to": request.To})
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -245,11 +259,13 @@ func (m *Module) deleteHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !m.recordAudit(w, r, user, "files.delete", site, map[string]any{"path": request.Path, "recursive": request.Recursive}) {
+		return
+	}
 	if err := m.operator.Delete(r.Context(), scope, request.Path, request.Recursive); err != nil {
 		writeOperatorError(w, err)
 		return
 	}
-	m.recordAudit(r, user, "files.delete", site, map[string]any{"path": request.Path, "recursive": request.Recursive})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -305,12 +321,14 @@ func (m *Module) uploadCommitHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !m.recordAudit(w, r, user, "files.upload.commit", site, map[string]any{"uploadId": r.PathValue("uploadId")}) {
+		return
+	}
 	entry, err := m.operator.UploadCommit(r.Context(), scope, r.PathValue("uploadId"))
 	if err != nil {
 		writeOperatorError(w, err)
 		return
 	}
-	m.recordAudit(r, user, "files.upload.commit", site, map[string]any{"uploadId": r.PathValue("uploadId"), "name": entry.Name})
 	writeJSON(w, http.StatusOK, entry)
 }
 
@@ -353,12 +371,14 @@ func (m *Module) archiveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "files_invalid", "The archive target must be a site-relative path ending in .tar.gz.")
 		return
 	}
+	if !m.recordAudit(w, r, user, "files.archive", site, map[string]any{"paths": request.Paths, "target": request.Target}) {
+		return
+	}
 	job, err := m.jobs.SubmitTitled(r.Context(), "files.archive", "Compress files", archivePayload{Scope: scope, Paths: request.Paths, Target: request.Target}, &user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The archive job could not be queued.")
 		return
 	}
-	m.recordAudit(r, user, "files.archive", site, map[string]any{"paths": request.Paths, "target": request.Target})
 	writeJSON(w, http.StatusAccepted, map[string]any{"job": job})
 }
 
@@ -384,12 +404,14 @@ func (m *Module) extractHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "files_invalid", "The target directory is not allowed: "+err.Error()+".")
 		return
 	}
+	if !m.recordAudit(w, r, user, "files.extract", site, map[string]any{"path": request.Path, "targetDir": request.TargetDir}) {
+		return
+	}
 	job, err := m.jobs.SubmitTitled(r.Context(), "files.extract", "Extract archive", extractPayload{Scope: scope, Path: request.Path, TargetDir: request.TargetDir}, &user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The extraction job could not be queued.")
 		return
 	}
-	m.recordAudit(r, user, "files.extract", site, map[string]any{"path": request.Path, "targetDir": request.TargetDir})
 	writeJSON(w, http.StatusAccepted, map[string]any{"job": job})
 }
 

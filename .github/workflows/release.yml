@@ -1,16 +1,28 @@
 name: Release
 
 # Publishes the per-architecture Linux release assets whenever a version tag is
-# pushed. Each architecture ships two pairs, and the names are a contract the
-# installer and the self-update operator resolve by hand:
+# pushed. The names are a contract the installer and the self-update operator
+# resolve by hand:
 #
-#   nexa-panel-linux-<arch>.tar.gz(.sha256)  the installable bundle — the binary
+#   nexa-panel-linux-<arch>.tar.gz            the installable bundle — the binary
 #     plus the packaging tree, scripts/install.sh and scripts/nexa-seed-admin.sh
 #     under a single nexa-panel-<version>-linux-<arch>/ directory. Installing or
 #     self-updating from a bare binary cannot work: install.sh reads packaging/
 #     out of the tree it lives in, and self-update has to re-apply the units.
-#   nexa-linux-<arch>(.sha256)  the bare binary, kept for convenience and for
-#     tooling that already references it.
+#   nexa-panel-linux-<arch>.tar.gz.sha256     the digest the updater verifies.
+#   nexa-panel-linux-<arch>.tar.gz.sig        the detached OpenSSH signature the
+#     installer and updater verify against the pinned release key.
+#   nexa-panel-linux-<arch>.tar.gz.spdx.json(.sig)  the SBOM for that bundle.
+#
+# Every published file is signed with the release key. The bare
+# nexa-linux-<arch> binary is deliberately NOT published: it shipped with only a
+# .sha256 and no signature, sitting next to signed bundles it cannot be installed
+# from, which is a trap rather than a convenience. It remains a local build
+# product of scripts/build-linux-release.sh.
+#
+# Each bundle also carries a GitHub build-provenance attestation and an SBOM
+# attestation, so a downloaded artifact can be traced to this workflow, this
+# commit, and this dependency set with `gh attestation verify`.
 on:
   push:
     tags:
@@ -23,6 +35,10 @@ on:
 
 permissions:
   contents: write
+  # Provenance and SBOM attestations are signed with a workflow OIDC identity and
+  # stored in the repository's attestation store; both need their own grant.
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -63,16 +79,73 @@ jobs:
       - name: Build linux/arm64 release binary
         run: bash scripts/build-linux-release.sh arm64
 
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Generate an SBOM per release bundle
+        run: |
+          set -euo pipefail
+          # The bundle is scanned rather than the source tree: the SBOM has to
+          # describe what was published, and syft reads the Go module graph back
+          # out of the binary inside it.
+          for arch in amd64 arm64; do
+            syft scan "file:dist/nexa-panel-linux-${arch}.tar.gz" \
+              --output "spdx-json=dist/nexa-panel-linux-${arch}.tar.gz.spdx.json"
+          done
+
+      - name: Sign every published release asset
+        env:
+          NEXA_RELEASE_SIGNING_KEY: ${{ secrets.NEXA_RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${NEXA_RELEASE_SIGNING_KEY}" || {
+            echo "NEXA_RELEASE_SIGNING_KEY is not configured" >&2
+            exit 1
+          }
+          key="$(mktemp)"
+          trap 'shred -u "${key}" 2>/dev/null || rm -f "${key}"' EXIT
+          chmod 0600 "${key}"
+          printf '%s\n' "${NEXA_RELEASE_SIGNING_KEY}" > "${key}"
+          # The SBOM is signed alongside the bundle so no published file lacks a
+          # signature — an unsigned asset next to signed ones is the exact footgun
+          # that retired the bare binaries.
+          for arch in amd64 arm64; do
+            ssh-keygen -Y sign -q -f "${key}" -n file "dist/nexa-panel-linux-${arch}.tar.gz"
+            ssh-keygen -Y sign -q -f "${key}" -n file "dist/nexa-panel-linux-${arch}.tar.gz.spdx.json"
+          done
+
       - name: Verify release artifacts
         run: |
           set -euo pipefail
           cd dist
           for arch in amd64 arm64; do
-            for asset in "nexa-linux-${arch}" "nexa-panel-linux-${arch}.tar.gz"; do
-              test -f "${asset}" || { echo "missing ${asset}" >&2; exit 1; }
-              test -f "${asset}.sha256" || { echo "missing ${asset}.sha256" >&2; exit 1; }
-              sha256sum -c "${asset}.sha256"
+            bundle="nexa-panel-linux-${arch}.tar.gz"
+            test -f "${bundle}" || { echo "missing ${bundle}" >&2; exit 1; }
+            test -f "${bundle}.sha256" || { echo "missing ${bundle}.sha256" >&2; exit 1; }
+            sha256sum -c "${bundle}.sha256"
+            # A bare binary must never reach the release: it would be the only
+            # asset with no signature to verify.
+            test ! -f "nexa-linux-${arch}.sha256" || {
+              echo "${arch}: the bare binary must not carry a release checksum" >&2
+              exit 1
+            }
+            for signed in "${bundle}" "${bundle}.spdx.json"; do
+              test -f "${signed}" || { echo "missing ${signed}" >&2; exit 1; }
+              test -f "${signed}.sig" || { echo "missing ${signed}.sig" >&2; exit 1; }
+              ssh-keygen -Y verify \
+                -f ../packaging/release-signers \
+                -I nexa-panel-release \
+                -n file \
+                -s "${signed}.sig" \
+                < "${signed}"
             done
+            # An SBOM that names nothing is a generation failure that would
+            # otherwise publish as a valid-looking document.
+            packages="$(jq '.packages | length' "${bundle}.spdx.json")"
+            test "${packages}" -ge 2 || {
+              echo "${arch}: the SBOM lists only ${packages} packages" >&2
+              exit 1
+            }
           done
 
           # Extract each bundle and assert the layout install.sh depends on. A
@@ -94,16 +167,21 @@ jobs:
               packaging/systemd/nexa-api.service \
               packaging/systemd/nexa-panel-system-backup.service \
               packaging/systemd/nexa-panel-system-backup.timer \
+              packaging/systemd/nexa-update-recovery.service \
               packaging/sysusers/nexa-panel.conf \
               packaging/tmpfiles/nexa-panel.conf \
               packaging/nginx/nexa-panel.conf.template \
+              packaging/nginx/nexa-panel-proxy.conf.template \
+              packaging/release-signers \
               scripts/install.sh \
               scripts/nexa-seed-admin.sh \
+              scripts/nexa-release-helper.py \
+              scripts/uninstall.sh \
               RELEASE
             do
               test -f "${root}/${path}" || { echo "${arch}: bundle is missing ${path}" >&2; exit 1; }
             done
-            for path in bin/nexa scripts/install.sh scripts/nexa-seed-admin.sh; do
+            for path in bin/nexa scripts/install.sh scripts/nexa-seed-admin.sh scripts/nexa-release-helper.py scripts/uninstall.sh; do
               test -x "${root}/${path}" || { echo "${arch}: ${path} is not executable" >&2; exit 1; }
             done
             grep -q "^arch=${arch}$" "${root}/RELEASE" || { echo "${arch}: RELEASE does not record arch=${arch}" >&2; exit 1; }
@@ -112,6 +190,25 @@ jobs:
             done
             rm -rf "${workdir}"
           done
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            dist/nexa-panel-linux-amd64.tar.gz
+            dist/nexa-panel-linux-arm64.tar.gz
+
+      - name: Attest the amd64 SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: dist/nexa-panel-linux-amd64.tar.gz
+          sbom-path: dist/nexa-panel-linux-amd64.tar.gz.spdx.json
+
+      - name: Attest the arm64 SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: dist/nexa-panel-linux-arm64.tar.gz
+          sbom-path: dist/nexa-panel-linux-arm64.tar.gz.spdx.json
 
       - name: Publish GitHub release
         env:
@@ -125,9 +222,11 @@ jobs:
             --verify-tag \
             dist/nexa-panel-linux-amd64.tar.gz \
             dist/nexa-panel-linux-amd64.tar.gz.sha256 \
+            dist/nexa-panel-linux-amd64.tar.gz.sig \
+            dist/nexa-panel-linux-amd64.tar.gz.spdx.json \
+            dist/nexa-panel-linux-amd64.tar.gz.spdx.json.sig \
             dist/nexa-panel-linux-arm64.tar.gz \
             dist/nexa-panel-linux-arm64.tar.gz.sha256 \
-            dist/nexa-linux-amd64 \
-            dist/nexa-linux-amd64.sha256 \
-            dist/nexa-linux-arm64 \
-            dist/nexa-linux-arm64.sha256
+            dist/nexa-panel-linux-arm64.tar.gz.sig \
+            dist/nexa-panel-linux-arm64.tar.gz.spdx.json \
+            dist/nexa-panel-linux-arm64.tar.gz.spdx.json.sig

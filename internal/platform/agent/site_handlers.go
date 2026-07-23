@@ -43,6 +43,24 @@ func (s *Server) siteTeardownPlanHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, plan)
 }
 
+// sitePurgeHTTP removes the site's managed Unix account and site root once its
+// configuration has been rolled back. The request carries a site rather than a
+// signed plan because there is nothing to snapshot or restore; the operator
+// re-validates the identity itself, so an unmanaged account or path can never be
+// named here.
+func (s *Server) sitePurgeHTTP(w http.ResponseWriter, r *http.Request) {
+	var site siteoperator.Site
+	if err := decodeJSON(w, r, &site); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := s.sites.Purge(r.Context(), site); err != nil {
+		writeError(w, http.StatusConflict, "site_purge_failed", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) siteApplyHTTP(w http.ResponseWriter, r *http.Request) {
 	s.sitePlanMutation(w, r, false)
 }

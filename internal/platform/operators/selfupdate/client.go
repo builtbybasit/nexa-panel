@@ -31,9 +31,3 @@ func (c *UnixClient) Apply(ctx context.Context, change Change) (Result, error) {
 	err := c.client.JSON(ctx, http.MethodPost, "/v1/self-update/apply", change, &result)
 	return result, err
 }
-
-func (c *UnixClient) Rollback(ctx context.Context) (Result, error) {
-	var result Result
-	err := c.client.JSON(ctx, http.MethodPost, "/v1/self-update/rollback", nil, &result)
-	return result, err
-}

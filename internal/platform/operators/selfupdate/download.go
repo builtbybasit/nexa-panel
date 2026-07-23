@@ -56,12 +56,12 @@ func (d *httpDownloader) Fetch(ctx context.Context, url string, limit int64) ([]
 	if err := d.tokens.authorize(request); err != nil {
 		return nil, err
 	}
-	response, err := d.http.Do(request)
+	response, err := sendReleaseRequest(ctx, d.http, request)
 	if err != nil {
 		return nil, fmt.Errorf("download release asset: %w", err)
 	}
 	defer response.Body.Close()
-	if err := classifyReleaseStatus(response.StatusCode); err != nil {
+	if err := classifyReleaseStatus(response.StatusCode, response.Header, isAuthorized(request)); err != nil {
 		return nil, err
 	}
 	// LimitReader+1 lets an over-limit body be detected rather than silently

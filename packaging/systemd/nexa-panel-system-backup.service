@@ -26,8 +26,10 @@ EnvironmentFile=/etc/nexa-panel/system-backup.env
 # worker claims it and ships control.db + master.key off-node. Mirrors the
 # production state path used by nexa-api.service and the CLI default.
 ExecStart=/usr/bin/nexa backup system --account ${NEXA_SYSTEM_BACKUP_ACCOUNT} --state /var/lib/nexa-panel/control.db
-StateDirectory=nexa-panel
-StateDirectoryMode=0700
+# No StateDirectory=, for the same reason as nexa-api.service: systemd would
+# recursively chown /var/lib/nexa-panel on every timer firing and take the
+# root-owned install/ ownership proof with it. tmpfiles owns the tree.
+ReadWritePaths=/var/lib/nexa-panel
 # This process only opens control.db and inserts one job row; the archiving is
 # done by the nexa-api worker under its own limits.
 MemoryHigh=128M

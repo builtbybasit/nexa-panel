@@ -550,3 +550,122 @@ func TestPrepareDeployerLayoutOwnsTheCurrentLink(t *testing.T) {
 		t.Fatal("current does not resolve to the initial release")
 	}
 }
+
+// purgeSystem builds a HostSystem whose account lookup and userdel are faked,
+// so the removal contract can be exercised without a real /etc/passwd.
+func purgeSystem(t *testing.T, site Site, account *user.User) (*HostSystem, *[]string) {
+	t.Helper()
+	commands := new([]string)
+	return &HostSystem{
+		command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			*commands = append(*commands, strings.Join(append([]string{name}, args...), " "))
+			return nil, nil
+		},
+		lookupUser: func(name string) (*user.User, error) {
+			if account == nil || name != site.UnixUser {
+				return nil, user.UnknownUserError(name)
+			}
+			return account, nil
+		},
+	}, commands
+}
+
+// The two pieces of host state no plan covers: after a teardown neither the
+// account nor the site tree may be left behind.
+func TestRemoveSiteDeletesTheManagedAccountAndRoot(t *testing.T) {
+	root := t.TempDir()
+	site := Site{Slug: "demo", UnixUser: "nexa_demo", RootPath: filepath.Join(root, "demo")}
+	if err := os.MkdirAll(filepath.Join(site.RootPath, "public"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(site.RootPath, "public", "index.php"), []byte("x"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	system, commands := purgeSystem(t, site, &user.User{Uid: "996", Gid: "996", Username: site.UnixUser, HomeDir: site.RootPath})
+	if err := system.RemoveSite(context.Background(), site); err != nil {
+		t.Fatal(err)
+	}
+	if len(*commands) != 1 || (*commands)[0] != "userdel nexa_demo" {
+		t.Fatalf("commands = %v, want a single userdel", *commands)
+	}
+	if _, err := os.Stat(site.RootPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("site root survived the teardown: %v", err)
+	}
+}
+
+// A teardown is retried after an interruption, so removing what is already gone
+// has to be success rather than an error that can never clear.
+func TestRemoveSiteIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	site := Site{Slug: "demo", UnixUser: "nexa_demo", RootPath: filepath.Join(root, "demo")}
+	system, commands := purgeSystem(t, site, nil)
+	if err := system.RemoveSite(context.Background(), site); err != nil {
+		t.Fatalf("removing an already-absent site: %v", err)
+	}
+	if len(*commands) != 0 {
+		t.Fatalf("commands = %v, want none for an account that does not exist", *commands)
+	}
+}
+
+// The agent runs as root. An account that does not match the managed contract —
+// a privileged UID, or a home directory that is not this site's root — is never
+// deleted, however the site row happens to name it.
+func TestRemoveSiteRefusesAnAccountThatIsNotTheManagedOwner(t *testing.T) {
+	root := t.TempDir()
+	site := Site{Slug: "demo", UnixUser: "nexa_demo", RootPath: filepath.Join(root, "demo")}
+	if err := os.MkdirAll(site.RootPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, account := range map[string]*user.User{
+		"privileged UID":  {Uid: "0", Gid: "0", Username: site.UnixUser, HomeDir: site.RootPath},
+		"foreign home":    {Uid: "996", Gid: "996", Username: site.UnixUser, HomeDir: "/home/operator"},
+		"unparseable UID": {Uid: "root", Gid: "0", Username: site.UnixUser, HomeDir: site.RootPath},
+	} {
+		system, commands := purgeSystem(t, site, account)
+		if err := system.RemoveSite(context.Background(), site); err == nil {
+			t.Fatalf("%s: the account was deleted despite failing the managed contract", name)
+		}
+		if len(*commands) != 0 {
+			t.Fatalf("%s: commands = %v, want none", name, *commands)
+		}
+		if _, err := os.Stat(site.RootPath); err != nil {
+			t.Fatalf("%s: the site root was removed after a refused account deletion: %v", name, err)
+		}
+	}
+}
+
+// A symlink standing in for the site root must not be followed: removing it
+// would delete whatever it points at, chosen by whoever could write the parent.
+func TestRemoveSiteRefusesASymlinkedSiteRoot(t *testing.T) {
+	root := t.TempDir()
+	elsewhere := filepath.Join(root, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	site := Site{Slug: "demo", UnixUser: "nexa_demo", RootPath: filepath.Join(root, "demo")}
+	if err := os.Symlink(elsewhere, site.RootPath); err != nil {
+		t.Fatal(err)
+	}
+	system, _ := purgeSystem(t, site, nil)
+	if err := system.RemoveSite(context.Background(), site); err == nil {
+		t.Fatal("a symlinked site root was accepted")
+	}
+	if _, err := os.Stat(elsewhere); err != nil {
+		t.Fatalf("the symlink target was removed: %v", err)
+	}
+}
+
+// Purge re-derives the identity from the renderer before anything is destroyed,
+// so a site naming a path or account outside the managed layout never reaches
+// the removal at all.
+func TestPurgeRefusesASiteOutsideTheManagedLayout(t *testing.T) {
+	system := new(fakeNodeSystem)
+	operator, site := testHostOperator(t, system)
+	site.RootPath = "/srv/somebody-elses/tree"
+	if err := operator.Purge(context.Background(), site); err == nil {
+		t.Fatal("Purge accepted a site root outside the managed sites root")
+	}
+	if len(system.calls) != 0 {
+		t.Fatalf("calls = %v, want the node untouched", system.calls)
+	}
+}

@@ -240,7 +240,7 @@ const submitDelete = () =>
     <PageHeader
       eyebrow="Access control"
       title="Users"
-      description="Panel accounts with role-scoped permissions. Developers only reach the sites granted to them; every account enrolls MFA on first sign-in."
+      description="Panel accounts with role-scoped permissions. Developers only reach granted sites; administrators must enroll MFA before entering the panel."
     >
       <AppButton v-if="canManage" icon="refresh-cw" :loading="usersQuery.isFetching.value" @click="usersQuery.refetch()">
         Refresh
@@ -363,8 +363,11 @@ const submitDelete = () =>
         </FormField>
         <PasswordField
           v-model="createPassword"
-          :minimum-length="12"
-          hint="At least 12 characters. The user enrolls MFA on first sign-in."
+          :minimum-length="identity.passwordPolicy?.minLength"
+          :maximum-length="identity.passwordPolicy?.maxLength"
+          :required-classes="identity.passwordPolicy?.requiredClasses"
+          :class-exempt-length="identity.passwordPolicy?.classExemptLength"
+          hint="The server also rejects common passwords and passwords containing the username."
           required
         />
         <FormField label="Role">
@@ -435,7 +438,10 @@ const submitDelete = () =>
         <PasswordField
           v-model="editPassword"
           label="New password"
-          :minimum-length="12"
+          :minimum-length="identity.passwordPolicy?.minLength"
+          :maximum-length="identity.passwordPolicy?.maxLength"
+          :required-classes="identity.passwordPolicy?.requiredClasses"
+          :class-exempt-length="identity.passwordPolicy?.classExemptLength"
           placeholder="Unchanged"
           hint="Leave blank to keep the current password. Resetting revokes active sessions."
         />

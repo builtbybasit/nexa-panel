@@ -67,7 +67,7 @@ func TestSubmitRecordsATargetedFirewallEntry(t *testing.T) {
 		Action: firewalloperator.ActionAllow,
 		Rule:   firewalloperator.Rule{Port: "8080", Protocol: "TCP"},
 	}
-	if _, err := module.Submit(context.Background(), change, &actor, "203.0.113.9"); err != nil {
+	if _, err := module.Submit(context.Background(), change, &actor, "203.0.113.9", false); err != nil {
 		t.Fatalf("Submit returned an error: %v", err)
 	}
 
@@ -110,7 +110,7 @@ func TestSubmitRefusesAnUnauditableChange(t *testing.T) {
 	}
 	actor := "user_admin"
 	change := firewalloperator.Change{Action: firewalloperator.ActionDisable}
-	if _, err := module.Submit(context.Background(), change, &actor, ""); !errors.Is(err, audit.ErrUnauditable) {
+	if _, err := module.Submit(context.Background(), change, &actor, "", false); !errors.Is(err, audit.ErrUnauditable) {
 		t.Fatalf("Submit err = %v, want audit.ErrUnauditable", err)
 	}
 	queued, err := module.jobs.List(context.Background(), 50)

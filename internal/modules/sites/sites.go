@@ -170,13 +170,41 @@ func New(_ context.Context, database *bun.DB, jobQueue *jobs.Module, runtimeCata
 	if err := jobQueue.RegisterHandler("site.rollback", m.rollbackJob); err != nil {
 		return nil, err
 	}
-	if err := jobQueue.RegisterHandler("site.delete", m.deleteJob); err != nil {
+	// A teardown converges rather than half-applies: the node treats an artifact
+	// that is already gone as the desired end state, the account and root purge
+	// is idempotent, and the row delete is the last step. Retrying it after a
+	// crash is therefore safe — and it has to be retried, because the fail policy
+	// left the site in "deleting" forever, which siteDeletable rejects, making
+	// the site permanently undeletable.
+	if err := jobQueue.RegisterHandlerWithOptions("site.delete", m.deleteJob, jobs.HandlerOptions{RecoveryPolicy: jobs.RecoveryRetry}); err != nil {
 		return nil, err
 	}
 	if err := jobQueue.RegisterHandler("site.settings", m.settingsJob); err != nil {
 		return nil, err
 	}
+	if err := m.reconcileInterruptedTeardowns(context.Background()); err != nil {
+		return nil, err
+	}
 	return m, nil
+}
+
+// reconcileInterruptedTeardowns releases sites left in the transient "deleting"
+// status by a worker that died. The status is only ever correct while a teardown
+// job is live, and siteDeletable rejects every DELETE while it is set, so a row
+// that outlived its job used to be undeletable for good. The jobs module has
+// already recovered interrupted work by the time a module is constructed, so any
+// row with no queued or running job behind it is stranded and is returned to
+// "failed" — a state a fresh delete may act on.
+func (m *Module) reconcileInterruptedTeardowns(ctx context.Context) error {
+	_, err := m.database.NewUpdate().Model((*siteModel)(nil)).
+		Set("status = ?", StatusFailed).
+		Set("failure = ?", "The site removal was interrupted before it finished; delete the site again to complete it.").
+		Set("updated_at = ?", m.now().UTC()).
+		Where("status = ?", StatusDeleting).
+		Where("last_job_id IS NULL OR NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.id = site.last_job_id AND jobs.state IN (?, ?))",
+			jobs.StateQueued, jobs.StateRunning).
+		Exec(ctx)
+	return err
 }
 
 func (m *Module) Descriptor() module.Descriptor {

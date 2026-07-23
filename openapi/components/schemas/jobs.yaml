@@ -41,9 +41,14 @@ Job:
       minimum: 0
       description: Number of worker leases claimed for this job.
     request:
-      description: Kind-specific JSON payload; it may be an object, array, scalar, or null.
+      description: >-
+        Kind-specific JSON payload; it may be an object, array, scalar, or null.
+        Credential-shaped fields (password, secret, token, key, passphrase, and
+        similar) are replaced with the string "[redacted]" on the response path.
     result:
-      description: Kind-specific JSON result; it may be an object, array, scalar, or null.
+      description: >-
+        Kind-specific JSON result; it may be an object, array, scalar, or null.
+        Redacted the same way as request.
     failure:
       type: string
     createdAt:

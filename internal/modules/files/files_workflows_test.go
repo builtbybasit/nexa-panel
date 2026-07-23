@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -232,6 +233,10 @@ type harness struct {
 }
 
 func newHarness(t *testing.T) *harness {
+	return newHarnessWithRecorder(t, nil)
+}
+
+func newHarnessWithRecorder(t *testing.T, recorder audit.Recorder) *harness {
 	t.Helper()
 	ctx := context.Background()
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
@@ -267,7 +272,10 @@ func newHarness(t *testing.T) *harness {
 	active := sites.Site{ID: "site_active", Slug: "granted", RootPath: "/srv/nexa/sites/granted", UnixUser: "nexa_granted", Status: sites.StatusActive}
 	inactive := sites.Site{ID: "site_planning", Slug: "pending", RootPath: "/srv/nexa/sites/pending", UnixUser: "nexa_pending", Status: sites.StatusPlanning}
 	operator := &fakeOperator{body: []byte("body{color:red}")}
-	filesModule, err := New(queue, fakeCatalog{active.ID: active, inactive.ID: inactive}, fakeAccessPolicy{allowed: map[string]bool{active.ID: true}}, operator, auditLog)
+	if recorder == nil {
+		recorder = auditLog
+	}
+	filesModule, err := New(queue, fakeCatalog{active.ID: active, inactive.ID: inactive}, fakeAccessPolicy{allowed: map[string]bool{active.ID: true}}, operator, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,6 +291,12 @@ func newHarness(t *testing.T) *harness {
 		dev:    seedIdentitySession(t, database, "dev-1", "dev", "developer", strings.Repeat("b", 64)),
 		viewer: seedIdentitySession(t, database, "viewer-1", "viewer", "viewer", strings.Repeat("c", 64)),
 	}
+}
+
+type unavailableAuditRecorder struct{}
+
+func (unavailableAuditRecorder) Record(context.Context, audit.Entry) error {
+	return errors.New("audit store is locked")
 }
 
 func (h *harness) do(t *testing.T, method, path string, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -419,6 +433,53 @@ func TestFilesWriteAuditAndConflictPassthrough(t *testing.T) {
 	invalid := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/files/mkdir", `{"path":"logs/dir"}`, h.admin)
 	if invalid.Code != http.StatusUnprocessableEntity || errorCode(t, invalid) != filesoperator.CodeInvalid {
 		t.Fatalf("invalid passthrough = %d %s", invalid.Code, invalid.Body.String())
+	}
+}
+
+func TestFileMutationIsRefusedBeforeTheNodeWhenAuditIsUnavailable(t *testing.T) {
+	h := newHarnessWithRecorder(t, unavailableAuditRecorder{})
+	response := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/files/delete", `{"path":"public/index.php","recursive":false}`, h.admin)
+	if response.Code != http.StatusServiceUnavailable || errorCode(t, response) != "audit_unavailable" {
+		t.Fatalf("delete without audit = %d %s", response.Code, response.Body.String())
+	}
+	if len(h.operator.calls) != 0 {
+		t.Fatalf("node mutation ran before its audit event was durable: %+v", h.operator.calls)
+	}
+}
+
+// TestFileReadsAreAuditedBestEffort pins that content leaving a site root is
+// recorded, and that — unlike a mutation — the read still succeeds when the
+// audit log is unavailable.
+func TestFileReadsAreAuditedBestEffort(t *testing.T) {
+	h := newHarness(t)
+
+	if response := h.do(t, http.MethodGet, "/api/v1/sites/"+h.site.ID+"/files/content?path=public/index.php", "", h.admin); response.Code != http.StatusOK {
+		t.Fatalf("read = %d %s", response.Code, response.Body.String())
+	}
+	if response := h.do(t, http.MethodGet, "/api/v1/sites/"+h.site.ID+"/files/download?path=public/asset.css", "", h.admin); response.Code != http.StatusOK {
+		t.Fatalf("download = %d %s", response.Code, response.Body.String())
+	}
+
+	events, err := h.audit.List(context.Background(), 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wanted := map[string]string{"files.read": "public/index.php", "files.download": "public/asset.css"}
+	for _, event := range events {
+		path, tracked := wanted[event.Action]
+		if !tracked || event.Subject != "site:"+h.site.ID || event.Metadata["path"] != path {
+			continue
+		}
+		delete(wanted, event.Action)
+	}
+	if len(wanted) != 0 {
+		t.Fatalf("missing read audit events %+v in %+v", wanted, events)
+	}
+
+	unauditable := newHarnessWithRecorder(t, unavailableAuditRecorder{})
+	response := unauditable.do(t, http.MethodGet, "/api/v1/sites/"+unauditable.site.ID+"/files/download?path=public/asset.css", "", unauditable.admin)
+	if response.Code != http.StatusOK {
+		t.Fatalf("download without audit = %d %s", response.Code, response.Body.String())
 	}
 }
 

@@ -26,7 +26,7 @@ auth_bootstrap:
       content:
         application/json:
           schema:
-            $ref: ../components/schemas/identity.yaml#/Credentials
+            $ref: ../components/schemas/identity.yaml#/BootstrapRequest
     responses:
       '201':
         description: The first administrator and session were created.
@@ -72,9 +72,13 @@ auth_mfa_enroll:
     - Identity
     security:
     - sessionCookie: []
+    description: >-
+      Create (or return) TOTP enrollment material for the signed-in account.
+      Enrollment is optional for every role; nothing is enforced until the
+      matching code is confirmed.
     responses:
       '200':
-        description: Encrypted TOTP enrollment material for the pre-authenticated user.
+        description: Encrypted TOTP enrollment material for the signed-in user.
         content:
           application/json:
             schema:
@@ -139,11 +143,14 @@ auth_mfa_verify:
               - recoveryCode
               properties:
                 recoveryCode:
-                  type: string
-                  pattern: ^[A-Fa-f0-9]{4}(-[A-Fa-f0-9]{4}){3}$
+                  $ref: ../components/schemas/identity.yaml#/RecoveryCode
+    description: >-
+      Answer the sign-in challenge of an enrolled account with an authenticator
+      code or one single-use recovery code. Recovery codes are accepted from
+      every role, including admin.
     responses:
       '200':
-        description: The pre-authenticated session is now fully authenticated.
+        description: The challenged session is now fully authenticated.
         content:
           application/json:
             schema:
@@ -152,6 +159,45 @@ auth_mfa_verify:
         description: The TOTP or recovery code was invalid or already consumed.
       '429':
         description: Too many verification attempts were made.
+auth_mfa_recover:
+  post:
+    operationId: recoverMFA
+    summary: Replace a lost MFA factor
+    tags:
+    - Identity
+    description: >-
+      Consume one recovery code and rotate the signed-in account onto fresh MFA
+      enrollment material, retiring the lost factor. Every other session is
+      revoked, so the replacement is paired from this session alone. Available to
+      every enrolled role, not administrators alone: the recovery code is the
+      credential. An account that lost both its authenticator and its recovery
+      codes needs the offline break-glass path instead
+      (`sudo nexa mfa reset --user <name>`; see docs/runbooks/mfa-recovery.md).
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - recoveryCode
+            properties:
+              recoveryCode:
+                $ref: ../components/schemas/identity.yaml#/RecoveryCode
+    responses:
+      '200':
+        description: The old factor was retired and replacement enrollment material was created.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/identity.yaml#/MFAEnrollment
+      '401':
+        description: The recovery code was invalid or already consumed.
+      '429':
+        description: Too many recovery attempts were made.
 auth_mfa_disable:
   post:
     operationId: disableMFA
@@ -159,11 +205,11 @@ auth_mfa_disable:
     tags:
     - Identity
     description: >-
-      Turn off the second factor for the signed-in account. Requires a fully
-      authenticated session (a completed MFA challenge) and the account password,
-      so a stolen password alone cannot strip MFA. Administrators cannot disable
-      their mandatory factor through self-service; a recovery procedure must
-      replace it.
+      Turn off the second factor for the signed-in account, in any role including
+      admin. Enrollment is optional, so disabling is a deliberate and audited
+      choice — but it is gated like any sensitive action: the session must have
+      completed an MFA challenge (step-up) and the request must carry the account
+      password, so a stolen password alone can never strip MFA.
     security:
     - sessionCookie: []
     requestBody:
@@ -182,7 +228,7 @@ auth_mfa_disable:
       '401':
         description: The session is not fully authenticated, or the password is incorrect.
       '403':
-        description: Administrator MFA cannot be disabled through self-service.
+        description: The session has not completed a second-factor challenge.
       '409':
         description: Multi-factor authentication is not enabled.
       '429':

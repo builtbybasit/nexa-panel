@@ -122,6 +122,87 @@ func (s *HostSystem) PrepareSite(ctx context.Context, site Site) error {
 	return prepareDocumentRoot(root, site, uid, gid)
 }
 
+// RemoveSite undoes PrepareSite. It is the last step of a teardown, and it is
+// deliberately paranoid: the agent runs as root, so every identity it is asked
+// to destroy is verified against the managed account contract first — the same
+// contract scripts/uninstall.sh enforces before it deletes anything. The name
+// is already pinned to "nexa_<slug>" by the caller's re-validation, and an
+// account whose UID is 0 or whose home directory is not this site's root is
+// left untouched, so the teardown fails loudly rather than deleting an
+// operator's account that happens to collide.
+//
+// Both halves are idempotent, because a teardown is retried after an
+// interruption: an account or a root that is already gone is success.
+func (s *HostSystem) RemoveSite(ctx context.Context, site Site) error {
+	if err := s.removeSiteAccount(ctx, site); err != nil {
+		return err
+	}
+	return removeSiteRoot(site.RootPath)
+}
+
+func (s *HostSystem) removeSiteAccount(ctx context.Context, site Site) error {
+	lookupUser := s.lookupUser
+	if lookupUser == nil {
+		lookupUser = user.Lookup
+	}
+	account, err := lookupUser(site.UnixUser)
+	var unknown user.UnknownUserError
+	if errors.As(err, &unknown) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("look up site account: %w", err)
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil || uid <= 0 {
+		return fmt.Errorf("site account %s has an invalid or privileged UID; refusing to delete it", site.UnixUser)
+	}
+	if filepath.Clean(account.HomeDir) != filepath.Clean(site.RootPath) {
+		return fmt.Errorf("site account %s is not the managed owner of %s; refusing to delete it", site.UnixUser, site.RootPath)
+	}
+	// --remove is deliberately not passed: it would delete whatever the home path
+	// currently resolves to, following a symlink an attacker could have put
+	// there. The root is removed separately, through its parent's descriptor.
+	if output, err := s.command(ctx, "userdel", site.UnixUser); err != nil {
+		message := strings.TrimSpace(string(output))
+		if len(message) > 500 {
+			message = message[:500]
+		}
+		return fmt.Errorf("delete site account %s: %s: %s", site.UnixUser, err, message)
+	}
+	return nil
+}
+
+// removeSiteRoot deletes the managed site tree through its parent directory's
+// own descriptor, so the entry is identified once and cannot be swapped for a
+// symlink pointing somewhere else between the check and the removal. A path
+// that is not a real directory is refused rather than removed.
+func removeSiteRoot(rootPath string) error {
+	parent, err := os.OpenRoot(filepath.Dir(rootPath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("open site parent: %w", err)
+	}
+	defer parent.Close()
+	name := filepath.Base(rootPath)
+	info, err := parent.Lstat(name)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%s is not a managed site root", rootPath)
+	}
+	if err := parent.RemoveAll(name); err != nil {
+		return fmt.Errorf("remove site root %s: %w", rootPath, err)
+	}
+	return nil
+}
+
 // prepareDeployerLayout creates releases/ and shared/ and seeds the initial
 // release plus the current symlink, so `nginx -t` and the health probe pass
 // before the first deploy has ever run. Everything it creates is idempotent and

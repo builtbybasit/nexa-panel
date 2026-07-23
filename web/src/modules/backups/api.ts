@@ -134,10 +134,41 @@ export async function listBackupCopies(planId: string) {
   return (await request<{ items: BackupCopy[] }>(`/api/v1/backups/plans/${planId}/copies`)).items
 }
 
-export interface BackupRestoreRequest {
+export interface BackupRestoreChoices {
   sites: { entry: string; siteId: string; clear: boolean }[]
   databases: { entry: string; databaseRef: string; clear: boolean }[]
   allowUnverified: boolean
+}
+
+export interface BackupRestoreRequest extends BackupRestoreChoices {
+  /** Short-lived server binding for the exact plan the operator reviewed. */
+  previewToken: string
+}
+
+interface BackupRestorePreviewItem {
+  kind: 'site' | 'database'
+  sourceEntry: string
+  destinationRef: string
+  destinationLabel: string
+  clear: boolean
+  impact: string
+}
+
+export interface BackupRestorePreview {
+  copyId: string
+  copyName: string
+  integrityState: BackupCopy['integrityState']
+  warnings: string[]
+  items: BackupRestorePreviewItem[]
+  previewToken: string
+  expiresAt: string
+}
+
+export function previewBackupRestore(copyId: string, body: BackupRestoreChoices) {
+  return request<BackupRestorePreview>(`/api/v1/backups/copies/${copyId}/restore/preview`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 export function restoreBackupCopy(copyId: string, body: BackupRestoreRequest) {

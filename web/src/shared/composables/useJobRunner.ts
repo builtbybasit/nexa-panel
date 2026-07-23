@@ -34,6 +34,7 @@ export function useJobRunner() {
   const jobId = ref<number>()
   const messages = ref<JobMessage[]>([])
   const startedAtMs = ref<number>()
+  const reconnecting = ref(false)
   let stopWatching: (() => void) | undefined
 
   function stop() {
@@ -47,6 +48,7 @@ export function useJobRunner() {
     jobId.value = undefined
     messages.value = []
     startedAtMs.value = Date.now()
+    reconnecting.value = false
   }
 
   /** Stops following and clears every piece of run state, including busy. */
@@ -58,6 +60,7 @@ export function useJobRunner() {
     jobId.value = undefined
     messages.value = []
     startedAtMs.value = undefined
+    reconnecting.value = false
   }
 
   function record(event: JobEvent) {
@@ -74,6 +77,7 @@ export function useJobRunner() {
     stopWatching = subscribeToJob(
       id,
       (event) => {
+        reconnecting.value = false
         progress.value = event
         record(event)
         if (event.state !== 'succeeded' && event.state !== 'failed') return
@@ -98,8 +102,12 @@ export function useJobRunner() {
         })()
       },
       () => {
+        reconnecting.value = false
         error.value = 'The live progress stream disconnected. Check Jobs for the final state.'
         busy.value = false
+      },
+      () => {
+        reconnecting.value = true
       },
     )
   }
@@ -134,5 +142,5 @@ export function useJobRunner() {
 
   onScopeDispose(stop)
 
-  return { busy, error, progress, jobId, messages, startedAtMs, run, follow, stop, reset }
+  return { busy, error, progress, jobId, messages, startedAtMs, reconnecting, run, follow, stop, reset }
 }

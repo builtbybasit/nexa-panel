@@ -54,8 +54,14 @@ func run(args []string, logger *slog.Logger) error {
 		return runBackup(args[1:], logger)
 	case "doctor":
 		return runDoctor(args[1:], logger)
+	case "uninstall":
+		return runUninstall(args[1:])
 	case "audit":
 		return runAudit(args[1:])
+	case "mfa":
+		return runMFA(args[1:])
+	case "publishing":
+		return runPublishing(args[1:])
 	case "version":
 		fmt.Println(version.String())
 		return nil
@@ -165,11 +171,16 @@ Commands:
   nexa agent [--socket /run/nexa-panel/agent.sock] [--token /run/nexa-panel/agent.token]
   nexa agent-token [--path /etc/nexa-panel/agent.token]
   nexa self-update [--check | --version X.Y.Z | --binary /path/to/nexa-linux-ARCH] [--socket /run/nexa-panel/agent.sock] [--token /run/nexa-panel/agent.token]
-  nexa self-update rollback [--socket /run/nexa-panel/agent.sock] [--token /run/nexa-panel/agent.token]
+  sudo nexa self-update rollback
   nexa backup system --account <id|name> [--state /var/lib/nexa-panel/control.db]
   nexa backup system-restore --archive nexa-panel-system.tar.gz [--state /var/lib/nexa-panel/control.db] [--master-key /etc/nexa-panel/master.key] [--force]
   nexa doctor [--preflight] [--json] [--allow-existing] [--timeout 20s]
+  sudo nexa uninstall [--dry-run | --purge-data --yes]
   nexa audit verify [--state /var/lib/nexa-panel/control.db]
+  sudo nexa mfa reset --user <username> [--state /var/lib/nexa-panel/control.db]
+  nexa publishing show [--json] [--shell]
+  sudo nexa publishing set --hostname panel.example.com [--port 443] [--tls] [--external-tls] [--listen-address 127.0.0.1]
+  sudo nexa publishing migrate [--vhost /etc/nginx/sites-available/nexa-panel.conf]
   nexa version
 
 Doctor flags:

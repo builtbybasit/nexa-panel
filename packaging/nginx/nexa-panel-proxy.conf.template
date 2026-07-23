@@ -1,0 +1,54 @@
+# Return 429 (not the nginx default 503) when a client exceeds its budget, so
+# callers and the SPA can distinguish rate limiting from an outage.
+limit_req_status 429;
+
+# File uploads are chunked at 8 MiB by the API. A small margin covers HTTP
+# framing without allowing a reverse-proxy worker to spool multi-gigabyte
+# request bodies that the application will reject.
+client_max_body_size 10m;
+client_body_timeout 5m;
+
+location = /metrics {
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
+
+    proxy_pass http://unix:/run/nexa-panel/api.sock;
+    proxy_set_header Host $http_host;
+    # The API sees a Unix peer, not an IP. Preserve the loopback scraper so the
+    # application's independent local-only gate can authenticate it.
+    proxy_set_header X-Forwarded-For $remote_addr;
+}
+
+# Credential-testing surface: login, bootstrap, and every MFA step. The tight
+# per-IP budget defeats password spraying across unlimited usernames from one
+# host; burst 5 nodelay lets a real operator mistype and retry without waiting.
+location /api/v1/auth/ {
+    limit_req zone=nexa_auth burst=5 nodelay;
+
+    proxy_pass http://unix:/run/nexa-panel/api.sock;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_send_timeout 5m;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Request-ID $request_id;
+}
+
+location / {
+    # General flood backstop. The wide burst absorbs the many small XHRs a
+    # normal page load fires; only sustained automated flooding trips it.
+    limit_req zone=nexa_api burst=100 nodelay;
+
+    proxy_pass http://unix:/run/nexa-panel/api.sock;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_request_buffering off;
+    proxy_send_timeout 5m;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Request-ID $request_id;
+}

@@ -176,18 +176,23 @@ type mfaDisableRequest struct {
 	Password string `json:"password"`
 }
 
-// mfaDisableHTTP turns off the second factor for the signed-in account. It is
-// registered as an authenticated route, so the identity middleware has already
-// required a completed MFA challenge for this session; the password below is a
-// second confirmation that the person at the keyboard owns the account.
+// mfaDisableHTTP turns off the second factor for the signed-in account, in every
+// role including admin. Enrollment is optional, so turning it back off is a
+// deliberate and audited choice rather than a forbidden one — but it is gated as
+// tightly as any sensitive action: the session must have completed an MFA
+// challenge (step-up), and the password below re-confirms that the person at the
+// keyboard owns the account. A stolen password alone can never strip the factor.
 func (m *Module) mfaDisableHTTP(w http.ResponseWriter, r *http.Request) {
-	person, ok := UserFromContext(r.Context())
+	person, ok := principalFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	if person.Role == "admin" {
-		writeError(w, http.StatusForbidden, "administrator_mfa_required", "Administrator MFA can only be replaced through the account recovery procedure.")
+	// The middleware already refuses an enrolled session that has not answered its
+	// challenge; repeating the check here keeps the guarantee local to the handler
+	// that removes the factor, so no future route registration can weaken it.
+	if person.TOTPConfirmedAt != nil && person.MFAVerifiedAt == nil {
+		writeError(w, http.StatusForbidden, "mfa_step_up_required", "Confirm multi-factor authentication before disabling it.")
 		return
 	}
 	var input mfaDisableRequest
@@ -227,11 +232,15 @@ func (m *Module) mfaDisableHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.attempts.Reset(attemptKey)
-	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_disabled", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r)})
+	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_disabled", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r), Metadata: map[string]any{"role": person.Role}})
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"user": person, "mfaEnabled": false})
+	writeJSON(w, http.StatusOK, map[string]any{"user": person.User, "mfaEnabled": false})
 }
 
+// mfaVerifyHTTP answers the sign-in challenge with either an authenticator code
+// or one recovery code. Recovery codes are accepted from every role, including
+// admin: they are single-use and consumed inside the same transaction that marks
+// the session verified, so they are a genuine second factor, not a bypass.
 func (m *Module) mfaVerifyHTTP(w http.ResponseWriter, r *http.Request) {
 	person, ok := m.preAuthentication(w, r)
 	if !ok {
@@ -263,6 +272,53 @@ func (m *Module) mfaVerifyHTTP(w http.ResponseWriter, r *http.Request) {
 	m.resetMFAAttempts(person.ID)
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.login", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r), Metadata: map[string]any{"method": method}})
 	writeJSON(w, http.StatusOK, map[string]any{"user": person.User})
+}
+
+// mfaRecoverHTTP replaces a lost factor using one recovery code. The account
+// returns to the unenrolled state with fresh enrollment material and all other
+// sessions are revoked, so a stolen recovery code cannot leave a live session
+// behind while the authenticator is being re-paired.
+//
+// Every enrolled role may re-pair here, not administrators alone. Restricting it
+// to admins did not protect anything — a non-admin holding a valid recovery code
+// could already sign in with it through the verify endpoint — it only denied
+// them the one route back to a working authenticator, leaving a lost phone as a
+// permanent support ticket. The recovery code itself is the credential, and
+// replaceMFAWithRecovery consumes it in the same transaction that rotates the
+// secret, so a code cannot be replayed.
+func (m *Module) mfaRecoverHTTP(w http.ResponseWriter, r *http.Request) {
+	person, ok := m.preAuthentication(w, r)
+	if !ok {
+		return
+	}
+	var input mfaCodeRequest
+	if err := decodeJSON(w, r, &input); err != nil || input.RecoveryCode == "" || input.Code != "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "One recovery code is required.")
+		return
+	}
+	if ok, locked := m.allowMFAAttempt(person.ID); !ok {
+		writeMFARateLimited(w, locked)
+		return
+	}
+	secret, err := generateTOTPSecret()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA recovery could not be started.")
+		return
+	}
+	encrypted, err := m.secrets.Encrypt(totpSecretLabelPrefix+person.ID, []byte(secret))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA recovery could not be protected.")
+		return
+	}
+	if err := m.replaceMFAWithRecovery(r.Context(), person, input.RecoveryCode, encrypted); err != nil {
+		m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_recovery_failed", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r)})
+		writeError(w, http.StatusUnauthorized, "invalid_mfa_code", "The recovery code is invalid or already consumed.")
+		return
+	}
+	m.resetMFAAttempts(person.ID)
+	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_recovery_started", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r)})
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{"secret": secret, "provisioningUri": provisioningURI(person.Username, secret)})
 }
 
 func (m *Module) verifyTOTPChallenge(ctx context.Context, person principal, code string) error {
@@ -299,29 +355,73 @@ func (m *Module) verifyRecoveryChallenge(ctx context.Context, person principal, 
 		if err := tx.NewSelect().Model(model).Column("recovery_code_hashes").Where("id = ?", person.ID).Scan(ctx); err != nil {
 			return err
 		}
-		var hashes []string
-		if err := json.Unmarshal([]byte(model.RecoveryCodeHashes), &hashes); err != nil {
-			return err
-		}
-		matched := -1
-		for index, hash := range hashes {
-			if len(hash) == len(wantedHash) && subtle.ConstantTimeCompare([]byte(hash), []byte(wantedHash)) == 1 {
-				matched = index
-			}
-		}
-		if matched < 0 {
+		hashes, matched, err := recoveryCodeMatch(model.RecoveryCodeHashes, wantedHash)
+		if err != nil || matched < 0 {
 			return errors.New("invalid recovery code")
 		}
 		hashes = append(hashes[:matched], hashes[matched+1:]...)
 		encoded, _ := json.Marshal(hashes)
-		if _, err := tx.NewUpdate().Model((*userModel)(nil)).Set("recovery_code_hashes = ?", string(encoded)).
-			Where("id = ?", person.ID).Exec(ctx); err != nil {
+		result, err := tx.NewUpdate().Model((*userModel)(nil)).Set("recovery_code_hashes = ?", string(encoded)).
+			Where("id = ?", person.ID).Where("recovery_code_hashes = ?", model.RecoveryCodeHashes).Exec(ctx)
+		if err != nil {
 			return err
 		}
-		_, err := tx.NewUpdate().Model((*sessionModel)(nil)).Set("mfa_verified_at = ?", now).
+		changed, err := result.RowsAffected()
+		if err != nil || changed != 1 {
+			return errors.New("recovery code was already consumed")
+		}
+		_, err = tx.NewUpdate().Model((*sessionModel)(nil)).Set("mfa_verified_at = ?", now).
 			Where("id = ?", person.SessionID).Exec(ctx)
 		return err
 	})
+}
+
+func (m *Module) replaceMFAWithRecovery(ctx context.Context, person principal, code, encryptedSecret string) error {
+	wantedHash := hashRecoveryCode(code)
+	return m.database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		model := new(userModel)
+		if err := tx.NewSelect().Model(model).Column("recovery_code_hashes", "totp_confirmed_at").Where("id = ?", person.ID).Scan(ctx); err != nil {
+			return err
+		}
+		if model.TOTPConfirmedAt == nil {
+			return errors.New("MFA is not enrolled")
+		}
+		_, matched, err := recoveryCodeMatch(model.RecoveryCodeHashes, wantedHash)
+		if err != nil || matched < 0 {
+			return errors.New("invalid recovery code")
+		}
+		result, err := tx.NewUpdate().Model((*userModel)(nil)).
+			Set("totp_secret_encrypted = ?", encryptedSecret).
+			Set("totp_confirmed_at = NULL").Set("totp_last_step = 0").Set("recovery_code_hashes = '[]'").
+			Where("id = ?", person.ID).Where("recovery_code_hashes = ?", model.RecoveryCodeHashes).
+			Where("totp_confirmed_at IS NOT NULL").Exec(ctx)
+		if err != nil {
+			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil || changed != 1 {
+			return errors.New("recovery code was already consumed")
+		}
+		if _, err := tx.NewDelete().Model((*sessionModel)(nil)).Where("user_id = ?", person.ID).Where("id <> ?", person.SessionID).Exec(ctx); err != nil {
+			return err
+		}
+		_, err = tx.NewUpdate().Model((*sessionModel)(nil)).Set("mfa_verified_at = NULL").Where("id = ?", person.SessionID).Exec(ctx)
+		return err
+	})
+}
+
+func recoveryCodeMatch(encoded, wantedHash string) ([]string, int, error) {
+	var hashes []string
+	if err := json.Unmarshal([]byte(encoded), &hashes); err != nil {
+		return nil, -1, err
+	}
+	matched := -1
+	for index, hash := range hashes {
+		if len(hash) == len(wantedHash) && subtle.ConstantTimeCompare([]byte(hash), []byte(wantedHash)) == 1 {
+			matched = index
+		}
+	}
+	return hashes, matched, nil
 }
 
 func (m *Module) loadMFAUser(ctx context.Context, userID string) (*userModel, string, error) {

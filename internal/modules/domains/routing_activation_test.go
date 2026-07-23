@@ -37,6 +37,7 @@ func (o fakeOperator) PlanTeardown(ctx context.Context, site siteoperator.Site) 
 		plan.RetiredBefore[index] = siteoperator.Snapshot{Path: path}
 	}
 	plan.EnabledBefore = false
+	plan.Teardown = true
 	return plan, nil
 }
 
@@ -162,3 +163,5 @@ func waitJob(t *testing.T, queue *jobs.Module, id *int64) {
 	}
 	t.Fatal("job timeout")
 }
+
+func (fakeOperator) Purge(context.Context, siteoperator.Site) error { return nil }

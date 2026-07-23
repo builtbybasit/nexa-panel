@@ -28,14 +28,14 @@ type Module struct {
 	sites    SiteCatalog
 	access   AccessPolicy
 	operator filesoperator.Operator
-	audit    audit.Recorder
+	audit    audit.Sink
 }
 
 func New(queue *jobs.Module, catalog SiteCatalog, access AccessPolicy, operator filesoperator.Operator, recorder audit.Recorder) (*Module, error) {
 	if queue == nil || catalog == nil || access == nil || operator == nil || recorder == nil {
 		return nil, errors.New("files jobs, site catalog, access policy, operator, and audit recorder are required")
 	}
-	m := &Module{jobs: queue, sites: catalog, access: access, operator: operator, audit: recorder}
+	m := &Module{jobs: queue, sites: catalog, access: access, operator: operator, audit: audit.NewSink(recorder, nil)}
 	if err := queue.RegisterHandler("files.archive", m.archiveJob); err != nil {
 		return nil, err
 	}

@@ -3,8 +3,11 @@ package persistence
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/nexa-panel/nexa-panel/migrations"
 	"github.com/uptrace/bun"
 )
 
@@ -113,5 +116,110 @@ func TestRunMigrationsPreseedsLegacyInstall(t *testing.T) {
 	}
 	if groupID != 1 {
 		t.Fatalf("expected audit migration pre-seeded into baseline group 1, got group %d", groupID)
+	}
+}
+
+// TestAssertMigrationsCurrentGatesAnUnmigratedDatabase covers the schema half of
+// API readiness, which a self-update's activation health gate depends on: a
+// binary whose migrations have not run is not ready, however reachable its
+// database is.
+func TestAssertMigrationsCurrentGatesAnUnmigratedDatabase(t *testing.T) {
+	database := openTemp(t)
+	ctx := context.Background()
+
+	if err := AssertMigrationsCurrent(ctx, database); err == nil {
+		t.Fatal("a database with no migration ledger must not report a current schema")
+	}
+	if err := RunMigrations(ctx, database); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := AssertMigrationsCurrent(ctx, database); err != nil {
+		t.Fatalf("a fully migrated database must report current: %v", err)
+	}
+
+	// Drop the most recent ledger row: this is what an older binary rolled back
+	// onto a newer schema, or an interrupted migration, leaves behind.
+	if _, err := database.ExecContext(ctx, "DELETE FROM bun_migrations WHERE id = (SELECT MAX(id) FROM bun_migrations)"); err != nil {
+		t.Fatalf("unapply latest migration: %v", err)
+	}
+	if err := AssertMigrationsCurrent(ctx, database); err == nil {
+		t.Fatal("a partially applied ledger must not report a current schema")
+	}
+}
+
+// TestSiteTeardownIntegrityMigrationRebuildsTablesWithoutLosingRows covers the
+// one migration in the timeline that rebuilds populated tables. scheduled_tasks
+// is a parent of scheduled_task_plans, and with foreign keys on a DROP TABLE
+// cascades those plans away, so the rebuild has to carry them across; the
+// backup-plan join tables have to come out of the JSON columns already stored.
+// The migration is exercised by rolling its own down file back over a fully
+// migrated database, seeding rows, and re-applying it.
+func TestSiteTeardownIntegrityMigrationRebuildsTablesWithoutLosingRows(t *testing.T) {
+	database := openTemp(t)
+	ctx := context.Background()
+	if err := RunMigrations(ctx, database); err != nil {
+		t.Fatal(err)
+	}
+	run := func(file string) {
+		body, err := migrations.FS.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, statement := range strings.Split(string(body), "--bun:split") {
+			if strings.TrimSpace(statement) == "" {
+				continue
+			}
+			if _, err := database.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("%s: %v\n%s", file, err, statement)
+			}
+		}
+	}
+	run("20260722000006_site_teardown_integrity.tx.down.sql")
+	now := time.Now().UTC()
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO sites (id, slug, display_name, primary_domain, php_version, unix_user, root_path, socket_path, status, deployment_mode, created_at, updated_at)
+		VALUES ('site_1','blog','Blog','blog.example.com','8.4','nexa_blog','/srv/nexa/sites/blog','/run/php/nexa-blog.sock','active','standard',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO scheduled_tasks (id, site_id, name, cron_expression, command, timeout_seconds, enabled, status, pending_removal, created_at, updated_at)
+		VALUES ('task_1','site_1','Queue','* * * * *','php x',60,1,'active',0,?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO scheduled_tasks (id, site_id, name, cron_expression, command, timeout_seconds, enabled, status, pending_removal, created_at, updated_at)
+		VALUES ('task_orphan','site_gone','Queue','* * * * *','php x',60,1,'active',0,?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO scheduled_task_plans (task_id, plan_json, created_at, expires_at) VALUES ('task_1','{}',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO sftp_access (site_id, enabled, username, updated_at) VALUES ('site_1',1,'nexa_blog',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO backup_accounts (id, name, type, path, config_json, created_at, updated_at) VALUES ('acct','Local','local','/b','{}',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO backup_plans (id, name, account_id, copies_limit, site_ids, database_ids, schedule, enabled, created_at, updated_at)
+		VALUES ('p1','Nightly','acct',5,'["site_1"]','["mysql:db_1"]','0 2 * * *',1,?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	run("20260722000006_site_teardown_integrity.tx.up.sql")
+
+	for table, want := range map[string]int{
+		"scheduled_tasks": 1, "scheduled_task_plans": 1, "sftp_access": 1,
+		"backup_plan_sites": 1, "backup_plan_databases": 1,
+	} {
+		if got := countRows(t, database, table); got != want {
+			t.Errorf("%s rows = %d, want %d", table, got, want)
+		}
+	}
+	var site string
+	if err := database.NewSelect().TableExpr("backup_plan_sites").Column("site_id").Scan(ctx, &site); err != nil || site != "site_1" {
+		t.Fatalf("backfilled target = %q, err %v", site, err)
 	}
 }

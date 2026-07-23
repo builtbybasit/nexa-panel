@@ -36,7 +36,7 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 	}
 }
 
-func TestBootstrapOptionalMFAOptInAndLoginChallenge(t *testing.T) {
+func TestMFAEnrollmentIsOptionalButEnforcedOnceConfirmed(t *testing.T) {
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
@@ -87,26 +87,25 @@ func TestBootstrapOptionalMFAOptInAndLoginChallenge(t *testing.T) {
 		t.Fatalf("unexpected bootstrap cookies: %+v", bootstrapCookies)
 	}
 
-	// MFA is optional: bootstrap signs the administrator straight in, so the
-	// session immediately reaches the authenticated interface and protected
-	// routes with no second factor demanded.
-	if !strings.Contains(bootstrap.Body.String(), `"next":"authenticated"`) {
-		t.Fatalf("bootstrap did not sign the administrator in: %s", bootstrap.Body.String())
+	// Enrollment is offered at first run, but it is an offer: the password-only
+	// administrator is already signed in and reaches every protected route.
+	if !strings.Contains(bootstrap.Body.String(), `"next":"mfa_enrollment"`) {
+		t.Fatalf("bootstrap did not offer administrator MFA enrollment: %s", bootstrap.Body.String())
 	}
 	openSession := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/session", "", bootstrapCookies...)
 	if openSession.Code != http.StatusOK {
-		t.Fatalf("session after bootstrap = %d %s", openSession.Code, openSession.Body.String())
+		t.Fatalf("session before administrator enrollment = %d %s", openSession.Code, openSession.Body.String())
 	}
 	openModules := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", bootstrapCookies...)
 	if openModules.Code != http.StatusOK {
-		t.Fatalf("protected route after bootstrap = %d %s", openModules.Code, openModules.Body.String())
+		t.Fatalf("protected route before administrator enrollment = %d %s", openModules.Code, openModules.Body.String())
 	}
 	openStatus := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/status", "", bootstrapCookies...)
-	if !strings.Contains(openStatus.Body.String(), `"authenticated":true`) || !strings.Contains(openStatus.Body.String(), `"mfaEnabled":false`) {
+	if !strings.Contains(openStatus.Body.String(), `"authenticated":true`) || !strings.Contains(openStatus.Body.String(), `"mfaEnabled":false`) || !strings.Contains(openStatus.Body.String(), `"mfaEnrollmentRecommended":true`) {
 		t.Fatalf("status after bootstrap = %s", openStatus.Body.String())
 	}
 
-	// The administrator then opts into MFA from an already-authenticated session.
+	// Enrollment endpoints are available to the signed-in session.
 	enrollment := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/enroll", "", bootstrapCookies...)
 	if enrollment.Code != http.StatusOK {
 		t.Fatalf("enrollment = %d %s", enrollment.Code, enrollment.Body.String())
@@ -142,7 +141,7 @@ func TestBootstrapOptionalMFAOptInAndLoginChallenge(t *testing.T) {
 	}
 
 	enabledStatus := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/status", "", bootstrapCookies...)
-	if !strings.Contains(enabledStatus.Body.String(), `"authenticated":true`) || !strings.Contains(enabledStatus.Body.String(), `"mfaEnabled":true`) {
+	if !strings.Contains(enabledStatus.Body.String(), `"authenticated":true`) || !strings.Contains(enabledStatus.Body.String(), `"mfaEnabled":true`) || !strings.Contains(enabledStatus.Body.String(), `"mfaEnrollmentRecommended":false`) {
 		t.Fatalf("status after enabling MFA = %s", enabledStatus.Body.String())
 	}
 
@@ -198,34 +197,173 @@ func TestBootstrapOptionalMFAOptInAndLoginChallenge(t *testing.T) {
 	if challenge.Code != http.StatusOK {
 		t.Fatalf("MFA challenge = %d %s", challenge.Code, challenge.Body.String())
 	}
+	challengedModules := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", loginCookies...)
+	if challengedModules.Code != http.StatusOK {
+		t.Fatalf("protected route after challenge = %d %s", challengedModules.Code, challengedModules.Body.String())
+	}
 
 	secondLogout := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/logout", "", loginCookies...)
 	if secondLogout.Code != http.StatusNoContent {
 		t.Fatalf("second logout = %d %s", secondLogout.Code, secondLogout.Body.String())
 	}
+	// A recovery code is a genuine single-use factor for every role: it answers the
+	// ordinary challenge and signs the administrator straight in.
+	recoveryLogin := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/login",
+		`{"username":"admin","password":"a-Str0ng-password"}`, nil)
+	recoveryCookies := recoveryLogin.Result().Cookies()
+	recoveryChallenge := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/verify",
+		`{"recoveryCode":"`+confirmationBody.RecoveryCodes[0]+`"}`, recoveryCookies...)
+	if recoveryChallenge.Code != http.StatusOK {
+		t.Fatalf("administrator recovery-code login = %d %s", recoveryChallenge.Code, recoveryChallenge.Body.String())
+	}
+	recoveredModules := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", recoveryCookies...)
+	if recoveredModules.Code != http.StatusOK {
+		t.Fatalf("protected route after recovery-code login = %d %s", recoveredModules.Code, recoveredModules.Body.String())
+	}
 	secondLogin := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/login",
 		`{"username":"admin","password":"a-Str0ng-password"}`, nil)
 	secondCookies := secondLogin.Result().Cookies()
-	recovery := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/verify",
-		`{"recoveryCode":"`+confirmationBody.RecoveryCodes[0]+`"}`, secondCookies...)
+	recovery := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/recover",
+		`{"recoveryCode":"`+confirmationBody.RecoveryCodes[1]+`"}`, secondCookies...)
 	if recovery.Code != http.StatusOK {
-		t.Fatalf("recovery challenge = %d %s", recovery.Code, recovery.Body.String())
+		t.Fatalf("administrator MFA recovery = %d %s", recovery.Code, recovery.Body.String())
+	}
+	var replacementEnrollment struct {
+		Secret          string `json:"secret"`
+		ProvisioningURI string `json:"provisioningUri"`
+	}
+	if err := json.Unmarshal(recovery.Body.Bytes(), &replacementEnrollment); err != nil || replacementEnrollment.Secret == "" || replacementEnrollment.Secret == enrollmentBody.Secret {
+		t.Fatalf("replacement enrollment = %s, err %v", recovery.Body.String(), err)
+	}
+	// Recovery retires the factor, so the account is unenrolled again: the panel
+	// stays reachable while the replacement authenticator is paired, and the
+	// session that consumed the recovery code is the only one left.
+	afterRecovery := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", secondCookies...)
+	if afterRecovery.Code != http.StatusOK {
+		t.Fatalf("protected route during factor replacement = %d %s", afterRecovery.Code, afterRecovery.Body.String())
+	}
+	revoked := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/session", "", recoveryCookies...)
+	if revoked.Code != http.StatusUnauthorized {
+		t.Fatalf("other session after factor replacement = %d %s", revoked.Code, revoked.Body.String())
+	}
+	replacementSecret, err := base32Encoding.DecodeString(replacementEnrollment.Secret)
+	if err != nil {
+		t.Fatalf("decode replacement TOTP secret: %v", err)
+	}
+	replacementCode := generateTOTP(replacementSecret, currentTime.Unix()/totpPeriodSeconds, totpDigits)
+	replacementConfirmation := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/confirm",
+		`{"code":"`+replacementCode+`"}`, secondCookies...)
+	if replacementConfirmation.Code != http.StatusOK {
+		t.Fatalf("replacement MFA confirmation = %d %s", replacementConfirmation.Code, replacementConfirmation.Body.String())
 	}
 
-	// Administrator MFA cannot be removed through ordinary self-service. A
-	// controlled recovery procedure must replace the factor instead.
-	disable := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/disable",
-		`{"password":"a-Str0ng-password"}`, secondCookies...)
-	if disable.Code != http.StatusForbidden || !strings.Contains(disable.Body.String(), `"administrator_mfa_required"`) {
-		t.Fatalf("disable MFA = %d %s", disable.Code, disable.Body.String())
-	}
-
-	events, err := auditModule.List(ctx, 30)
+	events, err := auditModule.List(ctx, 40)
 	if err != nil {
 		t.Fatalf("list audit events: %v", err)
 	}
 	if len(events) < 7 {
 		t.Fatalf("audit event count = %d, want at least 7", len(events))
+	}
+}
+
+// TestAdministratorCanDisableMFAWithStepUpAndPassword covers the deliberate exit
+// from an optional factor: an administrator may turn MFA back off, but only from
+// a session that answered a challenge and only with the account password, and
+// the removal is audited.
+func TestAdministratorCanDisableMFAWithStepUpAndPassword(t *testing.T) {
+	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	ctx := context.Background()
+	if err := persistence.RunMigrations(ctx, database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	auditModule, err := audit.New(ctx, database)
+	if err != nil {
+		t.Fatalf("create audit module: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	secretBox, err := secrets.New(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatalf("create secret box: %v", err)
+	}
+	identityModule, err := NewWithConfig(ctx, database, auditModule, secretBox, logger, Config{
+		SessionTTL: time.Hour, PasswordMemoryKiB: 64, PasswordIterations: 1, PasswordThreads: 1,
+	})
+	if err != nil {
+		t.Fatalf("create identity module: %v", err)
+	}
+	currentTime := time.Unix(1_700_000_000, 0).UTC()
+	identityModule.now = func() time.Time { return currentTime }
+	server, err := controlplane.New("test", []module.Module{identityModule, auditModule}, logger,
+		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(testAuthorization{}))
+	if err != nil {
+		t.Fatalf("create control plane: %v", err)
+	}
+
+	bootstrap := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/bootstrap",
+		`{"username":"admin","password":"a-Str0ng-password"}`, nil)
+	if bootstrap.Code != http.StatusCreated {
+		t.Fatalf("bootstrap = %d %s", bootstrap.Code, bootstrap.Body.String())
+	}
+	cookies := bootstrap.Result().Cookies()
+	enrollment := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/enroll", "", cookies...)
+	var enrollmentBody struct {
+		Secret string `json:"secret"`
+	}
+	if err := json.Unmarshal(enrollment.Body.Bytes(), &enrollmentBody); err != nil {
+		t.Fatalf("decode enrollment: %v", err)
+	}
+	secret, err := base32Encoding.DecodeString(enrollmentBody.Secret)
+	if err != nil {
+		t.Fatalf("decode TOTP secret: %v", err)
+	}
+	// Confirming the factor also marks this session challenged, which is the
+	// step-up the disable route demands.
+	confirmation := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/confirm",
+		`{"code":"`+generateTOTP(secret, currentTime.Unix()/totpPeriodSeconds, totpDigits)+`"}`, cookies...)
+	if confirmation.Code != http.StatusOK {
+		t.Fatalf("MFA confirmation = %d %s", confirmation.Code, confirmation.Body.String())
+	}
+
+	wrongPassword := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/disable",
+		`{"password":"not-the-P4ssword"}`, cookies...)
+	if wrongPassword.Code != http.StatusUnauthorized || !strings.Contains(wrongPassword.Body.String(), `"invalid_credentials"`) {
+		t.Fatalf("disable with the wrong password = %d %s", wrongPassword.Code, wrongPassword.Body.String())
+	}
+	disable := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/mfa/disable",
+		`{"password":"a-Str0ng-password"}`, cookies...)
+	if disable.Code != http.StatusOK || !strings.Contains(disable.Body.String(), `"mfaEnabled":false`) {
+		t.Fatalf("disable administrator MFA = %d %s", disable.Code, disable.Body.String())
+	}
+	disabledStatus := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/status", "", cookies...)
+	if !strings.Contains(disabledStatus.Body.String(), `"authenticated":true`) || !strings.Contains(disabledStatus.Body.String(), `"mfaEnabled":false`) {
+		t.Fatalf("status after disabling MFA = %s", disabledStatus.Body.String())
+	}
+	// The password alone signs the administrator back in and reaches the panel.
+	login := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/login",
+		`{"username":"admin","password":"a-Str0ng-password"}`, nil)
+	if login.Code != http.StatusOK || !strings.Contains(login.Body.String(), `"next":"authenticated"`) {
+		t.Fatalf("password-only administrator login = %d %s", login.Code, login.Body.String())
+	}
+	if reached := performRequest(server.Handler(), http.MethodGet, "/api/v1/modules", "", login.Result().Cookies()...); reached.Code != http.StatusOK {
+		t.Fatalf("protected route for a password-only administrator = %d %s", reached.Code, reached.Body.String())
+	}
+
+	events, err := auditModule.List(ctx, 20)
+	if err != nil {
+		t.Fatalf("list audit events: %v", err)
+	}
+	disabled := false
+	for _, event := range events {
+		if event.Action == "identity.mfa_disabled" {
+			disabled = true
+		}
+	}
+	if !disabled {
+		t.Fatal("expected an identity.mfa_disabled audit event")
 	}
 }
 
@@ -266,11 +404,6 @@ func TestSelfServicePasswordChange(t *testing.T) {
 		t.Fatalf("bootstrap = %d %s", bootstrap.Code, bootstrap.Body.String())
 	}
 	cookies := bootstrap.Result().Cookies()
-	// Password-change behavior is role-independent. Use a non-administrator so
-	// this focused test does not bypass the mandatory administrator MFA flow.
-	if _, err := database.ExecContext(ctx, "UPDATE identity_users SET role = 'operator'"); err != nil {
-		t.Fatalf("set password-change fixture role: %v", err)
-	}
 
 	// A wrong current password is rejected.
 	wrong := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/password",

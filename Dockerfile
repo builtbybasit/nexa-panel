@@ -38,8 +38,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # with apt-cache and never refreshes them itself, so an image that cleaned them
 # would boot showing a truncated catalog.
 COPY packaging/ /tmp/nexa-install/packaging/
-COPY scripts/install.sh /tmp/nexa-install/scripts/install.sh
-RUN /tmp/nexa-install/scripts/install.sh --no-start && rm -rf /tmp/nexa-install
+COPY scripts/install.sh scripts/uninstall.sh scripts/nexa-release-helper.py scripts/nexa-seed-admin.sh /tmp/nexa-install/scripts/
+RUN /tmp/nexa-install/scripts/install.sh --no-start --allow-insecure-http && rm -rf /tmp/nexa-install
 
 # Test seed data, not part of a node install: the panel installs PHP versions on
 # demand, but the site-rendering and runtime-discovery flows this node exercises

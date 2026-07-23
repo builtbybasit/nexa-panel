@@ -11,7 +11,7 @@ export const sftpModule: FeatureModule = {
       path: '/sftp',
       name: 'sftp',
       component: () => import('./views/SftpAccessView.vue'),
-      meta: { moduleId: 'sftp' },
+      meta: { moduleId: 'sftp', permission: 'deploy.read' },
     },
   ],
 }

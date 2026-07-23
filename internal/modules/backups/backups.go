@@ -90,17 +90,19 @@ type AccountRequest struct {
 }
 
 type Module struct {
-	database     *bun.DB
-	jobs         *jobs.Module
-	operator     backupoperator.Operator
-	cipher       secrets.Cipher
-	sites        SiteResolver
-	postgres     DatabaseResolver
-	mysql        DatabaseResolver
-	accessPolicy SiteAccessPolicy
-	stateDBPath  string
-	logger       *slog.Logger
-	now          func() time.Time
+	database          *bun.DB
+	jobs              *jobs.Module
+	operator          backupoperator.Operator
+	cipher            secrets.Cipher
+	sites             SiteResolver
+	postgres          DatabaseResolver
+	mysql             DatabaseResolver
+	accessPolicy      SiteAccessPolicy
+	stateDBPath       string
+	logger            *slog.Logger
+	now               func() time.Time
+	restorePreviewKey []byte
+	restorePreviewTTL time.Duration
 
 	scheduleRetryInterval time.Duration
 	scheduleFullInterval  time.Duration
@@ -138,6 +140,7 @@ func New(ctx context.Context, deps Dependencies) (*Module, error) {
 		database: deps.Database, jobs: deps.Jobs, operator: deps.Operator, cipher: deps.Cipher,
 		sites: deps.Sites, postgres: deps.Postgres, mysql: deps.Mysql, accessPolicy: deps.AccessPolicy,
 		stateDBPath: deps.StateDBPath, logger: logger, now: time.Now,
+		restorePreviewKey: []byte(randomToken() + randomToken()), restorePreviewTTL: 5 * time.Minute,
 		scheduleRetryInterval: time.Minute, scheduleFullInterval: 30 * time.Minute,
 		reconcileDone: make(chan struct{}),
 	}
@@ -181,6 +184,7 @@ func (m *Module) Register(registry module.Registry) error {
 		{"POST /api/v1/backups/plans/{id}/run", "backups.write", http.HandlerFunc(m.runPlanHTTP)},
 		{"DELETE /api/v1/backups/plans/{id}", "backups.write", http.HandlerFunc(m.deletePlanHTTP)},
 		{"GET /api/v1/backups/plans/{id}/copies", "backups.read", http.HandlerFunc(m.listCopiesHTTP)},
+		{"POST /api/v1/backups/copies/{copyId}/restore/preview", "operations.apply", http.HandlerFunc(m.previewRestoreCopyHTTP)},
 		{"POST /api/v1/backups/copies/{copyId}/restore", "operations.apply", http.HandlerFunc(m.restoreCopyHTTP)},
 		{"DELETE /api/v1/backups/copies/{copyId}", "backups.write", http.HandlerFunc(m.deleteCopyHTTP)},
 		{"GET /api/v1/backups/system", "backups.read", http.HandlerFunc(m.listSystemCopiesHTTP)},

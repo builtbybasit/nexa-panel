@@ -32,6 +32,7 @@ func (o teardownPlanOperator) PlanTeardown(ctx context.Context, site siteoperato
 	plan.Before = []siteoperator.Snapshot{{Path: plan.Artifacts[0].Path}}
 	plan.RetiredBefore = []siteoperator.Snapshot{{Path: plan.Retired[0]}}
 	plan.EnabledBefore = false
+	plan.Teardown = true
 	return plan, nil
 }
 
@@ -85,3 +86,5 @@ func TestEditedSitePlanIsRejected(t *testing.T) {
 		t.Fatal("an edited plan verified; the teardown regression could recur unnoticed")
 	}
 }
+
+func (teardownPlanOperator) Purge(context.Context, siteoperator.Site) error { return nil }

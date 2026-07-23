@@ -38,6 +38,7 @@ func (s *fakeNodeSystem) ValidateNginx(context.Context) error     { return s.cal
 func (s *fakeNodeSystem) ReloadPHP(context.Context, string) error { return s.call("reload-php") }
 func (s *fakeNodeSystem) ReloadNginx(context.Context) error       { return s.call("reload-nginx") }
 func (s *fakeNodeSystem) VerifyHost(context.Context, Site) error  { return s.call("verify-host") }
+func (s *fakeNodeSystem) RemoveSite(context.Context, Site) error  { return s.call("remove-site") }
 
 func testHostOperator(t *testing.T, system NodeSystem) (*HostOperator, Site) {
 	t.Helper()
@@ -226,5 +227,87 @@ func TestHostOperatorRestoresRetiredArtifactOnRollback(t *testing.T) {
 	}
 	if string(restored) != string(original) {
 		t.Fatalf("restored stanza differs:\n got: %s\nwant: %s", restored, original)
+	}
+}
+
+// The teardown regression, at the operator boundary: the first attempt removed
+// the artifacts, and every later attempt then refused with "managed site changed
+// after activation" because absent looked like drift. A teardown is retried
+// whenever its job is interrupted, so it has to converge instead.
+func TestTeardownRollbackConvergesWhenTheArtifactsAreAlreadyGone(t *testing.T) {
+	system := new(fakeNodeSystem)
+	operator, site := testHostOperator(t, system)
+	plan, err := operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	teardown, err := operator.PlanTeardown(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !teardown.Teardown {
+		t.Fatal("PlanTeardown did not mark the plan as a teardown")
+	}
+	if _, err := operator.Rollback(context.Background(), teardown); err != nil {
+		t.Fatalf("first teardown: %v", err)
+	}
+	observation, err := operator.Rollback(context.Background(), teardown)
+	if err != nil {
+		t.Fatalf("second teardown must converge, got: %v", err)
+	}
+	if observation.Active {
+		t.Fatal("site is still enabled after a converged teardown")
+	}
+	for _, artifact := range teardown.Artifacts {
+		if _, err := os.Stat(artifact.Path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("artifact survived the teardown: %s", artifact.Path)
+		}
+	}
+}
+
+// Convergence is scoped to the teardown flag and nothing else: an ordinary
+// rollback whose artifact vanished is still drift, and still refused.
+func TestOrdinaryRollbackStillRefusesAMissingArtifact(t *testing.T) {
+	system := new(fakeNodeSystem)
+	operator, site := testHostOperator(t, system)
+	plan, err := operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(plan.Artifacts[0].Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Rollback(context.Background(), plan); err == nil {
+		t.Fatal("an ordinary rollback accepted a missing managed artifact")
+	}
+}
+
+// A teardown still refuses to delete an artifact whose content drifted: the
+// operator converges on absence, not on "remove whatever is there now".
+func TestTeardownRollbackStillRefusesADriftedArtifact(t *testing.T) {
+	system := new(fakeNodeSystem)
+	operator, site := testHostOperator(t, system)
+	plan, err := operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	teardown, err := operator.PlanTeardown(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(teardown.Artifacts[0].Path, []byte("hand edited"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Rollback(context.Background(), teardown); err == nil {
+		t.Fatal("a teardown deleted a managed file somebody had edited by hand")
 	}
 }

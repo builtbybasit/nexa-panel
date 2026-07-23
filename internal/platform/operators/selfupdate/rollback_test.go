@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -15,13 +14,17 @@ func TestApplyKeepsPreviousBinary(t *testing.T) {
 	runner := &fakeRunner{versionOutput: "0.2.0 (commit abc, built now)"}
 	operator, binaryPath := newTestOperator(t, "0.1.0", source, downloader, runner)
 
-	result, err := operator.Apply(context.Background(), Change{})
+	_, err := operator.Apply(context.Background(), Change{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
-	// The replaced binary must be preserved verbatim next to the live one.
-	prev, err := os.ReadFile(binaryPath + ".prev")
+	// The replaced binary must be preserved inside the root-only transaction.
+	state, err := readTransaction(operator.transactionPath())
+	if err != nil {
+		t.Fatalf("read transaction: %v", err)
+	}
+	prev, err := os.ReadFile(state.PreservedBinary)
 	if err != nil {
 		t.Fatalf("read preserved binary: %v", err)
 	}
@@ -30,9 +33,6 @@ func TestApplyKeepsPreviousBinary(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(binaryPath); string(data) != string(binary) {
 		t.Fatalf("live binary = %q, want the new bytes", data)
-	}
-	if result.PreviousBinaryPath != binaryPath+".prev" {
-		t.Fatalf("result should surface the rollback target, got %q", result.PreviousBinaryPath)
 	}
 }
 
@@ -51,28 +51,19 @@ func TestRollbackRestoresPreviousBinary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
-	if !result.Swapped || !result.RestartScheduled {
-		t.Fatalf("expected swap and restart after rollback, got %+v", result)
+	if !result.Swapped || !result.Activated {
+		t.Fatalf("expected a health-verified rollback activation, got %+v", result)
 	}
 	if data, _ := os.ReadFile(binaryPath); string(data) != "old-binary" {
 		t.Fatalf("rollback did not restore the original binary; got %q", data)
 	}
-	// Rolling back re-preserves the binary it displaced, so a rollback is undoable.
-	if data, _ := os.ReadFile(binaryPath + ".prev"); string(data) != string(binary) {
+	// Rolling back snapshots the binary it displaced, so a rollback is undoable.
+	state, err := readTransaction(operator.transactionPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(state.PreservedBinary); string(data) != string(binary) {
 		t.Fatalf("rollback should re-preserve the displaced binary; got %q", data)
-	}
-	// A detached restart covering both units must be armed.
-	var restart *Command
-	for index := range runner.commands {
-		if runner.commands[index].Name == "systemd-run" {
-			restart = &runner.commands[index]
-		}
-	}
-	if restart == nil {
-		t.Fatal("expected a systemd-run restart to be scheduled after rollback")
-	}
-	if !containsAll(restart.Args, "systemctl", "restart", "nexa-agent.service", "nexa-api.service") {
-		t.Fatalf("unexpected restart args: %v", restart.Args)
 	}
 }
 
@@ -87,27 +78,40 @@ func TestRollbackWithoutPreviousFails(t *testing.T) {
 	}
 }
 
-// TestRollbackRestoresPackagingWhenRetained covers the case that matters after
-// two self-updates: the previous release's tree is still on the node, so a
-// rollback puts the binary AND its packaging back together.
-func TestRollbackRestoresPackagingWhenRetained(t *testing.T) {
-	const secondArchiveURL = "https://api.github.com/repos/o/r/releases/assets/3"
-	const secondChecksumURL = "https://api.github.com/repos/o/r/releases/assets/4"
+// TestRollbackRestoresExactHostSnapshot proves rollback does not depend on a
+// previous release archive. The destinations that existed immediately before
+// the update are restored byte-for-byte, including after multiple releases.
+func TestRollbackRestoresExactHostSnapshot(t *testing.T) {
+	const secondArchiveURL = "https://api.github.com/repos/o/r/releases/assets/4"
+	const secondChecksumURL = "https://api.github.com/repos/o/r/releases/assets/5"
+	const secondSignatureURL = "https://api.github.com/repos/o/r/releases/assets/6"
 
 	first := releaseArchive(t, "0.2.0", []byte("nexa-0.2.0"), nil)
 	second := releaseArchive(t, "0.3.0", []byte("nexa-0.3.0"), nil)
 	source := fakeSource{byVer: map[string]Release{
 		"0.2.0": testRelease(),
-		"0.3.0": {Version: "0.3.0", Tag: "v0.3.0", AssetURL: secondArchiveURL, ChecksumURL: secondChecksumURL},
+		"0.3.0": {Version: "0.3.0", Tag: "v0.3.0", AssetName: amd64AssetName, AssetURL: secondArchiveURL, ChecksumURL: secondChecksumURL, SignatureURL: secondSignatureURL},
 	}}
 	downloader := fakeDownloader{assets: map[string][]byte{
-		archiveURL:        first,
-		checksumURL:       checksumOf(first),
-		secondArchiveURL:  second,
-		secondChecksumURL: checksumOf(second),
+		archiveURL:         first,
+		checksumURL:        checksumOf(first),
+		signatureURL:       []byte("signed-first"),
+		secondArchiveURL:   second,
+		secondChecksumURL:  checksumOf(second),
+		secondSignatureURL: []byte("signed-second"),
 	}}
+	managed := filepath.Join(t.TempDir(), "nexa-api.service")
+	if err := os.WriteFile(managed, []byte("packaging-0.1.0"), 0o644); err != nil {
+		t.Fatalf("seed managed packaging: %v", err)
+	}
+	packagingVersion := 1
 	runner := &fakeRunner{versionOutput: "0.2.0 (commit abc)"}
+	runner.packagingHook = func(Command) error {
+		packagingVersion++
+		return os.WriteFile(managed, []byte("packaging-0."+string(rune('0'+packagingVersion))+".0"), 0o644)
+	}
 	operator, binaryPath := newTestOperator(t, "0.1.0", source, downloader, runner)
+	operator.managedPaths = []string{managed}
 
 	if _, err := operator.Apply(context.Background(), Change{Version: "0.2.0"}); err != nil {
 		t.Fatalf("apply 0.2.0: %v", err)
@@ -128,29 +132,23 @@ func TestRollbackRestoresPackagingWhenRetained(t *testing.T) {
 	if data, _ := os.ReadFile(binaryPath); string(data) != "nexa-0.2.0" {
 		t.Fatalf("rollback did not restore the 0.2.0 binary; got %q", data)
 	}
-	sync := packagingSync(runner)
-	if sync == nil {
-		t.Fatal("expected the previous release's installer to be re-run")
-	}
-	if !strings.Contains(sync.Args[0], previousPackagingDir) {
-		t.Fatalf("rollback must run the retained previous installer, got %q", sync.Args[0])
-	}
-	// The rollback is itself undoable: the tree it restored is now current and
-	// the one it rolled away from is what a second rollback would re-apply.
-	if _, err := os.Stat(filepath.Join(operator.workRoot, previousPackagingDir, "scripts", "install.sh")); err != nil {
-		t.Fatalf("the displaced packaging should be retained: %v", err)
+	if data, _ := os.ReadFile(managed); string(data) != "packaging-0.2.0" {
+		t.Fatalf("rollback restored %q, want the exact pre-0.3.0 packaging", data)
 	}
 }
 
-// TestRollbackWithoutRetainedPackagingIsHonest covers a node's first
-// self-update: the packaging it shipped with was never captured, so the binary
-// goes back but the units do not — and the result has to say so rather than
-// imply a clean revert.
-func TestRollbackWithoutRetainedPackagingIsHonest(t *testing.T) {
+func TestFirstUpdateRollbackRestoresPreUpdatePackaging(t *testing.T) {
 	binary := []byte("new-nexa-binary-bytes")
 	downloader := fakeDownloader{assets: releaseAssets(releaseArchive(t, "0.2.0", binary, nil))}
-	runner := &fakeRunner{versionOutput: "0.2.0 (commit abc, built now)"}
+	managed := filepath.Join(t.TempDir(), "nexa-agent.service")
+	if err := os.WriteFile(managed, []byte("original-packaging"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{versionOutput: "0.2.0 (commit abc, built now)", packagingHook: func(Command) error {
+		return os.WriteFile(managed, []byte("new-packaging"), 0o644)
+	}}
 	operator, binaryPath := newTestOperator(t, "0.1.0", fakeSource{release: testRelease()}, downloader, runner)
+	operator.managedPaths = []string{managed}
 
 	if _, err := operator.Apply(context.Background(), Change{}); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -164,13 +162,10 @@ func TestRollbackWithoutRetainedPackagingIsHonest(t *testing.T) {
 	if data, _ := os.ReadFile(binaryPath); string(data) != "old-binary" {
 		t.Fatalf("rollback did not restore the original binary; got %q", data)
 	}
-	if result.PackagingSynced {
-		t.Fatal("no packaging was retained, so none can have been synced")
+	if !result.PackagingSynced || !result.Activated {
+		t.Fatalf("first rollback must restore binary and packaging, got %+v", result)
 	}
-	if result.PackagingNote == "" {
-		t.Fatal("a binary-only rollback must be reported as such")
-	}
-	if sync := packagingSync(runner); sync != nil {
-		t.Fatalf("no installer should run when nothing was retained, got %+v", sync)
+	if data, _ := os.ReadFile(managed); string(data) != "original-packaging" {
+		t.Fatalf("first rollback restored %q, want original packaging", data)
 	}
 }

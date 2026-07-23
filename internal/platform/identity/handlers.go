@@ -21,7 +21,7 @@ func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	response := map[string]any{
 		"bootstrapRequired": bootstrapRequired, "authenticated": false,
-		"mfaEnabled": false, "mfaChallengeRequired": false, "mfaEnrollmentRequired": false,
+		"mfaEnabled": false, "mfaChallengeRequired": false, "mfaEnrollmentRecommended": false,
 		// The bootstrap and password-change forms render the policy as
 		// requirements, so it rides along on the status the UI already fetches
 		// before anyone is signed in.
@@ -37,13 +37,14 @@ func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 		response["user"] = person.User
 		enrolled := person.TOTPConfirmedAt != nil
 		response["mfaEnabled"] = enrolled
-		// MFA is optional, so enrollment is never demanded. An enrolled account
-		// must still complete its outstanding challenge; anything else is
-		// authenticated on the password session alone.
+		// Enrollment is optional for every role: a password-only session is fully
+		// authenticated, and the missing factor is only a recommendation the UI may
+		// surface. An enrolled session stays unauthenticated until it answers.
 		if enrolled && person.MFAVerifiedAt == nil {
 			response["mfaChallengeRequired"] = true
 		} else {
 			response["authenticated"] = true
+			response["mfaEnrollmentRecommended"] = !enrolled
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -112,9 +113,10 @@ func (m *Module) bootstrapHTTP(w http.ResponseWriter, r *http.Request) {
 	// remove the on-disk token so it can never be replayed.
 	m.clearBootstrapToken()
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &user.ID, Action: "identity.bootstrap", Subject: "user:" + user.ID, RemoteAddress: remoteAddress(r)})
-	// MFA is optional, so a freshly bootstrapped administrator is signed straight
-	// in. They can enable a second factor later from account security.
-	writeJSON(w, http.StatusCreated, map[string]any{"user": user, "next": "authenticated"})
+	// The administrator is signed in already. First run is the natural moment to
+	// offer a second factor, so the client is pointed at enrollment — an offer it
+	// may skip, never a gate.
+	writeJSON(w, http.StatusCreated, map[string]any{"user": user, "next": "mfa_enrollment"})
 }
 
 func (m *Module) loginHTTP(w http.ResponseWriter, r *http.Request) {
@@ -157,8 +159,8 @@ func (m *Module) loginHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = m.database.NewUpdate().Model((*userModel)(nil)).
 		Set("last_login_at = ?", lastLogin).Where("id = ?", user.ID).Exec(r.Context())
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &user.ID, Action: "identity.password_accepted", Subject: "user:" + user.ID, RemoteAddress: remoteAddress(r)})
-	// MFA is optional: an account without a confirmed factor is authenticated on
-	// the password alone. Only an enrolled account is sent to its challenge.
+	// MFA is optional to enroll, so an account without a confirmed factor is signed
+	// in on its password alone; an enrolled one must answer the challenge first.
 	next := "mfa_challenge"
 	if model.TOTPConfirmedAt == nil {
 		next = "authenticated"

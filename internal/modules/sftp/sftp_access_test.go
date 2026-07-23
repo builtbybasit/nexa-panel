@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
@@ -49,6 +50,16 @@ func newSFTPModule(t *testing.T) (*Module, *fakeOperator, *fakeSSHState) {
 	t.Cleanup(func() { _ = database.Close() })
 	if err := persistence.RunMigrations(ctx, database); err != nil {
 		t.Fatalf("run migrations: %v", err)
+	}
+	// sftp_access.site_id is a real foreign key and cascades with the site, so the
+	// row the fake catalog serves has to exist in the sites table too.
+	now := time.Now().UTC()
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO sites (id, slug, display_name, primary_domain, php_version, unix_user, root_path, socket_path, status, deployment_mode, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		testSite.ID, testSite.Slug, testSite.Slug, testSite.PrimaryDomain, "8.4", testSite.UnixUser, testSite.RootPath,
+		"/run/php/nexa-"+testSite.Slug+".sock", "active", "standard", now, now); err != nil {
+		t.Fatalf("seed site: %v", err)
 	}
 	operator := &fakeOperator{}
 	module, err := New(ctx, database, operator, fakeCatalog{site: testSite}, fakeAccessPolicy{})

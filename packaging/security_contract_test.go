@@ -3,6 +3,7 @@ package packaging_test
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -121,7 +122,11 @@ func TestPrivilegedAgentRetainsPackageWritesInsideReadOnlyHostSandbox(t *testing
 	requireDirective(t, directives, "ProtectSystem", "strict")
 	requireDirective(t, directives, "ProtectHome", "true")
 	requireDirective(t, directives, "NoNewPrivileges", "true")
-	requireDirective(t, directives, "ConfigurationDirectoryMode", "0711")
+	// /etc/nexa-panel is owned by tmpfiles as root:root 0711 so the admin-tool
+	// subdirectories keep their phpMyAdmin/pgAdmin uids; letting systemd manage
+	// it here would chown the tree to this unit's root:nexa instead.
+	requireAbsentDirective(t, directives, "ConfigurationDirectory")
+	requireAbsentDirective(t, directives, "ConfigurationDirectoryMode")
 
 	writeRoots := directives["ReadWritePaths"]
 	if len(writeRoots) != 1 {
@@ -153,11 +158,18 @@ func TestPrivilegedAgentRetainsPackageWritesInsideReadOnlyHostSandbox(t *testing
 func TestControlPlaneUsesPrivateStateAndSharedAgentCredential(t *testing.T) {
 	directives := readServiceDirectives(t, "systemd/nexa-api.service")
 	requireDirective(t, directives, "User", "nexa")
-	requireDirective(t, directives, "Group", "nexa")
+	requireDirective(t, directives, "Group", "www-data")
+	requireDirective(t, directives, "SupplementaryGroups", "nexa")
 	requireDirective(t, directives, "UMask", "0077")
 	requireAbsentDirective(t, directives, "LoadCredential")
-	requireDirective(t, directives, "StateDirectoryMode", "0700")
-	requireDirective(t, directives, "LogsDirectoryMode", "0700")
+	// systemd chowns these trees to User:Group on every start. With the
+	// web-facing primary group that would overwrite the nexa:nexa tmpfiles
+	// contract and hand the root-owned install/ ownership proof to www-data,
+	// so the state and logs trees are owned by tmpfiles instead.
+	requireAbsentDirective(t, directives, "StateDirectory")
+	requireAbsentDirective(t, directives, "StateDirectoryMode")
+	requireAbsentDirective(t, directives, "LogsDirectory")
+	requireAbsentDirective(t, directives, "LogsDirectoryMode")
 	requireDirective(t, directives, "ProtectSystem", "strict")
 	requireDirective(t, directives, "ProtectHome", "true")
 	requireDirective(t, directives, "NoNewPrivileges", "true")
@@ -173,9 +185,13 @@ func TestControlPlaneUsesPrivateStateAndSharedAgentCredential(t *testing.T) {
 	if strings.Contains(execStart[0], "--master-key") {
 		t.Fatalf("pinning --master-key suppresses the relocation out of the state directory, got %q", execStart[0])
 	}
-	if paths, ok := directives["ReadWritePaths"]; ok {
-		t.Fatalf("the control plane only reads the master key, so /etc must stay read-only, found ReadWritePaths=%q", paths)
+	writeRoots := directives["ReadWritePaths"]
+	if len(writeRoots) != 1 {
+		t.Fatalf("the control plane must declare one auditable write boundary, got %q", writeRoots)
 	}
+	// Exactly the state and logs trees: the master key is provisioned by the
+	// privileged pre-start, so /etc must stay read-only for this service.
+	requireWordSet(t, writeRoots[0], "/var/lib/nexa-panel", "/var/log/nexa-panel")
 	provision := directives["ExecStartPre"]
 	if len(provision) != 1 || !strings.HasPrefix(provision[0], "+") {
 		t.Fatalf("the master key must be provisioned by one privileged pre-start command, got %q", provision)
@@ -237,6 +253,21 @@ func TestLongRunningUnitsBoundRestartsAndResources(t *testing.T) {
 	requireDirective(t, agent, "TasksMax", "4096")
 }
 
+func TestInterruptedUpdateRecoveryRunsAfterTheManagedServices(t *testing.T) {
+	unit := readUnitDirectives(t, "systemd/nexa-update-recovery.service")
+	requireDirective(t, unit, "ConditionPathExists", "/var/lib/nexa-panel-update/transaction.json")
+	for _, dependency := range []string{"nexa-agent.service", "nexa-api.service", "nginx.service"} {
+		if !strings.Contains(strings.Join(unit["After"], " "), dependency) {
+			t.Fatalf("recovery must run after %s, got After=%q", dependency, unit["After"])
+		}
+	}
+	service := readServiceDirectives(t, "systemd/nexa-update-recovery.service")
+	requireDirective(t, service, "User", "root")
+	requireDirective(t, service, "NoNewPrivileges", "true")
+	requireDirective(t, service, "ProtectSystem", "strict")
+	requireDirective(t, service, "ExecStart", "/usr/bin/nexa self-update recover --transaction /var/lib/nexa-panel-update/transaction.json")
+}
+
 func TestTimerDrivenBackupIsBoundedButNeverRateLimitedOut(t *testing.T) {
 	unitSection := readUnitDirectives(t, "systemd/nexa-panel-system-backup.service")
 	requireDirective(t, unitSection, "ConditionPathExists", "/etc/nexa-panel/system-backup.env")
@@ -288,7 +319,7 @@ func readTmpfiles(t *testing.T) map[string]tmpfilesEntry {
 func TestTmpfilesSeparatesRuntimeStateSecretsAndContainerData(t *testing.T) {
 	entries := readTmpfiles(t)
 	wanted := map[string]tmpfilesEntry{
-		"/run/nexa-panel":                                 {kind: "d", mode: "2750", user: "nexa", group: "nexa"},
+		"/run/nexa-panel":                                 {kind: "d", mode: "0750", user: "nexa", group: "www-data"},
 		"/etc/nexa-panel":                                 {kind: "d", mode: "0711", user: "root", group: "root"},
 		"/etc/nexa-panel/agent.token":                     {kind: "z", mode: "0640", user: "root", group: "nexa"},
 		"/var/lib/nexa-panel":                             {kind: "d", mode: "0700", user: "nexa", group: "nexa"},
@@ -322,13 +353,69 @@ func TestTmpfilesSeparatesRuntimeStateSecretsAndContainerData(t *testing.T) {
 	}
 }
 
-func TestNginxProxyPreservesExternalAuthorityAndUsesOnlyTheLocalAPISocket(t *testing.T) {
-	content, err := os.ReadFile("nginx/nexa-panel.conf.template")
+// systemd takes ownership of any directory a unit declares through
+// StateDirectory=/LogsDirectory=/RuntimeDirectory=/ConfigurationDirectory=,
+// chowning the whole tree to that unit's User:Group every time it starts. Where
+// tmpfiles also declares the path, the two contracts silently fight and the
+// last writer wins. Asserting each file in isolation cannot see that, so this
+// compares them directly: a unit may only claim a tmpfiles-owned tree when it
+// runs as exactly the owner tmpfiles assigns.
+func TestUnitManagedDirectoriesAgreeWithTheTmpfilesOwnership(t *testing.T) {
+	entries := readTmpfiles(t)
+	roots := map[string]string{
+		"StateDirectory":         "/var/lib",
+		"LogsDirectory":          "/var/log",
+		"RuntimeDirectory":       "/run",
+		"ConfigurationDirectory": "/etc",
+	}
+	units, err := filepath.Glob("systemd/*.service")
 	if err != nil {
 		t.Fatal(err)
 	}
-	configuration := string(content)
+	if len(units) == 0 {
+		t.Fatal("no unit files found to check")
+	}
+	for _, unit := range units {
+		directives := readServiceDirectives(t, unit)
+		user := singleDirective(directives, "User")
+		group := singleDirective(directives, "Group")
+		for directive, root := range roots {
+			for _, name := range directives[directive] {
+				for _, entry := range strings.Fields(name) {
+					path := filepath.Join(root, entry)
+					owned, ok := entries[path]
+					if !ok {
+						continue
+					}
+					if owned.user != user || owned.group != group {
+						t.Errorf("%s declares %s=%s, so systemd chowns %s to %s:%s on every start, but tmpfiles owns it as %s:%s", unit, directive, entry, path, user, group, owned.user, owned.group)
+					}
+				}
+			}
+		}
+	}
+}
+
+func singleDirective(directives map[string][]string, key string) string {
+	values := directives[key]
+	if len(values) != 1 {
+		return ""
+	}
+	return values[0]
+}
+
+func TestNginxProxyPreservesExternalAuthorityAndUsesOnlyTheLocalAPISocket(t *testing.T) {
+	vhost, err := os.ReadFile("nginx/nexa-panel.conf.template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := os.ReadFile("nginx/nexa-panel-proxy.conf.template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration := string(vhost) + "\n" + string(proxy)
 	for _, required := range []string{
+		"include /etc/nginx/snippets/nexa-panel-proxy.conf;",
 		"client_max_body_size 10m;",
 		"client_body_timeout 5m;",
 		"proxy_pass http://unix:/run/nexa-panel/api.sock;",
@@ -344,5 +431,27 @@ func TestNginxProxyPreservesExternalAuthorityAndUsesOnlyTheLocalAPISocket(t *tes
 	}
 	if strings.Contains(configuration, "proxy_set_header Host $host;") {
 		t.Fatal("Nginx template drops non-default ports from the external request authority")
+	}
+}
+
+func TestMetricsProxyIdentifiesTheLoopbackScraperToTheLocalOnlyGate(t *testing.T) {
+	content, err := os.ReadFile("nginx/nexa-panel-proxy.conf.template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration := string(content)
+	start := strings.Index(configuration, "location = /metrics {")
+	if start < 0 {
+		t.Fatal("Nginx template has no exact /metrics location")
+	}
+	// The snippet is included inside server{}, so its own blocks close at column
+	// zero rather than at the vhost's indentation.
+	end := strings.Index(configuration[start:], "\n}")
+	if end < 0 {
+		t.Fatal("Nginx template has an unterminated /metrics location")
+	}
+	metrics := configuration[start : start+end]
+	if !strings.Contains(metrics, "proxy_set_header X-Forwarded-For $remote_addr;") {
+		t.Fatalf("/metrics does not forward the loopback scraper address to the application local-only gate:\n%s", metrics)
 	}
 }

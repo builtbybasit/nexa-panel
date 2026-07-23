@@ -62,6 +62,12 @@ func newCSRFHarness(t *testing.T, config Config) *csrfHarness {
 	if bootstrap.Code != http.StatusCreated {
 		t.Fatalf("bootstrap = %d %s", bootstrap.Code, bootstrap.Body.String())
 	}
+	// These tests isolate CSRF behavior, not administrator enrollment. Exercise
+	// the same session as an operator so the mandatory admin MFA gate cannot mask
+	// the transport assertion under test.
+	if _, err := database.ExecContext(ctx, "UPDATE identity_users SET role = 'operator'"); err != nil {
+		t.Fatalf("set CSRF fixture role: %v", err)
+	}
 	harness.cookies = bootstrap.Result().Cookies()
 	return harness
 }
@@ -143,6 +149,34 @@ func TestUnsafeRequestRequiresTheSessionsOwnCSRFToken(t *testing.T) {
 	read := performRequest(harness.handler, http.MethodGet, "/api/v1/auth/session", "", cookie)
 	if read.Code != http.StatusOK {
 		t.Fatalf("read without a token = %d %s", read.Code, read.Body.String())
+	}
+}
+
+func TestAdminToolProxyUsesItsOwnCSRFTokenButStillRequiresSameOrigin(t *testing.T) {
+	harness := newCSRFHarness(t, testConfig())
+	request := httptest.NewRequest(http.MethodPost, "/tools/pgadmin/browser/preferences", strings.NewReader(`{}`))
+	request.RemoteAddr = "127.0.0.1:12345"
+	request.Header.Set("Origin", "http://"+request.Host)
+	for _, cookie := range harness.cookies {
+		request.AddCookie(cookie)
+	}
+	response := httptest.NewRecorder()
+	harness.module.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("same-origin pgAdmin POST = %d %s, want the request to reach pgAdmin's own CSRF guard", response.Code, response.Body.String())
+	}
+
+	crossOrigin := request.Clone(request.Context())
+	crossOrigin.Header = request.Header.Clone()
+	crossOrigin.Header.Set("Origin", "https://attacker.example")
+	crossOriginResponse := httptest.NewRecorder()
+	harness.module.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(crossOriginResponse, crossOrigin)
+	if crossOriginResponse.Code != http.StatusForbidden || !strings.Contains(crossOriginResponse.Body.String(), `"invalid_origin"`) {
+		t.Fatalf("cross-origin pgAdmin POST = %d %s", crossOriginResponse.Code, crossOriginResponse.Body.String())
 	}
 }
 

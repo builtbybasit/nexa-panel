@@ -76,7 +76,7 @@ const siteSelection = computed({
       <template #action>
         <RouterLink
           v-if="!hasAnySites && identity.can('sites.write')"
-          to="/sites?create=1"
+          to="/sites/new"
           class="text-[13px] font-medium text-accent-300 underline-offset-2 hover:text-accent-200 hover:underline"
         >
           Create a site →

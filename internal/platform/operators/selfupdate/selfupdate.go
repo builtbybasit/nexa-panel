@@ -8,35 +8,36 @@
 // target version string, gated to a strict semver shape; the release repository,
 // the per-architecture asset names, the download host, and the binary path are
 // all derived here, never taken from the caller. A downloaded release is only
-// installed after its SHA-256 matches the checksum published alongside it and
-// after the binary it carries validates as a runnable nexa reporting the
-// expected version.
+// installed after its SHA-256 matches the checksum, its detached OpenSSH
+// signature validates against the node's pinned release key, and the binary it
+// carries runs and reports the expected version.
 //
 // A release is a tarball, not a bare binary, because a panel version is more
 // than /usr/bin/nexa: it is also the systemd units, the tmpfiles and sysusers
 // rules, the nginx template, and the host prerequisites. Swapping only the
 // binary half-upgrades a node — a release that adds a tmpfiles directory or
 // widens the agent unit's ReadWritePaths would fail at runtime with no signal.
-// So the tarball is extracted to a staging tree and its own scripts/install.sh
-// re-applies the packaging after the binary swap.
+// So the tarball is extracted to a staging tree, the current managed files are
+// snapshotted, and its own scripts/install.sh applies packaging before the live
+// binary moves. A detached helper then activates and health-checks the result.
 //
-// Trust note: the checksum is fetched from the same release as the tarball, so
-// it guards integrity (a corrupted or truncated download) rather than
-// authenticity (a compromised release). The release source is a compile-time
-// constant so the download can never be redirected to an arbitrary host;
-// authenticity rests on the trust placed in that repository's releases. The
-// tarball is nonetheless treated as hostile input during extraction — it is
-// unpacked as root — so path traversal, links, and oversized members are all
-// refused rather than trusted.
+// The checksum guards accidental corruption; authenticity comes from a
+// separately managed signing key whose public half is pinned on the node. The
+// release source is also compile-time fixed. The tarball is still treated as
+// hostile input during extraction: traversal, links, and oversized members are
+// refused before anything is executed as root.
 package selfupdate
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
-	"regexp"
+	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -57,34 +58,36 @@ const (
 // writes a sibling ".new" file and renames it over this path.
 const defaultBinaryPath = "/usr/bin/nexa"
 
-// defaultWorkRoot holds the extracted release trees. It is deliberately NOT
+const (
+	defaultAllowedSignersPath = "/etc/nexa-panel/release-signers"
+	releaseSignerIdentity     = "nexa-panel-release"
+	releaseSignatureNamespace = "file"
+)
+
+// defaultWorkRoot holds staging trees, rollback snapshots, and the fsynced
+// transaction journal. It is deliberately NOT
 // under /var/lib/nexa-panel: that directory is owned by the unprivileged nexa
 // service account, and this tree contains a scripts/install.sh that the agent
 // executes as root. It is created 0700 root-owned, and /var is already in the
 // agent unit's ReadWritePaths, so no unit change is needed to use it.
 const defaultWorkRoot = "/var/lib/nexa-panel-update"
 
-// currentPackagingDir and previousPackagingDir are the retained release trees
-// inside the work root. "current" is the tree whose packaging was last applied;
-// "previous" is the one it displaced, which is what a rollback re-applies
-// alongside /usr/bin/nexa.prev.
-const (
-	currentPackagingDir  = "current"
-	previousPackagingDir = "previous"
-)
+// defaultControlDatabasePath is the SQLite state whose schema the API may
+// migrate when an updated binary first starts. Every transaction captures a
+// consistent pre-activation copy so an automatic binary rollback never starts
+// the old API against a newer, potentially incompatible schema.
+const defaultControlDatabasePath = "/var/lib/nexa-panel/control.db"
 
 // releaseBinaryEntry, releaseInstallerEntry and releaseInstallerFlag name the
 // pieces of the release tarball this operator depends on. The installer is
-// invoked with --sync-packaging, which re-applies units, tmpfiles, sysusers, the
-// nginx template and host prerequisites without touching the binary this
-// operator has already swapped.
+// invoked with --sync-packaging, which re-applies units, tmpfiles, sysusers, and
+// Nginx configuration without touching the binary.
 // The installer is additionally run with --no-start. On its own,
 // --sync-packaging restarts nexa-agent as soon as anything changed — and that
 // restart would tear down the cgroup the installer is running in, killing the
 // agent, the script, and the RPC that is waiting on it, so the update would
-// report a failure it did not have. Restarting is this operator's job: it arms
-// the same detached, delayed systemd-run timer as any other apply, after the
-// packaging has actually landed.
+// report a failure it did not have. Activation is instead performed by a
+// detached helper with a durable journal and readiness-gated rollback.
 const (
 	releaseBinaryEntry      = "bin/nexa"
 	releaseInstallerEntry   = "scripts/install.sh"
@@ -92,28 +95,20 @@ const (
 	releaseInstallerNoStart = "--no-start"
 )
 
-// restart is fired detached and slightly delayed so the apply RPC can return
-// success to the control plane before the units are bounced out from under it.
-const defaultRestartDelay = 3 * time.Second
-
-// managedUnits are restarted together after a successful swap; nexa-api
-// Requires=nexa-agent, so both must come back.
-var managedUnits = []string{"nexa-agent.service", "nexa-api.service"}
-
-// versionPattern gates a target version to a strict semver shape before it is
-// ever turned into a release tag. A pre-release suffix is permitted.
-var versionPattern = regexp.MustCompile(`^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}(-[0-9A-Za-z.]{1,40})?$`)
-
 // Release describes one downloadable release of the panel for this node's
-// architecture. AssetURL and ChecksumURL are derived from the release source and
-// are the only URLs the operator will fetch.
+// architecture. All three asset URLs are derived from the fixed release source.
 type Release struct {
-	Version     string    `json:"version"`
-	Tag         string    `json:"tag"`
-	Notes       string    `json:"notes,omitempty"`
-	AssetURL    string    `json:"assetURL"`
-	ChecksumURL string    `json:"checksumURL"`
-	PublishedAt time.Time `json:"publishedAt,omitempty"`
+	Version string `json:"version"`
+	Tag     string `json:"tag"`
+	Notes   string `json:"notes,omitempty"`
+	// AssetName is the published file name the archive URL resolves to. It is
+	// carried rather than re-derived so the agreement check can compare what the
+	// release actually published against what this architecture expects.
+	AssetName    string    `json:"assetName"`
+	AssetURL     string    `json:"assetURL"`
+	ChecksumURL  string    `json:"checksumURL"`
+	SignatureURL string    `json:"signatureURL"`
+	PublishedAt  time.Time `json:"publishedAt,omitempty"`
 }
 
 // Availability is the result of a check: what is running now and, if newer, the
@@ -125,40 +120,32 @@ type Availability struct {
 	CheckedAt        time.Time `json:"checkedAt"`
 }
 
-// Change is the caller's apply request. It selects one of two update sources:
-//
-//   - BinaryPath: a binary already staged on the host (operator scp/rsync'd it,
-//     then ran `nexa self-update --binary PATH`). No download, no checksum, and
-//     no newer-than guard — an operator pushing a build is an explicit act, so a
-//     same- or dev-version re-deploy is allowed. This is the only source that
-//     reads a caller-supplied path, and it is gated by the agent bearer token,
-//     which is already root-equivalent.
-//   - Version: a release to fetch from the trusted repository. An empty Version
-//     targets the latest release; any value is re-validated against
-//     versionPattern before use.
-//
-// BinaryPath takes precedence when both are set.
+// Change is the network-facing apply request. A caller may select only a
+// release version from the compile-time-pinned repository. Host paths are
+// intentionally absent: installing a local file is a root-only CLI operation
+// and never crosses the agent RPC trust boundary.
 type Change struct {
-	Version    string `json:"version,omitempty"`
-	BinaryPath string `json:"binaryPath,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
-// Result is the verified outcome of an apply. RestartScheduled is true once the
-// detached restart has been armed; the units are still running when this is
-// returned so the enclosing job can record success first.
+// Result is the durable outcome of an apply. Successful calls return
+// Activated=true only after readiness.
 type Result struct {
-	PreviousVersion  string `json:"previousVersion"`
-	TargetVersion    string `json:"targetVersion"`
-	Swapped          bool   `json:"swapped"`
-	RestartScheduled bool   `json:"restartScheduled"`
-	RestartDelay     string `json:"restartDelay,omitempty"`
-	// PreviousBinaryPath is the retained prior binary a rollback would restore,
-	// present only when such a binary exists on disk after the swap.
-	PreviousBinaryPath string `json:"previousBinaryPath,omitempty"`
+	PreviousVersion string `json:"previousVersion"`
+	TargetVersion   string `json:"targetVersion"`
+	Swapped         bool   `json:"swapped"`
+	// Activated is true only after the detached activation helper has restarted
+	// the packaged services and the control plane's readiness endpoint has
+	// authenticated the newly started agent, confirmed its schema is migrated,
+	// and reported the target version as the one now serving.
+	Activated bool `json:"activated"`
+	// RolledBack reports that activation failed and the transaction restored its
+	// exact pre-update binary and packaging snapshot.
+	RolledBack bool `json:"rolledBack"`
 	// PackagingSynced reports whether the release's packaging — systemd units,
 	// tmpfiles and sysusers rules, the nginx template, host prerequisites — was
-	// applied alongside the binary. It is false for a local binary push and for
-	// a rollback that had no retained packaging to restore.
+	// applied alongside the binary. It is false only for a root-only local binary
+	// push; release rollback restores the exact captured host files.
 	PackagingSynced bool `json:"packagingSynced"`
 	// PackagingNote states, in the operator's language, why packaging was not
 	// synced. It is the honest half of a binary-only change: a node whose binary
@@ -172,12 +159,9 @@ type Operator interface {
 	// Latest reports the installed version and, when a newer release exists, the
 	// release the node could update to.
 	Latest(context.Context) (Availability, error)
-	// Apply downloads, verifies, and swaps in the target release, then schedules
-	// the detached restart. It returns before the restart fires.
+	// Apply verifies and prepares the target, then waits for its detached
+	// activation journal to reach readiness-verified success or rollback.
 	Apply(context.Context, Change) (Result, error)
-	// Rollback reinstalls the binary preserved by the previous swap and schedules
-	// the detached restart. It errors when no previous binary is available.
-	Rollback(context.Context) (Result, error)
 }
 
 // ReleaseSource resolves releases from the trusted repository. It is an
@@ -195,6 +179,15 @@ type ReleaseSource interface {
 type Command struct {
 	Name string
 	Args []string
+	// Env adds narrowly scoped variables to the inherited process environment.
+	Env []string
+	// ExtraFiles are inherited as descriptors 3+n. Self-update uses descriptor
+	// 3 to prove lifecycle-lock ownership to the packaging installer without a
+	// second flock acquisition or a bypass flag.
+	ExtraFiles []*os.File
+	// Stdin carries bounded input that must not be exposed in argv. Release
+	// signature verification uses it for the exact archive bytes.
+	Stdin []byte
 }
 
 // Runner executes commands. Production uses execRunner; tests inject a fake so
@@ -208,20 +201,47 @@ type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 	process := exec.CommandContext(ctx, command.Name, command.Args...)
+	if len(command.Env) > 0 {
+		process.Env = append(os.Environ(), command.Env...)
+	}
+	process.ExtraFiles = command.ExtraFiles
+	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	process.Cancel = func() error {
+		if process.Process == nil {
+			return os.ErrProcessDone
+		}
+		err := syscall.Kill(-process.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	if len(command.Stdin) > 0 {
+		process.Stdin = bytes.NewReader(command.Stdin)
+	}
 	return process.CombinedOutput()
 }
 
 // HostOperator performs self-updates on the local node.
 type HostOperator struct {
-	source       ReleaseSource
-	downloader   Downloader
-	runner       Runner
-	installed    string
-	binaryPath   string
-	workRoot     string
-	restartDelay time.Duration
-	arch         string
-	now          func() time.Time
+	source                 ReleaseSource
+	downloader             Downloader
+	runner                 Runner
+	installed              string
+	binaryPath             string
+	databasePath           string
+	workRoot               string
+	lockPath               string
+	allowedSignersPath     string
+	activationPollInterval time.Duration
+	activate               func(context.Context, string) error
+	readiness              func(context.Context, string) error
+	managedPaths           []string
+	// packageStateDir is the dpkg state directory whose presence gates
+	// package-manager recovery.
+	packageStateDir string
+	arch            string
+	now             func() time.Time
 	// applyMu serialises applies: two concurrent swaps of the same binary would
 	// race on the sibling ".new" file and the rename.
 	applyMu sync.Mutex
@@ -242,17 +262,31 @@ type HostConfig struct {
 	Runner Runner
 	// BinaryPath overrides the swap target (defaults to /usr/bin/nexa).
 	BinaryPath string
-	// WorkRoot overrides where release tarballs are staged and where the applied
-	// and displaced release trees are retained (defaults to
-	// /var/lib/nexa-panel-update).
+	// ControlDatabasePath overrides the SQLite state protected by update
+	// rollback (defaults to /var/lib/nexa-panel/control.db).
+	ControlDatabasePath string
+	// WorkRoot overrides where releases and the durable transaction journal are
+	// staged (defaults to /var/lib/nexa-panel-update).
 	WorkRoot string
+	// LockPath serializes self-update with install and uninstall operations
+	// (defaults to /run/lock/nexa-panel-lifecycle.lock).
+	LockPath string
 	// ReleaseTokenPath overrides the credential file read for the private
 	// release repository (defaults to /etc/nexa-panel/release.token).
 	ReleaseTokenPath string
-	// RestartDelay overrides how long after a swap the detached restart fires.
-	RestartDelay time.Duration
+	// AllowedSignersPath is an OpenSSH allowed-signers file containing the
+	// pinned release signing key (defaults to /etc/nexa-panel/release-signers).
+	AllowedSignersPath string
 	// Arch overrides the detected architecture (defaults to runtime.GOARCH).
-	Arch string
+	Arch                   string
+	activationPollInterval time.Duration
+	activate               func(context.Context, string) error
+	// readiness proves the control plane that is live after a phase change is
+	// both healthy and running the version that phase intended. The string is
+	// that expected version; an empty or non-semver value asserts health only.
+	readiness       func(context.Context, string) error
+	managedPaths    []string
+	packageStateDir string
 }
 
 // NewHostOperator builds the operator, filling in production defaults for any
@@ -289,24 +323,65 @@ func NewHostOperator(config HostConfig) (*HostOperator, error) {
 	if binaryPath == "" {
 		binaryPath = defaultBinaryPath
 	}
+	databasePath := config.ControlDatabasePath
+	if databasePath == "" {
+		databasePath = defaultControlDatabasePath
+	}
+	if !filepath.IsAbs(databasePath) {
+		return nil, errors.New("self-update control database path must be absolute")
+	}
 	workRoot := config.WorkRoot
 	if workRoot == "" {
 		workRoot = defaultWorkRoot
 	}
-	restartDelay := config.RestartDelay
-	if restartDelay <= 0 {
-		restartDelay = defaultRestartDelay
+	lockPath := config.LockPath
+	if lockPath == "" {
+		lockPath = defaultLifecycleLock
+	}
+	if !filepath.IsAbs(lockPath) {
+		return nil, errors.New("self-update lifecycle lock path must be absolute")
+	}
+	allowedSignersPath := config.AllowedSignersPath
+	if allowedSignersPath == "" {
+		allowedSignersPath = defaultAllowedSignersPath
+	}
+	pollInterval := config.activationPollInterval
+	if pollInterval <= 0 {
+		pollInterval = 250 * time.Millisecond
+	}
+	managedPaths := config.managedPaths
+	if managedPaths == nil {
+		managedPaths = append([]string(nil), defaultManagedPackagingPaths...)
+	} else {
+		managedPaths = append([]string(nil), managedPaths...)
+	}
+	packageStateDir := config.packageStateDir
+	if packageStateDir == "" {
+		packageStateDir = defaultPackageStateDir
+	}
+	readiness := config.readiness
+	if readiness == nil {
+		readiness = func(ctx context.Context, expectVersion string) error {
+			return waitAPIReady(ctx, apiSocketPath, expectVersion, 45*time.Second)
+		}
 	}
 	return &HostOperator{
-		source:       source,
-		downloader:   downloader,
-		runner:       runner,
-		installed:    installed,
-		binaryPath:   binaryPath,
-		workRoot:     workRoot,
-		restartDelay: restartDelay,
-		arch:         arch,
-		now:          time.Now,
+		source:                 source,
+		downloader:             downloader,
+		runner:                 runner,
+		installed:              installed,
+		binaryPath:             binaryPath,
+		databasePath:           databasePath,
+		workRoot:               workRoot,
+		lockPath:               lockPath,
+		allowedSignersPath:     allowedSignersPath,
+		activationPollInterval: pollInterval,
+		activate:               config.activate,
+		readiness:              readiness,
+		managedPaths:           managedPaths,
+		packageStateDir:        packageStateDir,
+		arch:                   arch,
+		now:                    time.Now,
 	}, nil
 }
 
