@@ -11,7 +11,14 @@ StartLimitBurst=10
 
 [Service]
 Type=simple
-User=root
+# Deliberately no User=. The agent runs as root either way — that is systemd's
+# default — but naming the user explicitly makes systemd withhold CAP_SETUID
+# from the permitted set once NoNewPrivileges= is also set. apt's http and https
+# methods seteuid to _apt (uid 42) before they fetch anything, so with User=root
+# every download failed with "E: seteuid 42 failed" and no application, PHP
+# extension or database engine could be installed from the panel at all. The
+# sandbox is otherwise unchanged: Group=, NoNewPrivileges= and every Protect*
+# below still apply.
 Group=nexa
 UMask=0177
 Environment=NEXA_LOG_LEVEL=info

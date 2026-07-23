@@ -116,7 +116,14 @@ func requireWordSet(t *testing.T, value string, wanted ...string) {
 
 func TestPrivilegedAgentRetainsPackageWritesInsideReadOnlyHostSandbox(t *testing.T) {
 	directives := readServiceDirectives(t, "systemd/nexa-agent.service")
-	requireDirective(t, directives, "User", "root")
+	// No User=: the unit already runs as root by default, and setting User=
+	// explicitly alongside NoNewPrivileges= makes systemd withhold CAP_SETUID
+	// from the permitted set. apt's http/https methods seteuid to _apt (uid 42)
+	// before fetching, so with User=root every download died with
+	// "seteuid 42 failed" and NO application could be installed from the panel.
+	// Verified on live hardware: dropping this one line, with every other
+	// directive here unchanged, is what makes `apt-get update` succeed.
+	requireAbsentDirective(t, directives, "User")
 	requireDirective(t, directives, "Group", "nexa")
 	requireDirective(t, directives, "UMask", "0177")
 	requireDirective(t, directives, "ProtectSystem", "strict")
