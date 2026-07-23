@@ -202,7 +202,12 @@ func runAPI(args []string, logger *slog.Logger) error {
 	// single table and a single reconcile-on-boot cover them all. Constructing it
 	// here is what makes the confirm-or-revert flow real: without it both modules
 	// refuse lockout-capable changes outright.
-	lockoutGuard, err := safeguard.New(database, logger)
+	// The window is named here rather than left to the constructor's default:
+	// how long an operator has to prove they can still reach the box is the one
+	// decision in this guard someone will come looking for, and the composition
+	// root is where they will look. It is also the only production call site of
+	// WithWindow, which is otherwise reachable from tests alone.
+	lockoutGuard, err := safeguard.New(database, logger, safeguard.WithWindow(safeguard.DefaultWindow))
 	if err != nil {
 		return fmt.Errorf("initialize lockout safeguard: %w", err)
 	}
