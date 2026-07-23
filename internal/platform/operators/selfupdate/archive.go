@@ -44,10 +44,19 @@ var (
 // else lands 0600 and every directory 0700 — the staged tree is root-only, and
 // the agent's UMask=0177 means modes have to be set explicitly rather than
 // inferred from the mkdir/create arguments.
+//
+// It has to list every executable the release bundle ships, which is the set the
+// release workflow asserts is executable on the built tarball. The uninstaller
+// and the release helper were missing, so a self-update from a real release
+// staged them 0600 and install.sh refused the packaging apply with "no
+// executable uninstaller at ...". Nothing caught it because every test and every
+// lifecycle scenario installs through --binary, which never extracts an archive.
 var executableEntries = map[string]bool{
-	releaseBinaryEntry:           true,
-	releaseInstallerEntry:        true,
-	"scripts/nexa-seed-admin.sh": true,
+	releaseBinaryEntry:               true,
+	releaseInstallerEntry:            true,
+	"scripts/nexa-seed-admin.sh":     true,
+	"scripts/nexa-release-helper.py": true,
+	"scripts/uninstall.sh":           true,
 }
 
 // extractRelease unpacks a release tarball into destination, stripping the

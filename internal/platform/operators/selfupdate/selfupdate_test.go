@@ -107,9 +107,14 @@ func releaseArchive(t *testing.T, version string, binary []byte, extra map[strin
 	t.Helper()
 	root := "nexa-panel-" + version + "-linux-amd64/"
 	members := map[string][]byte{
-		"bin/nexa":                             binary,
-		"scripts/install.sh":                   []byte("#!/usr/bin/env bash\nexit 0\n"),
+		"bin/nexa":           binary,
+		"scripts/install.sh": []byte("#!/usr/bin/env bash\nexit 0\n"),
+		// The fixture carries every executable the real bundle does. It used to
+		// stop at the seed helper, so no test modelled a release faithfully and
+		// the uninstaller's mode went unchecked until a live node refused it.
 		"scripts/nexa-seed-admin.sh":           []byte("#!/usr/bin/env bash\nexit 0\n"),
+		"scripts/nexa-release-helper.py":       []byte("#!/usr/bin/env python3\n"),
+		"scripts/uninstall.sh":                 []byte("#!/usr/bin/env bash\nexit 0\n"),
 		"packaging/systemd/nexa-agent.service": []byte("[Service]\n"),
 		releaseManifestEntry:                   []byte("version=" + version + "\ncommit=abc123def456\narch=amd64\nbuilt_at=2026-07-22T09:08:07Z\n"),
 	}

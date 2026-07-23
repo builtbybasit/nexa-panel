@@ -73,6 +73,40 @@ func TestExtractReleaseStripsTopLevelAndSetsModes(t *testing.T) {
 	}
 }
 
+// Every script the release bundle ships as executable has to survive extraction
+// executable. install.sh refuses to apply packaging without `-x` on the staged
+// uninstaller ("no executable uninstaller at ..."), and it resolves the release
+// helper the same way, so a member left at 0600 here fails the update on the
+// node rather than in any test. The list mirrors the executables the release
+// workflow asserts on the built bundle.
+func TestExtractReleaseMakesEveryBundledExecutableRunnable(t *testing.T) {
+	archive := releaseArchive(t, "0.4.0", []byte("nexa-binary"), nil)
+	destination := filepath.Join(t.TempDir(), "staging")
+	if err := extractRelease(archive, destination); err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	for _, entry := range []string{
+		"bin/nexa",
+		"scripts/install.sh",
+		"scripts/nexa-seed-admin.sh",
+		"scripts/nexa-release-helper.py",
+		"scripts/uninstall.sh",
+	} {
+		info, err := os.Stat(filepath.Join(destination, filepath.FromSlash(entry)))
+		if err != nil {
+			t.Fatalf("stat %s: %v", entry, err)
+		}
+		if info.Mode().Perm()&0o100 == 0 {
+			t.Fatalf("%s mode = %v, want owner-executable", entry, info.Mode().Perm())
+		}
+		// Executable must not mean reachable by anyone else: the staged tree is
+		// root-only until the installer copies out of it.
+		if info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("%s mode = %v, want root-only", entry, info.Mode().Perm())
+		}
+	}
+}
+
 func TestExtractReleaseRejectsPathTraversal(t *testing.T) {
 	archive := hostileArchive(t, []tar.Header{
 		{Name: "nexa-panel-0.4.0-linux-amd64/", Typeflag: tar.TypeDir, Mode: 0o755},
