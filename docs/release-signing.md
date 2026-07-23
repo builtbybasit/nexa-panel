@@ -34,12 +34,26 @@ authenticity nothing proves. It also cannot be installed from on its own, becaus
 remains a local build product of `scripts/build-linux-release.sh` for the Docker
 test node and `nexa self-update --binary`.
 
-Each bundle additionally carries a GitHub **build-provenance attestation** and an
-**SBOM attestation**, signed with the workflow's OIDC identity. To check one:
+The workflow also asks GitHub for a **build-provenance attestation** and an **SBOM
+attestation**, signed with the workflow's OIDC identity:
 
 ```bash
 gh attestation verify nexa-panel-linux-amd64.tar.gz --repo builtbybasit/nexa-panel
 ```
+
+**Those two steps are skipped while this repository is private.** GitHub refuses
+to persist attestations for user-owned private repositories — "Feature not
+available for user-owned private repositories. To enable this feature, please
+make this repository public" — and going public is not on the table, because the
+release token exists precisely so that nodes can download from a *private*
+release. The steps are guarded on the repository's visibility and return on their
+own if it is ever made public, so the command above only works then.
+
+Nothing about the trust boundary changes in the meantime: every asset is still
+signed with the pinned release key, the workflow verifies each signature against
+`packaging/release-signers` before publishing, and the installer and self-updater
+reject a bundle whose signature is missing or invalid. The attestation is
+supplementary provenance, not the check that gates an install.
 
 ## The signing key
 
