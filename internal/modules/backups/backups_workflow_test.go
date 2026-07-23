@@ -504,7 +504,18 @@ func TestRestoreJobResolvesDestinations(t *testing.T) {
 	}
 
 	choices := restoreChoices{Sites: []siteSelection{{Entry: "site-blog.tar.gz", SiteID: "site_1", Clear: true}}}
-	reviewed, problem := module.buildRestorePlan(ctx, *record, choices)
+	// Preview from the stored row, exactly as both HTTP handlers do via
+	// loadRestoreCopy. Previewing from the in-memory record instead compares a
+	// nanosecond CreatedAt against the microsecond one SQLite hands back, so the
+	// digests differ and the restore is refused — on Linux only, because macOS
+	// clocks are microsecond-granular and the round trip happens to be lossless
+	// there. That mismatch is an artifact of the test reading from somewhere
+	// production never reads, not a defect in the digest guard.
+	previewRecord, err := module.getCopyModel(ctx, record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewed, problem := module.buildRestorePlan(ctx, previewRecord, choices)
 	if problem != nil {
 		t.Fatalf("build restore plan: %v", problem)
 	}
