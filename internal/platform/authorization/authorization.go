@@ -36,6 +36,10 @@ const (
 	BackupsWrite      Permission = "backups.write"
 	ServicesRead      Permission = "services.read"
 	ServicesWrite     Permission = "services.write"
+	FirewallRead      Permission = "firewall.read"
+	FirewallWrite     Permission = "firewall.write"
+	DeployRead        Permission = "deploy.read"
+	DeployWrite       Permission = "deploy.write"
 	UsersManage       Permission = "users.manage"
 )
 
@@ -48,16 +52,16 @@ type Policy struct {
 func New() *Policy {
 	return &Policy{now: time.Now, stepUpTTL: 10 * time.Minute, grants: map[string]map[Permission]struct{}{
 		"viewer": {
-			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, DomainsRead: {}, CertificatesRead: {}, DatabasesRead: {}, FilesRead: {}, LogsRead: {}, SchedulesRead: {}, ApplicationsRead: {}, BackupsRead: {}, ServicesRead: {},
+			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, DomainsRead: {}, CertificatesRead: {}, DatabasesRead: {}, FilesRead: {}, LogsRead: {}, SchedulesRead: {}, ApplicationsRead: {}, BackupsRead: {}, ServicesRead: {}, FirewallRead: {}, DeployRead: {},
 		},
 		"developer": {
-			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, BackupsRead: {},
+			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, BackupsRead: {}, DeployRead: {}, DeployWrite: {},
 		},
 		"operator": {
-			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {},
+			SystemRead: {}, JobsRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {}, FirewallRead: {}, FirewallWrite: {}, DeployRead: {}, DeployWrite: {},
 		},
 		"admin": {
-			SystemRead: {}, SystemUpdate: {}, JobsRead: {}, AuditRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, OperationsApply: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {}, UsersManage: {},
+			SystemRead: {}, SystemUpdate: {}, JobsRead: {}, AuditRead: {}, RuntimesRead: {}, SitesRead: {}, SitesWrite: {}, DomainsRead: {}, DomainsWrite: {}, CertificatesRead: {}, CertificatesWrite: {}, DatabasesRead: {}, DatabasesWrite: {}, OperationsApply: {}, FilesRead: {}, FilesWrite: {}, LogsRead: {}, SchedulesRead: {}, SchedulesWrite: {}, ApplicationsRead: {}, ApplicationsWrite: {}, BackupsRead: {}, BackupsWrite: {}, ServicesRead: {}, ServicesWrite: {}, FirewallRead: {}, FirewallWrite: {}, DeployRead: {}, DeployWrite: {}, UsersManage: {},
 		},
 	}}
 }
@@ -78,7 +82,10 @@ func (p *Policy) Middleware(permission string, next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "permission_denied", "Your role cannot perform this action.")
 			return
 		}
-		if sensitivePermission(Permission(permission)) && !identity.RecentMFA(r.Context(), p.now(), p.stepUpTTL) {
+		// Enrollment is optional for every role, so an account without a confirmed
+		// factor has nothing to step up with and is never asked to. Once enrolled,
+		// a sensitive action always needs a recent challenge.
+		if sensitivePermission(Permission(permission)) && identity.MFAEnrolled(r.Context()) && !identity.RecentMFA(r.Context(), p.now(), p.stepUpTTL) {
 			writeError(w, http.StatusForbidden, "mfa_step_up_required", "Confirm multi-factor authentication again to perform this sensitive action.")
 			return
 		}
@@ -87,7 +94,7 @@ func (p *Policy) Middleware(permission string, next http.Handler) http.Handler {
 }
 
 func sensitivePermission(permission Permission) bool {
-	return permission == OperationsApply || permission == UsersManage || permission == SystemUpdate
+	return permission == OperationsApply || permission == UsersManage || permission == SystemUpdate || permission == FirewallWrite || permission == DeployWrite
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {

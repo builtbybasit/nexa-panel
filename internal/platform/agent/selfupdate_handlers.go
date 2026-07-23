@@ -24,8 +24,8 @@ func (s *Server) selfUpdateLatestHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, availability)
 }
 
-// selfUpdateApplyHTTP downloads, verifies, and swaps in the target release, then
-// schedules the detached restart. Authorization is the bearer token plus the
+// selfUpdateApplyHTTP downloads, verifies, and transactionally activates the
+// target release. Authorization is the bearer token plus the
 // control plane's own system.update permission gate on the route that reaches
 // here; the operator itself trusts no caller-supplied path, only a version
 // string it re-validates.

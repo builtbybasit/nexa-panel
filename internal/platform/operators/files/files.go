@@ -75,6 +75,7 @@ type Operator interface {
 	Write(ctx context.Context, scope sitefs.Scope, path, content, expectedETag string) (WriteResult, error)
 	Mkdir(ctx context.Context, scope sitefs.Scope, path string) (Entry, error)
 	Move(ctx context.Context, scope sitefs.Scope, from, to string, overwrite bool) (Entry, error)
+	Chmod(ctx context.Context, scope sitefs.Scope, path, mode string) (Entry, error)
 	Copy(ctx context.Context, scope sitefs.Scope, from, to string) (CopyResult, error)
 	Delete(ctx context.Context, scope sitefs.Scope, path string, recursive bool) error
 	UploadBegin(ctx context.Context, scope sitefs.Scope, path string, size int64, overwrite bool) (Upload, error)

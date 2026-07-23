@@ -14,7 +14,9 @@ import (
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
+	deployoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/deploy"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
+	firewalloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/firewall"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
@@ -26,6 +28,7 @@ import (
 	sftpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sftp"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 	"github.com/nexa-panel/nexa-panel/internal/platform/version"
 )
 
@@ -80,7 +83,9 @@ func runAgent(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create schedules operator: %w", err)
 	}
-	backupOperator, err := backupoperator.NewHostOperator(nil)
+	// The panel-state backup snapshots the master key, which no longer sits
+	// beside control.db, so the agent has to be told where it moved to.
+	backupOperator, err := backupoperator.NewHostOperator(nil, backupoperator.HostConfig{MasterKeyPath: envOrDefault("NEXA_MASTER_KEY", secrets.DefaultKeyPath)})
 	if err != nil {
 		return fmt.Errorf("create backups operator: %w", err)
 	}
@@ -91,6 +96,14 @@ func runAgent(args []string, logger *slog.Logger) error {
 	sftpOperator, err := sftpoperator.NewHostOperator(nil)
 	if err != nil {
 		return fmt.Errorf("create SFTP operator: %w", err)
+	}
+	firewallOperator, err := firewalloperator.NewHostOperator(nil)
+	if err != nil {
+		return fmt.Errorf("create firewall operator: %w", err)
+	}
+	deployOperator, err := deployoperator.NewSSHHostOperator(nil)
+	if err != nil {
+		return fmt.Errorf("create deploy operator: %w", err)
 	}
 	selfUpdateOperator, err := selfupdateoperator.NewHostOperator(selfupdateoperator.HostConfig{
 		InstalledVersion: version.Version,
@@ -106,6 +119,6 @@ func runAgent(args []string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	server := agent.New(*socket, version.Version, token, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithPHPOperator(phpOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator), agent.WithServicesOperator(servicesOperator), agent.WithSFTPOperator(sftpOperator), agent.WithSelfUpdateOperator(selfUpdateOperator))
+	server := agent.New(*socket, version.Version, token, logger, agent.WithSiteOperator(siteOperator), agent.WithCertificateOperator(certificateOperator), agent.WithPostgresOperator(postgresOperator), agent.WithMySQLOperator(mysqlOperator), agent.WithAdminToolOperator(adminToolOperator), agent.WithPackagesOperator(packagesOperator), agent.WithPHPOperator(phpOperator), agent.WithFilesOperator(filesOperator), agent.WithLogsOperator(logsOperator), agent.WithScheduleOperator(scheduleOperator), agent.WithBackupOperator(backupOperator), agent.WithServicesOperator(servicesOperator), agent.WithSFTPOperator(sftpOperator), agent.WithFirewallOperator(firewallOperator), agent.WithDeployOperator(deployOperator), agent.WithSelfUpdateOperator(selfUpdateOperator))
 	return server.Serve(ctx)
 }

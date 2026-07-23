@@ -1,6 +1,31 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { getJob, listJobs, submitDiagnostics, type Job } from './api'
+import { getJob, listJobs, submitDiagnostics, subscribeToJob, type Job } from './api'
+
+class FakeEventSource {
+  static readonly CONNECTING = 0
+  static readonly OPEN = 1
+  static readonly CLOSED = 2
+  static instances: FakeEventSource[] = []
+
+  readyState = FakeEventSource.CONNECTING
+  onerror: (() => void) | null = null
+  closed = false
+  listeners = new Map<string, (event: MessageEvent<string>) => void>()
+
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this)
+  }
+
+  addEventListener(name: string, listener: (event: MessageEvent<string>) => void) {
+    this.listeners.set(name, listener)
+  }
+
+  close() {
+    this.closed = true
+    this.readyState = FakeEventSource.CLOSED
+  }
+}
 
 const job: Job = {
   id: 12,
@@ -13,6 +38,7 @@ const job: Job = {
 }
 
 afterEach(() => {
+  FakeEventSource.instances = []
   vi.unstubAllGlobals()
 })
 
@@ -50,5 +76,26 @@ describe('jobs API', () => {
       credentials: 'same-origin',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     })
+  })
+
+  it('lets EventSource reconnect after a transient job-stream interruption', () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const disconnected = vi.fn()
+    const reconnecting = vi.fn()
+    const stop = subscribeToJob(12, vi.fn(), disconnected, reconnecting)
+    const source = FakeEventSource.instances[0]
+    if (!source) throw new Error('EventSource was not constructed')
+
+    source.readyState = FakeEventSource.CONNECTING
+    source.onerror?.()
+
+    expect(source.closed).toBe(false)
+    expect(disconnected).not.toHaveBeenCalled()
+    expect(reconnecting).toHaveBeenCalledOnce()
+
+    source.readyState = FakeEventSource.CLOSED
+    source.onerror?.()
+    expect(disconnected).toHaveBeenCalledOnce()
+    stop()
   })
 })

@@ -2,6 +2,7 @@ package sftp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -46,6 +47,25 @@ func (m *Module) resetPasswordHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) provision(w http.ResponseWriter, r *http.Request, site sites.Site, allowCreate bool) {
+	// The SSH check comes first, and covers a password reset as well: both
+	// re-apply the jail, and a jail written while the site has an SSH-access
+	// Match block is not enforced — that block sorts first and keeps its own
+	// ChrootDirectory, ForceCommand and authentication methods. The operator
+	// re-checks this on the node, which closes the race against an SSH enable
+	// that lands in between.
+	if m.ssh == nil {
+		writeError(w, http.StatusInternalServerError, "sftp_unavailable", "SFTP access could not be configured.")
+		return
+	}
+	interactive, err := m.ssh.AccessEnabled(r.Context(), site.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "sftp_unavailable", "SFTP access could not be loaded.")
+		return
+	}
+	if interactive {
+		writeError(w, http.StatusConflict, "ssh_access_enabled", "Disable SSH access for this site first. One account cannot have both an SSH login and an SFTP jail.")
+		return
+	}
 	if !allowCreate {
 		access, err := m.currentAccess(r.Context(), site)
 		if err != nil {
@@ -65,6 +85,10 @@ func (m *Module) provision(w http.ResponseWriter, r *http.Request, site sites.Si
 	if _, err := m.operator.Apply(r.Context(), sftpoperator.Request{
 		Slug: site.Slug, UnixUser: site.UnixUser, RootPath: site.RootPath, Enabled: true, Password: password,
 	}); err != nil {
+		if errors.Is(err, sftpoperator.ErrSSHAccessPresent) {
+			writeError(w, http.StatusConflict, "ssh_access_enabled", "The node still has SSH access configured for this site. Disable it, then try again.")
+			return
+		}
 		writeError(w, http.StatusConflict, "sftp_operation_failed", err.Error())
 		return
 	}

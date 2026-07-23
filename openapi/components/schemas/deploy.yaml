@@ -1,0 +1,277 @@
+SshKey:
+  type: object
+  required:
+  - id
+  - label
+  - algorithm
+  - fingerprint
+  - createdAt
+  properties:
+    id:
+      type: string
+    label:
+      type: string
+    algorithm:
+      type: string
+      description: Key type as sshd names it, e.g. ssh-ed25519
+    fingerprint:
+      type: string
+      description: SHA256 fingerprint, comparable against `ssh-keygen -lf`
+    comment:
+      type: string
+    createdAt:
+      type: string
+      format: date-time
+SshAccess:
+  type: object
+  description: Interactive SSH access for one site, delivered through that site's Unix Owner. The key bodies are never returned; the fingerprint is the identity a human compares.
+  required:
+  - siteId
+  - enabled
+  - username
+  - host
+  - port
+  - shell
+  - authorizedKeysPath
+  - keys
+  properties:
+    siteId:
+      type: string
+    enabled:
+      type: boolean
+    username:
+      type: string
+      description: The site's Unix Owner, nexa_<slug>
+    host:
+      type: string
+    port:
+      type: integer
+    shell:
+      type: string
+      description: The login shell the account currently has
+    authorizedKeysPath:
+      type: string
+      description: The root-owned authorized-keys file the Match block names; it deliberately lives outside the site's home
+    enabledAt:
+      type: string
+      format: date-time
+    keys:
+      type: array
+      items:
+        $ref: '#/SshKey'
+AddSshKey:
+  type: object
+  additionalProperties: false
+  required:
+  - label
+  - publicKey
+  properties:
+    label:
+      type: string
+    publicKey:
+      type: string
+      description: One OpenSSH public key line
+GenerateSshKey:
+  type: object
+  additionalProperties: false
+  required:
+  - label
+  properties:
+    label:
+      type: string
+GeneratedSshKey:
+  type: object
+  description: The one and only response carrying a private key. It is generated for the caller, never stored, and cannot be retrieved again.
+  required:
+  - key
+  - privateKey
+  - access
+  properties:
+    key:
+      $ref: '#/SshKey'
+    privateKey:
+      type: string
+    access:
+      $ref: '#/SshAccess'
+DeployKey:
+  type: object
+  description: The site's Git deploy key. The pair is minted on the node and only the public half ever reaches the control plane, so `present` rather than a non-empty publicKey is what says a key exists.
+  required:
+  - siteId
+  - present
+  - keyVersion
+  - repository
+  properties:
+    siteId:
+      type: string
+    present:
+      type: boolean
+    algorithm:
+      type: string
+    publicKey:
+      type: string
+      description: The public half, ready to register as a repository deploy key
+    fingerprint:
+      type: string
+    keyVersion:
+      type: integer
+      description: Incremented on every rotation
+    repository:
+      type: string
+      description: The SSH remote this site deploys from, e.g. git@github.com:owner/name.git
+    lastTestedAt:
+      type: string
+      format: date-time
+    lastTestOk:
+      type: boolean
+    createdAt:
+      type: string
+      format: date-time
+EnsureDeployKey:
+  type: object
+  additionalProperties: false
+  properties:
+    repository:
+      type: string
+      description: The SSH remote; empty keeps whatever the panel already stored
+    rotate:
+      type: boolean
+      description: Replace the pair itself, invalidating the key the repository already trusts
+TestDeployKey:
+  type: object
+  additionalProperties: false
+  required:
+  - repository
+  properties:
+    repository:
+      type: string
+SetDeploymentMode:
+  type: object
+  additionalProperties: false
+  required:
+  - mode
+  properties:
+    mode:
+      type: string
+      enum:
+      - standard
+      - deployer
+DeploymentModeChange:
+  type: object
+  description: A job is present whenever the site was live enough to need re-applying; without one the mode is stored and the site's next plan picks it up.
+  required:
+  - siteId
+  - mode
+  properties:
+    siteId:
+      type: string
+    mode:
+      type: string
+      enum:
+      - standard
+      - deployer
+    job:
+      $ref: ./jobs.yaml#/Job
+SharedEnv:
+  type: object
+  description: The deployer layout's shared environment file. Its content is a secret in both directions - it is never logged, never audited, and never carried in a job payload.
+  required:
+  - siteId
+  - path
+  - present
+  - content
+  - bytes
+  - sha256
+  properties:
+    siteId:
+      type: string
+    path:
+      type: string
+    present:
+      type: boolean
+    content:
+      type: string
+    bytes:
+      type: integer
+    sha256:
+      type: string
+      pattern: ^[a-f0-9]{64}$
+    modifiedAt:
+      type: string
+      format: date-time
+WriteSharedEnv:
+  type: object
+  additionalProperties: false
+  required:
+  - content
+  properties:
+    content:
+      type: string
+      description: The whole file; at most 65536 bytes
+DeployTool:
+  type: object
+  description: One prerequisite as the preparation run found - or left - it. A tool that could not be installed is a result, not a failed job.
+  required:
+  - name
+  - installed
+  - action
+  properties:
+    name:
+      type: string
+    path:
+      type: string
+    version:
+      type: string
+      description: The tool's own first `--version` line
+    installed:
+      type: boolean
+    action:
+      type: string
+      enum:
+      - present
+      - installed
+      - failed
+FirewallSshCheck:
+  type: object
+  description: The read-only port-22 verdict. `checked` false means the panel could not ask, which is a fact about the panel and never means the port is closed.
+  required:
+  - checked
+  - installed
+  - active
+  - open
+  properties:
+    checked:
+      type: boolean
+    installed:
+      type: boolean
+    active:
+      type: boolean
+    open:
+      type: boolean
+    remediation:
+      type: string
+      description: The exact command an operator can run; the preparation never runs it, because opening a port belongs behind firewall.write
+NodePreparation:
+  type: object
+  description: The preparation job's result. `ready` covers the tooling only - the firewall is a warning surface, not something this job clears.
+  required:
+  - siteId
+  - ready
+  - tools
+  - firewallSsh
+  - warnings
+  properties:
+    siteId:
+      type: string
+    ready:
+      type: boolean
+    tools:
+      type: array
+      items:
+        $ref: '#/DeployTool'
+    firewallSsh:
+      $ref: '#/FirewallSshCheck'
+    warnings:
+      type: array
+      items:
+        type: string

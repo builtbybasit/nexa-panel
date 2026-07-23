@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { activateDomain, createDomain, listDomains } from './api'
+import { activateDomain, createDomain, deleteDomain, listDomains } from './api'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -28,5 +28,29 @@ describe('domains API', () => {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' },
     })
+  })
+
+  it('enqueues a remove job', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ id: 8, state: 'queued' }, { status: 202 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(deleteDomain('domain-1')).resolves.toEqual({ id: 8, state: 'queued' })
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/domains/domain-1', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+  })
+
+  it('surfaces the primary-protected guard message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json(
+          { code: 'domain_primary_protected', message: 'The primary domain is removed by deleting its site.' },
+          { status: 409 },
+        ),
+      ),
+    )
+    await expect(deleteDomain('domain-1')).rejects.toThrow('The primary domain is removed by deleting its site.')
   })
 })

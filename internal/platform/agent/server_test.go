@@ -38,6 +38,79 @@ func TestAgentRejectsMissingCredential(t *testing.T) {
 	}
 }
 
+func TestAgentRecoversPanicWithSafe500(t *testing.T) {
+	server := New("", "test", "token", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := server.logRequests(server.recoverPanic(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("secret failure")
+	})))
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/sites/plan", nil))
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("panic status = %d, want 500", response.Code)
+	}
+	if strings.Count(response.Body.String(), `"internal_error"`) != 1 || strings.Contains(response.Body.String(), "secret failure") {
+		t.Fatalf("panic response leaked detail or wrote twice: %s", response.Body.String())
+	}
+	if got := server.panics.Load(); got != 1 {
+		t.Fatalf("panic counter = %d, want 1", got)
+	}
+}
+
+func TestAgentRecoverDoesNotOverwriteCommittedResponse(t *testing.T) {
+	server := New("", "test", "token", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := server.logRequests(server.recoverPanic(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("accepted"))
+		panic("late failure")
+	})))
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/files/download", nil))
+
+	if response.Code != http.StatusAccepted || response.Body.String() != "accepted" {
+		t.Fatalf("committed response was corrupted: %d %q", response.Code, response.Body.String())
+	}
+	if got := server.panics.Load(); got != 1 {
+		t.Fatalf("panic counter = %d, want 1", got)
+	}
+}
+
+func TestAgentMetricsExposeCountersBehindBearerToken(t *testing.T) {
+	server := New("", "test", "expected-token", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/metrics", server.metricsHTTP)
+	handler := server.observeMetrics(server.logRequests(server.recoverPanic(server.authenticate(mux))))
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/v1/metrics", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated metrics status = %d, want 401", unauthorized.Code)
+	}
+
+	authorizedRequest := httptest.NewRequest(http.MethodGet, "/v1/metrics", nil)
+	authorizedRequest.Header.Set("Authorization", "Bearer expected-token")
+	authorized := httptest.NewRecorder()
+	handler.ServeHTTP(authorized, authorizedRequest)
+	if authorized.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d, want 200", authorized.Code)
+	}
+	for _, metric := range []string{
+		"nexa_agent_build_info",
+		"nexa_agent_http_requests_total",
+		"nexa_agent_http_requests_in_flight",
+		"nexa_agent_http_panics_total",
+	} {
+		if !strings.Contains(authorized.Body.String(), metric) {
+			t.Fatalf("metrics response missing %s: %s", metric, authorized.Body.String())
+		}
+	}
+	if got := server.requests.Load(); got < 2 {
+		t.Fatalf("request counter = %d, want >= 2", got)
+	}
+}
+
 func TestServeRejectsUnsafeConfigurationBeforeOpeningSocket(t *testing.T) {
 	if err := New("/private/tmp/unused-agent.sock", "test", "", nil).Serve(context.Background()); err == nil || !strings.Contains(err.Error(), "credential") {
 		t.Fatalf("empty credential error = %v", err)

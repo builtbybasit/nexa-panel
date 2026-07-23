@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
@@ -18,6 +20,11 @@ import (
 
 const (
 	cookieName = "nexa_session"
+	// csrfCookieName is readable by the UI on purpose; csrfHeaderName is where the
+	// UI must echo it back. Only a header can carry the second half of the double
+	// submit, because a cross-site form can send cookies but never a header.
+	csrfCookieName = "nexa_csrf"
+	csrfHeaderName = "X-CSRF-Token"
 )
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$`)
@@ -25,22 +32,37 @@ var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$`)
 var errAlreadyBootstrapped = errors.New("identity is already bootstrapped")
 
 type Config struct {
-	SessionTTL         time.Duration
+	SessionTTL time.Duration
+	// IdleTimeout ends a session that has gone unused for this long, well before
+	// SessionTTL's absolute cap expires it. An unattended browser on a shared
+	// machine is the threat: last_seen_at is bumped on every authenticated
+	// request, so an actively used session slides forward and never notices.
+	IdleTimeout        time.Duration
 	PasswordMemoryKiB  uint32
 	PasswordIterations uint32
 	PasswordThreads    uint8
 	AttemptLimit       int
 	AttemptWindow      time.Duration
+	// MFALockoutLimit and MFALockoutWindow guard the second-factor challenge
+	// against brute force. Once an identity fails the second factor this many
+	// times inside the window, further verification is locked for the remainder
+	// of the window. Because the bucket is keyed on the user identity (not the
+	// session), minting a fresh login session does not reset it.
+	MFALockoutLimit  int
+	MFALockoutWindow time.Duration
 }
 
 func DefaultConfig() Config {
 	return Config{
 		SessionTTL:         24 * time.Hour,
+		IdleTimeout:        2 * time.Hour,
 		PasswordMemoryKiB:  defaultPasswordParameters.memory,
 		PasswordIterations: defaultPasswordParameters.iterations,
 		PasswordThreads:    defaultPasswordParameters.parallelism,
 		AttemptLimit:       5,
 		AttemptWindow:      5 * time.Minute,
+		MFALockoutLimit:    10,
+		MFALockoutWindow:   15 * time.Minute,
 	}
 }
 
@@ -75,12 +97,16 @@ type sessionModel struct {
 	RemoteAddress string    `bun:",notnull"`
 	UserAgent     string    `bun:",notnull"`
 	MFAVerifiedAt *time.Time
+	// CSRFTokenHash binds the double-submit cookie to this session, so a token
+	// minted for one session cannot be replayed against another.
+	CSRFTokenHash []byte
 }
 
 type principal struct {
 	User
 	SessionID       string
 	TokenHash       []byte
+	CSRFTokenHash   []byte
 	MFAVerifiedAt   *time.Time
 	TOTPConfirmedAt *time.Time
 }
@@ -104,6 +130,14 @@ func RecentMFA(ctx context.Context, now time.Time, maxAge time.Duration) bool {
 	return !verifiedAt.After(now.UTC()) && now.UTC().Sub(verifiedAt) <= maxAge
 }
 
+// MFAEnrolled reports whether the current session's account has a confirmed
+// second factor. Authorization uses it to require step-up for enrolled accounts:
+// an account that never opted into MFA has no factor to step up with.
+func MFAEnrolled(ctx context.Context) bool {
+	value, ok := ctx.Value(principalContextKey{}).(principal)
+	return ok && value.TOTPConfirmedAt != nil
+}
+
 // principalFromContext returns the full authenticated principal, including the
 // session identifier, for handlers that need to act on the current session
 // (e.g. keeping it alive while revoking the account's other sessions).
@@ -121,7 +155,14 @@ type Module struct {
 	parameters    passwordParameters
 	secrets       secrets.Cipher
 	attempts      *attemptLimiter
+	lockouts      *attemptLimiter
 	siteDirectory SiteDirectory
+
+	// bootstrapMu guards the first-run bootstrap secret against concurrent
+	// bootstrap requests racing the account creation that closes the window.
+	bootstrapMu        sync.Mutex
+	bootstrapTokenPath string
+	bootstrapToken     string
 }
 
 func New(ctx context.Context, database *bun.DB, recorder audit.Recorder, cryptography secrets.Cipher, logger *slog.Logger) (*Module, error) {
@@ -141,7 +182,16 @@ func NewWithConfig(_ context.Context, database *bun.DB, recorder audit.Recorder,
 	if config.AttemptWindow == 0 {
 		config.AttemptWindow = DefaultConfig().AttemptWindow
 	}
-	if config.SessionTTL <= 0 || config.PasswordMemoryKiB == 0 || config.PasswordIterations == 0 || config.PasswordThreads == 0 || config.AttemptLimit <= 0 || config.AttemptWindow <= 0 {
+	if config.MFALockoutLimit == 0 {
+		config.MFALockoutLimit = DefaultConfig().MFALockoutLimit
+	}
+	if config.MFALockoutWindow == 0 {
+		config.MFALockoutWindow = DefaultConfig().MFALockoutWindow
+	}
+	if config.IdleTimeout == 0 {
+		config.IdleTimeout = DefaultConfig().IdleTimeout
+	}
+	if config.SessionTTL <= 0 || config.IdleTimeout <= 0 || config.PasswordMemoryKiB == 0 || config.PasswordIterations == 0 || config.PasswordThreads == 0 || config.AttemptLimit <= 0 || config.AttemptWindow <= 0 || config.MFALockoutLimit <= 0 || config.MFALockoutWindow <= 0 {
 		return nil, errors.New("identity configuration values must be positive")
 	}
 	return &Module{
@@ -152,6 +202,7 @@ func NewWithConfig(_ context.Context, database *bun.DB, recorder audit.Recorder,
 		config:   config,
 		secrets:  cryptography,
 		attempts: newAttemptLimiter(config.AttemptLimit, config.AttemptWindow),
+		lockouts: newAttemptLimiter(config.MFALockoutLimit, config.MFALockoutWindow),
 		parameters: passwordParameters{
 			memory: config.PasswordMemoryKiB, iterations: config.PasswordIterations,
 			parallelism: config.PasswordThreads, saltLength: 16, keyLength: 32,
@@ -179,6 +230,11 @@ func (m *Module) Register(registry module.Registry) error {
 		{"POST /api/v1/auth/mfa/enroll", http.HandlerFunc(m.mfaEnrollHTTP), false},
 		{"POST /api/v1/auth/mfa/confirm", http.HandlerFunc(m.mfaConfirmHTTP), false},
 		{"POST /api/v1/auth/mfa/verify", http.HandlerFunc(m.mfaVerifyHTTP), false},
+		// Recovery consumes one stored code, revokes every other session, and hands
+		// back fresh enrollment material. Open to every enrolled role: the recovery
+		// code is the credential, so an operator or developer who lost a phone can
+		// re-pair without an administrator.
+		{"POST /api/v1/auth/mfa/recover", http.HandlerFunc(m.mfaRecoverHTTP), false},
 		// Disabling requires a fully authenticated session (the middleware enforces
 		// a completed MFA challenge when one is enrolled), so a stolen password
 		// alone can never strip the second factor.
@@ -227,16 +283,27 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 			return
 		}
-		if person.Role == "admin" && person.TOTPConfirmedAt == nil {
-			writeError(w, http.StatusForbidden, "mfa_enrollment_required", "Administrators must enroll multi-factor authentication to continue.")
-			return
-		}
+		// Enrollment is optional for every role, including admin: an account without
+		// a confirmed factor authenticates on its password alone. Enforcement is
+		// strict the moment a factor exists — the challenge below cannot be skipped,
+		// and disabling the factor is itself gated on having completed one.
 		if person.TOTPConfirmedAt != nil && person.MFAVerifiedAt == nil {
 			writeError(w, http.StatusUnauthorized, "mfa_required", "Complete multi-factor authentication to continue.")
 			return
 		}
 		if !validRequestOrigin(r) {
 			writeError(w, http.StatusForbidden, "invalid_origin", "The request origin is not allowed.")
+			return
+		}
+		// Admin tools are same-origin reverse-proxied applications with their own
+		// CSRF tokens. Requiring the panel's private double-submit header here would
+		// reject every pgAdmin/phpMyAdmin POST before it reached that application.
+		// The strict Origin check above and SameSite tool-session cookie still block
+		// cross-site requests at the gateway.
+		toolProxy := strings.HasPrefix(r.URL.Path, "/tools/")
+		if !toolProxy && !validCSRFToken(r, person) {
+			m.logger.Warn("rejected request without a valid CSRF token", "user", person.Username, "path", r.URL.Path, "remote", remoteAddress(r))
+			writeError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, person)))

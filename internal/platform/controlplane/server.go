@@ -39,7 +39,27 @@ type Server struct {
 	background     []module.Background
 	started        bool
 	closed         bool
+
+	authThrottle   *httpapi.IPThrottle
+	globalThrottle *httpapi.IPThrottle
+
+	allowInsecureHTTP bool
 }
+
+// Per-client-IP transport throttle thresholds. These are a defense-in-depth
+// backstop behind the nginx limit_req zone and the per-account login limiter:
+// they cap raw requests per source address so one host cannot password-spray
+// across unlimited usernames even if the reverse proxy is bypassed or absent.
+// Rates are deliberately generous so a legitimate operator is never locked out —
+// the auth budget comfortably covers a human retyping a password and a TOTP
+// code, while the general budget only trips on automated flooding.
+const (
+	authThrottleLimit    = 20
+	authThrottleWindow   = time.Minute
+	globalThrottleLimit  = 600
+	globalThrottleWindow = time.Minute
+	authThrottlePrefix   = "/api/v1/auth/"
+)
 
 type Authentication interface {
 	Middleware(next http.Handler) http.Handler
@@ -60,6 +80,16 @@ func WithAuthentication(authentication Authentication) Option {
 func WithAuthorization(authorization Authorization) Option {
 	return func(server *Server) {
 		server.authorization = authorization
+	}
+}
+
+// WithInsecureHTTPAllowed disables the secure-transport guard, permitting
+// authenticated traffic to cross the network as cleartext HTTP. It exists only
+// as an explicit, loudly-logged operator opt-in for deployments that terminate
+// TLS elsewhere or knowingly accept the risk; it must never be the default.
+func WithInsecureHTTPAllowed(allowed bool) Option {
+	return func(server *Server) {
+		server.allowInsecureHTTP = allowed
 	}
 }
 
@@ -89,9 +119,14 @@ func New(version string, modules []module.Module, logger *slog.Logger, options .
 		patterns:       make(map[string]struct{}),
 		readiness:      func(context.Context) error { return nil },
 		startedAt:      time.Now().UTC(),
+		authThrottle:   httpapi.NewIPThrottle(authThrottleLimit, authThrottleWindow),
+		globalThrottle: httpapi.NewIPThrottle(globalThrottleLimit, globalThrottleWindow),
 	}
 	for _, option := range options {
 		option(server)
+	}
+	if server.allowInsecureHTTP {
+		server.logger.Warn("insecure HTTP is allowed: authenticated traffic and the session cookie may cross the network in cleartext; front the panel with TLS instead")
 	}
 
 	if err := server.registerPlatformRoutes(); err != nil {
@@ -142,7 +177,60 @@ func (s *Server) Close() {
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.requestMetrics(s.requestLog(s.recoverPanic(s.requestID(s.securityHeaders(s.mux)))))
+	return s.requestMetrics(s.requestLog(s.recoverPanic(s.requestID(s.securityHeaders(s.requireSecureTransport(s.throttleByClientIP(s.mux)))))))
+}
+
+// throttleByClientIP sheds abusive request floods before they reach routing or
+// authentication. It keys on the trusted client IP (RemoteAddress, which honors
+// the forwarded address only for the trusted proxy) and applies a strict budget
+// to credential-submitting auth requests — login, bootstrap, and MFA POSTs — so
+// a single host cannot password-spray across unlimited usernames, plus a much
+// looser ceiling to the whole API as a general flood backstop. The strict budget
+// deliberately skips read-only auth GETs (status, session) that the SPA polls,
+// so a legitimate operator is never throttled by ordinary use. Both limiters are
+// in-memory and reset on restart; the nginx limit_req zone is the durable
+// front-line control. A rejected request gets 429 and never touches the mux.
+func (s *Server) throttleByClientIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		client := httpapi.RemoteAddress(r)
+		now := time.Now()
+		if !s.globalThrottle.Allow(client, now) {
+			s.writeThrottled(w)
+			return
+		}
+		if r.Method != http.MethodGet && strings.HasPrefix(r.URL.Path, authThrottlePrefix) && !s.authThrottle.Allow(client, now) {
+			s.writeThrottled(w)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) writeThrottled(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "60")
+	writeJSON(w, http.StatusTooManyRequests, map[string]string{
+		"code":    "rate_limited",
+		"message": "Too many requests. Please slow down and try again shortly.",
+	})
+}
+
+// requireSecureTransport refuses to serve any request whose transport would
+// expose authentication to a network eavesdropper: a non-loopback client on a
+// connection that is neither direct TLS nor TLS-fronted (via the trusted proxy's
+// X-Forwarded-Proto). The loopback/SSH-tunnel bootstrap workflow over plain HTTP
+// on 127.0.0.1 stays allowed, as does any TLS-terminated deployment. Operators
+// who knowingly run public cleartext HTTP opt in with WithInsecureHTTPAllowed.
+func (s *Server) requireSecureTransport(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.allowInsecureHTTP || httpapi.IsHTTPS(r) || httpapi.IsLoopback(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeJSON(w, http.StatusUpgradeRequired, map[string]string{
+			"code":    "insecure_transport",
+			"message": "This control panel refuses to serve authenticated traffic over unencrypted HTTP. Front it with TLS.",
+		})
+	})
 }
 
 func (s *Server) Handle(pattern string, handler http.Handler) error {
@@ -176,7 +264,7 @@ func (s *Server) registerPlatformRoutes() error {
 	if err := s.Handle("GET /api/v1/health/ready", http.HandlerFunc(s.readyHTTP)); err != nil {
 		return err
 	}
-	if err := s.Handle("GET /metrics", http.HandlerFunc(s.metricsHTTP)); err != nil {
+	if err := s.Handle("GET /metrics", s.localOnly(http.HandlerFunc(s.metricsHTTP))); err != nil {
 		return err
 	}
 	return s.HandleAuthorized("GET /api/v1/modules", "system.read", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -196,6 +284,27 @@ func (s *Server) readyHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "version": s.version})
+}
+
+// localOnly restricts a handler to the local surface: a loopback client, or a
+// loopback client fronted by the trusted proxy (nginx forwards 127.0.0.1 in
+// X-Forwarded-For for a same-host Prometheus scrape, so IsLoopback resolves the
+// real client). This stops relying solely on nginx to keep /metrics private
+// while still permitting unauthenticated localhost scraping — authorization or
+// session gating is deliberately avoided here because it would break that
+// scrape. A remote caller gets 404, not 401/403, so it cannot even confirm the
+// route exists.
+func (s *Server) localOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !httpapi.IsLoopback(r) {
+			writeJSON(w, http.StatusNotFound, map[string]string{
+				"code":    "not_found",
+				"message": "The requested resource was not found.",
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) metricsHTTP(w http.ResponseWriter, _ *http.Request) {

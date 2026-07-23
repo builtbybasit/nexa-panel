@@ -4,23 +4,58 @@ Documentation=https://github.com/nexa-panel/nexa-panel
 After=network-online.target nexa-agent.service
 Wants=network-online.target
 Requires=nexa-agent.service
+# Ten restarts at RestartSec=3s absorb roughly half a minute of boot-order flap
+# while the agent socket appears; anything still failing after that is a real
+# crash loop and must land in failed state instead of spinning forever.
+StartLimitIntervalSec=300s
+StartLimitBurst=10
 
 [Service]
 Type=simple
 User=nexa
-Group=nexa
+# The primary group owns api.sock for Nginx. The supplementary nexa group is
+# intentionally one-way: the API can authenticate to agent.sock, while the
+# www-data account is never a member of nexa and cannot reach the root agent or
+# read its token.
+Group=www-data
+SupplementaryGroups=nexa
 UMask=0077
 Environment=NEXA_AGENT_SOCKET=/run/nexa-panel/agent.sock
-ExecStart=/usr/bin/nexa api --unix-socket /run/nexa-panel/api.sock --state /var/lib/nexa-panel/control.db --master-key /var/lib/nexa-panel/master.key --agent-token /etc/nexa-panel/agent.token
+Environment=NEXA_LOG_LEVEL=info
+# /etc/nexa-panel is root-owned 0711, so User=nexa can open the master key but
+# cannot mint one, and ConfigurationDirectory= would hand the whole directory —
+# agent.token and the root-executed generated/ tree with it — to the web-facing
+# account. Root provisions the key here instead, moving a pre-split key out of
+# the state directory first; set -e aborts the start rather than minting a
+# second key, which would orphan every stored secret.
+ExecStartPre=+/bin/sh -c 'set -e; if [ ! -e /etc/nexa-panel/master.key ] && [ -f /var/lib/nexa-panel/master.key ]; then mv -- /var/lib/nexa-panel/master.key /etc/nexa-panel/master.key; fi; if [ ! -e /etc/nexa-panel/master.key ] && [ ! -e /var/lib/nexa-panel/master.key ]; then umask 077; dd if=/dev/urandom of=/etc/nexa-panel/.master.key.partial bs=32 count=1 status=none; mv -- /etc/nexa-panel/.master.key.partial /etc/nexa-panel/master.key; fi; chown nexa:nexa /etc/nexa-panel/master.key; chmod 0600 /etc/nexa-panel/master.key'
+# No --master-key: the binary resolves /etc/nexa-panel/master.key by itself.
+# Pinning the flag here would pin the legacy location and suppress the move.
+ExecStart=/usr/bin/nexa api --unix-socket /run/nexa-panel/api.sock --state /var/lib/nexa-panel/control.db --agent-token /etc/nexa-panel/agent.token
 Restart=on-failure
 RestartSec=3s
-StateDirectory=nexa-panel
-StateDirectoryMode=0700
-LogsDirectory=nexa-panel
-LogsDirectoryMode=0700
+# No StateDirectory=/LogsDirectory=: systemd chowns those trees to User:Group on
+# every start, which here is nexa:www-data. That contradicts the nexa:nexa 0700
+# contract in tmpfiles and, worse, would hand /var/lib/nexa-panel/install — the
+# root-owned ownership proof the installer verifies before it touches the host —
+# to the account Nginx runs as. tmpfiles creates both trees with the right owner
+# and does not descend into them, so the proof stays root:root 0600.
+# A 2 GiB node is the panel's advertised minimum (capacity.ProfileCompact), so
+# the control plane keeps a working set that leaves the managed workload room:
+# soft-throttle into reclaim at 256M, hard stop a leak at 512M.
+MemoryHigh=256M
+MemoryMax=512M
+CPUQuota=150%
+TasksMax=512
+LimitNOFILE=16384
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
+# The state and logs trees are the only ones the control plane may write; the
+# master key is provisioned by the privileged pre-start above, so /etc stays
+# read-only here. These replace the implicit write access StateDirectory= used
+# to grant, without letting systemd take ownership of the trees.
+ReadWritePaths=/var/lib/nexa-panel /var/log/nexa-panel
 ProtectSystem=strict
 ProtectHome=true
 ProtectKernelLogs=true

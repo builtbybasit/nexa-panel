@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/modules/admintools"
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 )
@@ -193,4 +195,46 @@ func waitJob(t *testing.T, queue *jobs.Module, id int64) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("job %d timed out", id)
+}
+
+// fakeAdminTools stands in for the admin-tools module. It reconciles from the
+// node on Sync exactly as the real one does: nothing exists until Sync runs.
+type fakeAdminTools struct {
+	synced bool
+	tools  []admintools.Tool
+}
+
+func (f *fakeAdminTools) Sync(context.Context) ([]admintools.Tool, error) {
+	f.synced = true
+	f.tools = []admintools.Tool{
+		{Tool: admintooloperator.Tool{Kind: admintooloperator.PHPMyAdmin, Status: "stopped"}},
+		{Tool: admintooloperator.Tool{Kind: admintooloperator.PGAdmin, Status: "stopped"}},
+	}
+	return f.tools, nil
+}
+
+// The admin_tools table is reconciled from the node, never seeded by a
+// migration, so a catalog that only read the table showed no web-client cards
+// until something else (the Databases page) had synced them.
+func TestCatalogSurfacesWebClientsBeforeAnySync(t *testing.T) {
+	module, _, _ := newTestModule(t)
+	tools := &fakeAdminTools{}
+	module.adminTools = tools
+
+	items, err := module.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tools.synced {
+		t.Fatal("catalog did not reconcile admin tools from the node")
+	}
+	found := map[string]bool{}
+	for _, item := range items {
+		if item.Category == "web-client" {
+			found[item.ID] = true
+		}
+	}
+	if !found["phpmyadmin"] || !found["pgadmin"] {
+		t.Fatalf("web clients missing from a freshly migrated catalog: %v", found)
+	}
 }

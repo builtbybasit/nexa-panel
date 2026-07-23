@@ -3,7 +3,7 @@ import { apiRequest } from '@/shared/api/request'
 import type { Job } from '../jobs/api'
 
 export type DomainKind = 'primary' | 'subdomain' | 'alias' | 'redirect'
-type DomainStatus = 'planning' | 'plan_ready' | 'activating' | 'active' | 'failed'
+type DomainStatus = 'planning' | 'plan_ready' | 'activating' | 'active' | 'removing' | 'failed'
 
 export interface Domain {
   id: string
@@ -64,4 +64,11 @@ export function getDomainPlan(id: string): Promise<{ plan: DomainPlan; expiresAt
 
 export function activateDomain(id: string): Promise<Job> {
   return request(`/api/v1/domains/${encodeURIComponent(id)}/activate`, { method: 'POST' })
+}
+
+// Enqueues a `domain.remove` job (202). The 409 guards
+// (domain_primary_protected, domain_busy) reject before a job is queued, so the
+// caller's runner surfaces the server message as a queue-time failure.
+export function deleteDomain(id: string): Promise<Job> {
+  return request(`/api/v1/domains/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }

@@ -12,6 +12,7 @@ import {
   AppAlert,
   AppButton,
   AppCard,
+  AppConfirmDialog,
   AppDialog,
   AppInput,
   EmptyState,
@@ -46,6 +47,7 @@ import {
 import {
   activateDomain,
   createDomain,
+  deleteDomain,
   getDomainPlan,
   listDomains,
   type Domain,
@@ -57,6 +59,7 @@ const route = useRoute()
 const router = useRouter()
 const identity = useIdentityStore()
 const canWrite = computed(() => identity.can('domains.write'))
+const canApply = computed(() => identity.can('operations.apply'))
 const runner = useJobRunner()
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites })
@@ -87,6 +90,8 @@ const planExpiresAt = ref('')
 const planOpen = ref(false)
 const planLoading = ref(false)
 const planError = ref('')
+
+const removeOpen = ref(false)
 
 // The create dialog is URL-driven (?create=1) so deep links, the header
 // button, and history navigation all agree on whether it is open.
@@ -131,6 +136,7 @@ function select(domain: Domain) {
   if (selected.value?.id !== domain.id) {
     runner.error.value = ''
     planError.value = ''
+    removeOpen.value = false
   }
   selected.value = domain
   if (route.query.selected !== domain.id) {
@@ -238,6 +244,27 @@ async function approvePlan() {
     onSettled: () => refreshSelected(domain.id),
     failureMessage: 'The domain could not be activated.',
     successToast: 'Domain activated',
+  })
+}
+
+async function removeDomain() {
+  const domain = selected.value
+  if (!domain || !canApply.value) return
+  removeOpen.value = false
+  // A 409 guard (domain_primary_protected / domain_busy) rejects the DELETE
+  // before a job is queued; runner.run then surfaces the server's message.
+  await runner.run(async () => (await deleteDomain(domain.id)).id, {
+    onSettled: () => {
+      void domainsQuery.refetch()
+    },
+    onSuccess: () => {
+      selected.value = undefined
+      const query = { ...route.query }
+      delete query.selected
+      void router.replace({ query })
+    },
+    failureMessage: 'The domain could not be removed.',
+    successToast: `${domain.hostname} was removed`,
   })
 }
 
@@ -438,6 +465,22 @@ const planDnsRows = computed(() =>
               Enable HTTPS →
             </AppButton>
           </div>
+
+          <!-- The primary domain is removed by deleting its site, not on its own. -->
+          <div
+            v-if="canApply && selected.kind !== 'primary'"
+            class="flex flex-wrap items-center justify-between gap-3 border-t border-outline pt-4"
+          >
+            <div class="min-w-0">
+              <p class="text-[13px] font-medium text-ink">Remove this domain</p>
+              <p class="text-xs text-ink-muted">
+                Its routing is stripped from the site's live Nginx configuration, then the record is deleted.
+              </p>
+            </div>
+            <AppButton variant="danger" icon="trash" size="sm" :disabled="runner.busy.value" @click="removeOpen = true">
+              Remove domain
+            </AppButton>
+          </div>
         </div>
       </AppCard>
     </div>
@@ -550,5 +593,18 @@ const planDnsRows = computed(() =>
         </ul>
       </div>
     </PlanReviewDialog>
+
+    <AppConfirmDialog
+      v-if="selected"
+      :open="canApply && removeOpen"
+      :title="`Remove ${selected.hostname}`"
+      confirm-label="Remove domain"
+      :busy="runner.busy.value"
+      @confirm="removeDomain"
+      @close="removeOpen = false"
+    >
+      This removes <strong class="font-semibold text-ink">{{ selected.hostname }}</strong> from the site's live Nginx
+      configuration and deletes the record. Visitors using this hostname will no longer reach the site.
+    </AppConfirmDialog>
   </section>
 </template>

@@ -10,13 +10,27 @@ export interface User {
 
 export interface IdentityStatus {
   bootstrapRequired: boolean
+  bootstrapTokenRequired: boolean
   authenticated: boolean
   /** Whether the signed-in account has a confirmed second factor. */
   mfaEnabled: boolean
   mfaChallengeRequired: boolean
-  /** An administrator must enroll before the session can enter the panel. */
-  mfaEnrollmentRequired: boolean
+  /**
+   * The account has no second factor and could add one. Enrollment is optional
+   * for every role, so this is only a nudge — never a reason to block the SPA.
+   */
+  mfaEnrollmentRecommended: boolean
+  passwordPolicy: PasswordPolicy
   user?: User
+}
+
+export interface PasswordPolicy {
+  minLength: number
+  maxLength: number
+  requiredClasses: number
+  classExemptLength: number
+  denylistApplied: boolean
+  rejectsUsername: boolean
 }
 
 export type AuthenticationNext = 'mfa_enrollment' | 'mfa_challenge' | 'authenticated'
@@ -46,62 +60,76 @@ export class IdentityRequestError extends Error {
   }
 }
 
-function request<T>(path: string, init: RequestInit = {}, retryAfterMFAStepUp = true): Promise<T> {
+function request<T>(
+  path: string,
+  init: RequestInit = {},
+  options: { retryAfterMFAStepUp?: boolean; handleUnauthorized?: boolean } = {},
+): Promise<T> {
   return apiRequest<T>(path, init, {
     errorPrefix: 'Identity request',
     createError: (message, status, code) =>
       new IdentityRequestError(message === `Identity request failed with status ${status}` ? 'The request could not be completed.' : message, status, code),
-    retryAfterMFAStepUp,
+    retryAfterMFAStepUp: options.retryAfterMFAStepUp,
+    handleUnauthorized: options.handleUnauthorized,
   })
 }
 
 export function getIdentityStatus(): Promise<IdentityStatus> {
-  return request('/api/v1/auth/status', {}, false)
+  return request('/api/v1/auth/status', {}, { retryAfterMFAStepUp: false, handleUnauthorized: false })
 }
 
-export function bootstrap(username: string, password: string): Promise<PasswordResponse> {
+export function bootstrap(username: string, password: string, bootstrapToken = ''): Promise<PasswordResponse> {
   return request('/api/v1/auth/bootstrap', {
     method: 'POST',
-    body: JSON.stringify({ username, password }),
-  }, false)
+    body: JSON.stringify({ username, password, ...(bootstrapToken ? { bootstrapToken } : {}) }),
+  }, { retryAfterMFAStepUp: false, handleUnauthorized: false })
 }
 
 export function login(username: string, password: string): Promise<PasswordResponse> {
   return request('/api/v1/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
-  }, false)
+  }, { retryAfterMFAStepUp: false, handleUnauthorized: false })
 }
 
 export function enrollMFA(): Promise<MFAEnrollment> {
-  return request('/api/v1/auth/mfa/enroll', { method: 'POST' }, false)
+  return request('/api/v1/auth/mfa/enroll', { method: 'POST' }, { retryAfterMFAStepUp: false, handleUnauthorized: false })
 }
 
 export function confirmMFA(code: string): Promise<MFAConfirmation> {
-  return request('/api/v1/auth/mfa/confirm', { method: 'POST', body: JSON.stringify({ code }) }, false)
+  return request('/api/v1/auth/mfa/confirm', { method: 'POST', body: JSON.stringify({ code }) }, { retryAfterMFAStepUp: false, handleUnauthorized: false })
 }
 
 export async function verifyMFA(value: string, recovery: boolean): Promise<User> {
   const response = await request<{ user: User }>('/api/v1/auth/mfa/verify', {
     method: 'POST',
     body: JSON.stringify(recovery ? { recoveryCode: value } : { code: value }),
-  }, false)
+  }, { retryAfterMFAStepUp: false, handleUnauthorized: false })
   return response.user
 }
 
+/** Retires an administrator's lost factor and returns replacement enrollment material. */
+export function recoverAdministratorMFA(recoveryCode: string): Promise<MFAEnrollment> {
+  return request(
+    '/api/v1/auth/mfa/recover',
+    { method: 'POST', body: JSON.stringify({ recoveryCode }) },
+    { retryAfterMFAStepUp: false, handleUnauthorized: false },
+  )
+}
+
 export function disableMFA(password: string): Promise<{ user: User; mfaEnabled: false }> {
-  return request('/api/v1/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password }) }, false)
+  return request('/api/v1/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password }) }, { retryAfterMFAStepUp: false, handleUnauthorized: false })
 }
 
 export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   return request('/api/v1/auth/password', {
     method: 'POST',
     body: JSON.stringify({ currentPassword, newPassword }),
-  }, false)
+  }, { retryAfterMFAStepUp: false, handleUnauthorized: false })
 }
 
 export function logout(): Promise<void> {
-  return request('/api/v1/auth/logout', { method: 'POST' }, false)
+  return request('/api/v1/auth/logout', { method: 'POST' }, { retryAfterMFAStepUp: false, handleUnauthorized: false })
 }
 
 // --- Admin user management (permission users.manage) ---

@@ -22,7 +22,7 @@
 #   docker compose logs -f            # follow systemd/service logs
 #   docker compose down               # stop and remove
 #
-# Panel: http://localhost:8080 (embedded production UI)
+# Panel: http://localhost:8888 (embedded production UI)
 
 services:
   nexa-node:
@@ -41,7 +41,7 @@ services:
       - 8.8.8.8
       - 1.1.1.1
     ports:
-      - "8080:8080"
+      - "8888:8888"
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       # Default matches the host (Apple Silicon = arm64) and the gitignored .env;

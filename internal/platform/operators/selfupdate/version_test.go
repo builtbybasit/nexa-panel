@@ -61,21 +61,21 @@ func TestParseChecksum(t *testing.T) {
 }
 
 func TestReleaseFromPayloadResolvesArchAsset(t *testing.T) {
-	payload := gitHubRelease{TagName: "v0.3.0"}
-	payload.Assets = []struct {
-		Name string `json:"name"`
-		URL  string `json:"browser_download_url"`
-	}{
-		{Name: "nexa-linux-amd64", URL: "https://d/amd64"},
-		{Name: "nexa-linux-amd64.sha256", URL: "https://d/amd64.sha256"},
-		{Name: "nexa-linux-arm64", URL: "https://d/arm64"},
-		{Name: "nexa-linux-arm64.sha256", URL: "https://d/arm64.sha256"},
-	}
+	payload := gitHubRelease{TagName: "v0.3.0", Assets: []gitHubAsset{
+		{Name: "nexa-panel-linux-amd64.tar.gz", URL: "https://api.github.com/repos/o/r/releases/assets/1"},
+		{Name: "nexa-panel-linux-amd64.tar.gz.sha256", URL: "https://api.github.com/repos/o/r/releases/assets/2"},
+		{Name: "nexa-panel-linux-amd64.tar.gz.sig", URL: "https://api.github.com/repos/o/r/releases/assets/3"},
+		{Name: "nexa-panel-linux-arm64.tar.gz", URL: "https://api.github.com/repos/o/r/releases/assets/4"},
+		{Name: "nexa-panel-linux-arm64.tar.gz.sha256", URL: "https://api.github.com/repos/o/r/releases/assets/5"},
+		{Name: "nexa-panel-linux-arm64.tar.gz.sig", URL: "https://api.github.com/repos/o/r/releases/assets/6"},
+		// The browser_download_url is deliberately absent from the struct: it
+		// cannot serve a private repository's asset, so it is not read at all.
+	}}
 	release, err := releaseFromPayload(payload, "arm64")
 	if err != nil {
 		t.Fatalf("releaseFromPayload: %v", err)
 	}
-	if release.AssetURL != "https://d/arm64" || release.ChecksumURL != "https://d/arm64.sha256" {
+	if release.AssetURL != "https://api.github.com/repos/o/r/releases/assets/4" || release.ChecksumURL != "https://api.github.com/repos/o/r/releases/assets/5" || release.SignatureURL != "https://api.github.com/repos/o/r/releases/assets/6" {
 		t.Fatalf("unexpected asset resolution: %+v", release)
 	}
 	if release.Version != "0.3.0" {
@@ -95,13 +95,9 @@ func TestReleaseFromPayloadRejectsPrerelease(t *testing.T) {
 }
 
 func TestReleaseFromPayloadRequiresMatchingAssets(t *testing.T) {
-	payload := gitHubRelease{TagName: "v0.3.0"}
-	payload.Assets = []struct {
-		Name string `json:"name"`
-		URL  string `json:"browser_download_url"`
-	}{
-		{Name: "nexa-linux-amd64", URL: "https://d/amd64"},
-	}
+	payload := gitHubRelease{TagName: "v0.3.0", Assets: []gitHubAsset{
+		{Name: "nexa-panel-linux-amd64.tar.gz", URL: "https://api.github.com/repos/o/r/releases/assets/1"},
+	}}
 	if _, err := releaseFromPayload(payload, "amd64"); err == nil {
 		t.Fatal("expected a release missing its checksum asset to be rejected")
 	}

@@ -253,6 +253,48 @@ func (o *HostOperator) Move(_ context.Context, scope sitefs.Scope, rawFrom, rawT
 	return entryFor(path.Base(to), info), nil
 }
 
+// Chmod applies a permission set given as three octal digits ("755"). The
+// range excludes setuid/setgid/sticky bits by construction, and symlinks and
+// special files are rejected so only regular files and directories change.
+func (o *HostOperator) Chmod(_ context.Context, scope sitefs.Scope, rawPath, mode string) (Entry, error) {
+	permissions, err := ParseMode(mode)
+	if err != nil {
+		return Entry{}, err
+	}
+	root, relative, err := o.resolveMutable(scope, rawPath)
+	if err != nil {
+		return Entry{}, err
+	}
+	defer root.Close()
+	info, err := root.Lstat(relative)
+	if err != nil {
+		return Entry{}, pathError(err, "The requested path does not exist.")
+	}
+	if !info.Mode().IsRegular() && !info.IsDir() {
+		return Entry{}, invalid("Only regular files and directories can have their permissions changed.")
+	}
+	if err := root.Chmod(relative, permissions); err != nil {
+		return Entry{}, pathError(err, "The requested path does not exist.")
+	}
+	updated, err := root.Lstat(relative)
+	if err != nil {
+		return Entry{}, pathError(err, "The changed entry could not be read back.")
+	}
+	return entryFor(path.Base(relative), updated), nil
+}
+
+// ParseMode validates a three-octal-digit permission string such as "640".
+func ParseMode(mode string) (fs.FileMode, error) {
+	if len(mode) != 3 {
+		return 0, invalid("The mode must be three octal digits, such as 755.")
+	}
+	value, err := strconv.ParseUint(mode, 8, 32)
+	if err != nil {
+		return 0, invalid("The mode must be three octal digits, such as 755.")
+	}
+	return fs.FileMode(value), nil
+}
+
 func (o *HostOperator) Copy(_ context.Context, scope sitefs.Scope, rawFrom, rawTo string) (CopyResult, error) {
 	root, from, err := o.resolve(scope, rawFrom)
 	if err != nil {

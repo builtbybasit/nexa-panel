@@ -1,9 +1,14 @@
+import { activityHeaders } from './activity'
+import { csrfHeaders } from './csrf'
 import { requestMFAStepUp } from './mfaStepUp'
+import { handleUnauthorized } from './unauthorized'
 
 /**
  * Shared JSON request helper for feature-module API clients.
  *
- * Sends same-origin credentials, negotiates JSON, and surfaces the server's
+ * Sends same-origin credentials, negotiates JSON, attaches the double-submit
+ * CSRF token on unsafe methods, marks traffic no user caused so the server's
+ * idle timeout is not renewed by background polling, and surfaces the server's
  * safe `message` field when a request fails. `errorPrefix` keeps failure text
  * attributable to the owning module (e.g. "PostgreSQL request").
  */
@@ -16,6 +21,8 @@ export interface ApiRequestOptions {
   errorPrefix?: string
   createError?: (message: string, status: number, code?: string) => Error
   retryAfterMFAStepUp?: boolean
+  /** Authentication endpoints set this false because a 401 is an expected form error. */
+  handleUnauthorized?: boolean
 }
 
 class ApiRequestError extends Error {
@@ -39,6 +46,8 @@ export async function apiRequest<T>(
     headers: {
       Accept: 'application/json',
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...csrfHeaders(init?.method),
+      ...activityHeaders(),
       ...init?.headers,
     },
   })
@@ -47,6 +56,9 @@ export async function apiRequest<T>(
     const resolved = typeof options === 'string' ? { errorPrefix: options } : options
     const message = payload?.message ?? `${resolved.errorPrefix ?? 'Request'} failed with status ${response.status}`
     const error = resolved.createError?.(message, response.status, payload?.code) ?? new ApiRequestError(message, response.status, payload?.code)
+    if (response.status === 401 && resolved.handleUnauthorized !== false) {
+      await handleUnauthorized()
+    }
     if (payload?.code === 'mfa_step_up_required' && resolved.retryAfterMFAStepUp !== false) {
       try {
         if (await requestMFAStepUp()) {

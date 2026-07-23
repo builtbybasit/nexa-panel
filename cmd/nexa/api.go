@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,13 +20,16 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/modules/applications"
 	"github.com/nexa-panel/nexa-panel/internal/modules/backups"
 	"github.com/nexa-panel/nexa-panel/internal/modules/certificates"
+	deploymodule "github.com/nexa-panel/nexa-panel/internal/modules/deploy"
 	"github.com/nexa-panel/nexa-panel/internal/modules/domains"
 	"github.com/nexa-panel/nexa-panel/internal/modules/files"
+	"github.com/nexa-panel/nexa-panel/internal/modules/firewall"
 	"github.com/nexa-panel/nexa-panel/internal/modules/logs"
 	"github.com/nexa-panel/nexa-panel/internal/modules/mysql"
 	"github.com/nexa-panel/nexa-panel/internal/modules/php"
 	"github.com/nexa-panel/nexa-panel/internal/modules/postgres"
 	"github.com/nexa-panel/nexa-panel/internal/modules/runtimes"
+	"github.com/nexa-panel/nexa-panel/internal/modules/safeguard"
 	"github.com/nexa-panel/nexa-panel/internal/modules/schedules"
 	"github.com/nexa-panel/nexa-panel/internal/modules/services"
 	sftpmodule "github.com/nexa-panel/nexa-panel/internal/modules/sftp"
@@ -41,7 +46,9 @@ import (
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
+	deployoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/deploy"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
+	firewalloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/firewall"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 	packagesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/packages"
@@ -57,16 +64,28 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/version"
 )
 
+// The deploy module narrows its site catalog to SiteModeSwitcher at call time
+// and answers 501 when the assertion fails. Neither package may import the
+// other, so the pairing is proven here, where both are already wired: a change
+// to either signature breaks the build instead of silently disabling the
+// deployment-mode switch at runtime.
+var _ deploymodule.SiteModeSwitcher = (*sites.Module)(nil)
+
 func runAPI(args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet("api", flag.ContinueOnError)
-	address := flags.String("address", envOrDefault("NEXA_API_ADDRESS", "127.0.0.1:8080"), "HTTP listen address")
+	address := flags.String("address", envOrDefault("NEXA_API_ADDRESS", "127.0.0.1:8888"), "HTTP listen address")
 	unixSocket := flags.String("unix-socket", envOrDefault("NEXA_API_UNIX_SOCKET", ""), "Unix socket for a trusted local reverse proxy (disables TCP listener)")
+	allowInsecureHTTP := flags.Bool("allow-insecure-http", envBool("NEXA_ALLOW_INSECURE_HTTP"), "serve authenticated traffic over plaintext HTTP on a non-loopback bind (unsafe; TLS should front the panel)")
 	state := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/tmp/nexa-panel/control.db"), "SQLite control-plane state path")
-	masterKey := flags.String("master-key", envOrDefault("NEXA_MASTER_KEY", "/tmp/nexa-panel/master.key"), "AES master key path")
+	masterKey := flags.String("master-key", envOrDefault("NEXA_MASTER_KEY", secrets.DefaultKeyPath), "AES master key path")
 	agentSocket := flags.String("agent-socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
 	agentToken := flags.String("agent-token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
+	bootstrapToken := flags.String("bootstrap-token", envOrDefault("NEXA_BOOTSTRAP_TOKEN", "/tmp/nexa-panel/bootstrap.token"), "first-run bootstrap token path (owner-only; gates admin creation on a public bind)")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *allowInsecureHTTP {
+		logger.Warn("insecure HTTP is allowed (NEXA_ALLOW_INSECURE_HTTP): authenticated traffic and the session cookie may cross the network as cleartext; front the panel with TLS instead")
 	}
 
 	database, err := persistence.Open(*state)
@@ -74,16 +93,23 @@ func runAPI(args []string, logger *slog.Logger) error {
 		return fmt.Errorf("open control-plane state: %w", err)
 	}
 	defer database.Close()
-	secretBox, err := secrets.OpenKeyFile(*masterKey)
+	secretBox, err := secrets.OpenDefaultKeyFile(*masterKey, logger)
 	if err != nil {
 		return fmt.Errorf("open control-plane master key: %w", err)
 	}
 
-	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancelSetup()
-	if err := persistence.RunMigrations(setupCtx, database); err != nil {
+	// Migrations run under their own generous budget rather than the tight 10s
+	// module-init budget below: a pre-migration snapshot plus a large upgrade
+	// must not deadline out, and neither should starve the module constructors.
+	migrateCtx, cancelMigrate := context.WithTimeout(context.Background(), 2*time.Minute)
+	if err := persistence.RunMigrations(migrateCtx, database, persistence.WithPreMigrationSnapshot(*state, logger)); err != nil {
+		cancelMigrate()
 		return fmt.Errorf("run control-plane migrations: %w", err)
 	}
+	cancelMigrate()
+
+	setupCtx, cancelSetup := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelSetup()
 	auditModule, err := audit.New(setupCtx, database)
 	if err != nil {
 		return fmt.Errorf("initialize audit module: %w", err)
@@ -91,6 +117,13 @@ func runAPI(args []string, logger *slog.Logger) error {
 	identityModule, err := identity.New(setupCtx, database, auditModule, secretBox, logger)
 	if err != nil {
 		return fmt.Errorf("initialize identity module: %w", err)
+	}
+	// Provision the first-run bootstrap gate: while no administrator exists the
+	// module writes an owner-only token file that a remote operator must present
+	// to claim admin, closing the public-bind land-grab window.
+	identityModule.SetBootstrapTokenPath(*bootstrapToken)
+	if err := identityModule.EnsureBootstrapToken(setupCtx); err != nil {
+		return fmt.Errorf("provision bootstrap token: %w", err)
 	}
 	jobsModule, err := jobs.New(setupCtx, database, auditModule, logger)
 	if err != nil {
@@ -116,6 +149,11 @@ func runAPI(args []string, logger *slog.Logger) error {
 		return fmt.Errorf("initialize certificates module: %w", err)
 	}
 	domainsModule.SetTLSProvider(certificatesModule)
+	// A settings change on an active site re-derives its full definition; the
+	// sites module borrows the domains and certificates modules to reload the
+	// site's routes and certificate so the re-render never drops them.
+	sitesModule.SetRouteSource(domainsModule)
+	sitesModule.SetTLSProvider(certificatesModule)
 	postgresDatabasesModule, err := postgres.New(setupCtx, database, jobsModule, secretBox, postgresoperator.NewUnixClient(*agentSocket, *agentToken))
 	if err != nil {
 		return fmt.Errorf("initialize PostgreSQL databases module: %w", err)
@@ -160,7 +198,15 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize PHP module: %w", err)
 	}
-	servicesModule, err := services.New(jobsModule, servicesoperator.NewUnixClient(*agentSocket, *agentToken))
+	// One guard is shared by every domain that can lock the operator out, so a
+	// single table and a single reconcile-on-boot cover them all. Constructing it
+	// here is what makes the confirm-or-revert flow real: without it both modules
+	// refuse lockout-capable changes outright.
+	lockoutGuard, err := safeguard.New(database, logger)
+	if err != nil {
+		return fmt.Errorf("initialize lockout safeguard: %w", err)
+	}
+	servicesModule, err := services.New(jobsModule, servicesoperator.NewUnixClient(*agentSocket, *agentToken), services.WithLockoutGuard(lockoutGuard))
 	if err != nil {
 		return fmt.Errorf("initialize services module: %w", err)
 	}
@@ -168,6 +214,26 @@ func runAPI(args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize SFTP module: %w", err)
 	}
+	deployModule, err := deploymodule.New(setupCtx, database, deployoperator.NewUnixClient(*agentSocket, *agentToken), jobsModule, sitesModule, identityModule, sftpModule)
+	if err != nil {
+		return fmt.Errorf("initialize deploy module: %w", err)
+	}
+	// The two features write competing sshd Match blocks for one account, so each
+	// refuses while the other is on. The deploy module takes the SFTP state as a
+	// constructor dependency; the reverse link is made here, once both exist.
+	sftpModule.UseSSHAccessState(deployModule)
+	// A deployer-mode site holds a sudoers drop-in, which outlives its vhost, so
+	// the sites module's delete job asks this module to withdraw it first.
+	sitesModule.SetDeployTeardown(deployModule)
+	firewallModule, err := firewall.New(jobsModule, firewalloperator.NewUnixClient(*agentSocket, *agentToken), firewall.WithLockoutGuard(lockoutGuard))
+	if err != nil {
+		return fmt.Errorf("initialize firewall module: %w", err)
+	}
+	// The deploy module's prepare job warns when port 22 is closed. It takes its
+	// own client narrowed to FirewallInspector, which has Discover and nothing
+	// else, so no path through deploy can change a rule — that stays behind the
+	// MFA-gated firewall.write surface.
+	deployModule.UseFirewallState(firewalloperator.NewUnixClient(*agentSocket, *agentToken))
 	backupsModule, err := backups.New(setupCtx, backups.Dependencies{
 		Database: database, Jobs: jobsModule, Cipher: secretBox,
 		Operator:     backupoperator.NewUnixClient(*agentSocket, *agentToken),
@@ -200,6 +266,8 @@ func runAPI(args []string, logger *slog.Logger) error {
 		phpModule,
 		servicesModule,
 		sftpModule,
+		deployModule,
+		firewallModule,
 		backupsModule,
 		system.New(capacity.NewProcReader(), podman.NewInspector(), system.WithUpdates(jobsModule, selfupdateoperator.NewUnixClient(*agentSocket, *agentToken))),
 	}
@@ -209,6 +277,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		controlplane.WithAuthentication(identityModule),
 		controlplane.WithAuthorization(authorization.New()),
 		controlplane.WithReadiness(apiReadiness(database, authenticatedAgentReadiness(*agentSocket, *agentToken))),
+		controlplane.WithInsecureHTTPAllowed(*allowInsecureHTTP),
 	)
 	if err != nil {
 		return fmt.Errorf("create control plane: %w", err)
@@ -237,7 +306,44 @@ func runAPI(args []string, logger *slog.Logger) error {
 		defer cleanup()
 		return serveHTTPListener(server, listener, logger)
 	}
+	if err := insecureTCPBindAllowed(*address, *allowInsecureHTTP); err != nil {
+		return err
+	}
 	return serveHTTP(server, logger)
+}
+
+func envBool(name string) bool {
+	value, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(name)))
+	return err == nil && value
+}
+
+// insecureTCPBindAllowed refuses a direct TCP listener on a non-loopback
+// address unless insecure HTTP is explicitly allowed. Production binds a Unix
+// socket behind nginx and never reaches this; it guards the direct
+// `nexa api --address` path so a public bind cannot silently serve
+// authentication (and the session cookie) over cleartext HTTP. The request-time
+// guard in the control plane covers the socket topology.
+func insecureTCPBindAllowed(address string, allowInsecure bool) error {
+	if allowInsecure || bindIsLoopback(address) {
+		return nil
+	}
+	return fmt.Errorf("refusing to bind %q: authenticated traffic would cross the network as plaintext HTTP; bind a loopback address such as 127.0.0.1, front the panel with TLS, or set NEXA_ALLOW_INSECURE_HTTP=1 to override", address)
+}
+
+// bindIsLoopback fails closed: only literal loopback IPs and the name
+// "localhost" count as loopback. An empty host, a wildcard bind (0.0.0.0 or ::),
+// any routable IP, or an unparseable/DNS host is treated as non-loopback so a
+// publicly-resolving hostname is never mistaken for a safe local bind.
+func bindIsLoopback(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil || host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func serveHTTP(server *http.Server, logger *slog.Logger) error {

@@ -21,7 +21,7 @@
 # Run:    docker run -d --name nexa-node --privileged --cgroupns=host \
 #           -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
 #           -v $(pwd)/dist/nexa-linux-amd64:/usr/bin/nexa:ro \
-#           -p 8080:8080 nexa-node
+#           -p 8888:8888 nexa-node
 
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
@@ -38,8 +38,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # with apt-cache and never refreshes them itself, so an image that cleaned them
 # would boot showing a truncated catalog.
 COPY packaging/ /tmp/nexa-install/packaging/
-COPY scripts/install.sh /tmp/nexa-install/scripts/install.sh
-RUN /tmp/nexa-install/scripts/install.sh --no-start && rm -rf /tmp/nexa-install
+COPY scripts/install.sh scripts/uninstall.sh scripts/nexa-release-helper.py scripts/nexa-seed-admin.sh /tmp/nexa-install/scripts/
+RUN /tmp/nexa-install/scripts/install.sh --no-start --allow-insecure-http && rm -rf /tmp/nexa-install
 
 # Test seed data, not part of a node install: the panel installs PHP versions on
 # demand, but the site-rendering and runtime-discovery flows this node exercises
@@ -47,12 +47,11 @@ RUN /tmp/nexa-install/scripts/install.sh --no-start && rm -rf /tmp/nexa-install
 RUN apt-get install -y --no-install-recommends php8.3-fpm php8.3-cli && \
     systemctl enable php8.3-fpm
 
-# The installer deliberately exposes only a loopback Nginx bootstrap listener
-# when no hostname is supplied. A published container port needs an all-interface
-# listener, but the API remains confined to its Unix socket exactly as it is on a
-# real host. This keeps the disposable node on the production ingress path.
-RUN sed -i 's/listen 127\.0\.0\.1:8080;/listen 0.0.0.0:8080;/' \
-      /etc/nginx/sites-available/nexa-panel.conf
+# With no hostname the installer's quick-start already publishes the panel on all
+# interfaces at :8888 (the published port in compose.yaml) and serves it over
+# plain HTTP, with the API still confined to its Unix socket exactly as on a real
+# host. This keeps the disposable node on the production ingress path with no
+# container-only rebind needed.
 
 # The packaged agent runs under ProtectSystem=strict with a scoped ReadWritePaths
 # list. Two problems for this test image:
@@ -87,6 +86,38 @@ RUN mkdir -p /etc/systemd/system/nexa-agent.service.d && \
 # installs the same behaviour as a real host.
 RUN rm -f /usr/sbin/policy-rc.d
 
-EXPOSE 8080
+# Auto-create and PRINT the first administrator on boot, so `docker compose up`
+# then `docker compose logs` surfaces working credentials. The image build runs
+# the installer with --no-start, so its own seeding step never fires here; this
+# boot-time unit runs the SAME seed helper the installer uses on a real host, so
+# the two cannot drift. StandardOutput=console puts the credentials banner on the
+# container console where `docker compose logs` shows it. Disposable node only —
+# never auto-print credentials to the journal on a production host.
+COPY scripts/nexa-seed-admin.sh /usr/local/bin/nexa-seed-admin
+COPY scripts/nexa-container-entrypoint.sh /usr/local/bin/nexa-entrypoint
+RUN chmod 0755 /usr/local/bin/nexa-seed-admin /usr/local/bin/nexa-entrypoint && \
+    printf '%s\n' \
+      '[Unit]' \
+      'Description=Create and print the first Nexa Panel administrator (disposable test node)' \
+      'After=nexa-api.service nginx.service' \
+      'Wants=nexa-api.service' \
+      '' \
+      '[Service]' \
+      'Type=oneshot' \
+      'RemainAfterExit=yes' \
+      'Environment=NEXA_SEED_BANNER_FILE=/run/nexa-panel/first-admin.banner' \
+      'ExecStart=/usr/local/bin/nexa-seed-admin http://localhost:8888/' \
+      'StandardOutput=journal+console' \
+      'StandardError=journal+console' \
+      '' \
+      '[Install]' \
+      'WantedBy=multi-user.target' \
+      > /etc/systemd/system/nexa-firstadmin.service && \
+    systemctl enable nexa-firstadmin.service
+
+EXPOSE 8888
 STOPSIGNAL SIGRTMIN+3
-CMD ["/lib/systemd/systemd"]
+# Not systemd directly: the entrypoint forks the credentials relay before exec'ing
+# systemd, so the banner reaches `docker compose logs`. systemd still ends up as
+# PID 1, so STOPSIGNAL above still shuts the node down cleanly.
+CMD ["/usr/local/bin/nexa-entrypoint"]

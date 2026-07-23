@@ -21,7 +21,7 @@ const sidebar = ref<HTMLElement>()
 const topBar = ref<InstanceType<typeof TopBar>>()
 
 onMounted(() => {
-  void identity.initialize()
+  if (!identity.initialized) void identity.initialize()
   window.addEventListener('keydown', onGlobalKeydown)
 })
 
@@ -42,12 +42,28 @@ watch(sidebarOpen, async (open, wasOpen) => {
   if (open) {
     lockBodyScroll()
     await nextTick()
-    sidebar.value?.focus()
+    sidebar.value?.querySelector<HTMLElement>('a[href], button:not([disabled]), [tabindex="0"]')?.focus()
   } else if (wasOpen) {
     unlockBodyScroll()
     topBar.value?.focusMenuButton()
   }
 })
+
+function trapSidebarFocus(event: KeyboardEvent) {
+  if (!sidebarOpen.value || event.key !== 'Tab' || !sidebar.value) return
+  const focusable = [...sidebar.value.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex="0"]')]
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (!first || !last) return
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
 
 function onGlobalKeydown(event: KeyboardEvent) {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -78,6 +94,12 @@ function onGlobalKeydown(event: KeyboardEvent) {
   <AuthGate v-else-if="!identity.authenticated" />
 
   <div v-else class="min-h-screen lg:grid lg:grid-cols-[264px_minmax(0,1fr)]">
+    <a
+      href="#main-content"
+      class="fixed top-2 left-2 z-[100] -translate-y-16 rounded-lg bg-accent-500 px-3 py-2 text-sm font-semibold text-accent-950 transition-transform focus:translate-y-0"
+    >
+      Skip to main content
+    </a>
     <!-- Mobile scrim -->
     <div
       v-if="sidebarOpen"
@@ -91,20 +113,27 @@ function onGlobalKeydown(event: KeyboardEvent) {
       ref="sidebar"
       tabindex="-1"
       aria-label="Sidebar"
+      :role="sidebarOpen ? 'dialog' : undefined"
+      :aria-modal="sidebarOpen || undefined"
       class="fixed inset-y-0 left-0 z-50 w-[264px] -translate-x-full border-r border-outline bg-surface/95 backdrop-blur-xl transition-transform duration-200 outline-none lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:bg-surface/60"
       :class="sidebarOpen ? 'translate-x-0' : ''"
+      @keydown="trapSidebarFocus"
     >
       <SidebarNav @navigate="sidebarOpen = false" />
     </aside>
 
-    <div class="flex min-h-screen min-w-0 flex-col">
+    <div
+      class="flex min-h-screen min-w-0 flex-col"
+      :inert="sidebarOpen || undefined"
+      :aria-hidden="sidebarOpen || undefined"
+    >
       <TopBar
         ref="topBar"
         :sidebar-open="sidebarOpen"
         @toggle-sidebar="sidebarOpen = !sidebarOpen"
         @open-palette="paletteOpen = true"
       />
-      <main class="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-8 sm:py-8">
+      <main id="main-content" tabindex="-1" class="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-8 sm:py-8">
         <RouterView />
       </main>
     </div>

@@ -1,0 +1,32 @@
+[Unit]
+Description=Reconcile an interrupted Nexa Panel update
+Documentation=https://github.com/nexa-panel/nexa-panel
+ConditionPathExists=/var/lib/nexa-panel-update/transaction.json
+Wants=nexa-agent.service nexa-api.service nginx.service
+After=nexa-agent.service nexa-api.service nginx.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0177
+ExecStart=/usr/bin/nexa self-update recover --transaction /var/lib/nexa-panel-update/transaction.json
+TimeoutStartSec=15min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/boot /etc /opt /srv /usr /var /run/containers /run/nexa-panel /run/php /run/postgresql /run/lock
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictRealtime=true
+LockPersonality=true
+KeyringMode=private
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

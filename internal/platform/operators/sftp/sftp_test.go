@@ -12,6 +12,8 @@ import (
 type fakeSystem struct {
 	calls        []string
 	dropIn       map[string]string
+	sshPresent   bool
+	sshErr       error
 	validateErr  error
 	reloadErr    error
 	setPassErr   error
@@ -21,6 +23,11 @@ type fakeSystem struct {
 }
 
 func newFakeSystem() *fakeSystem { return &fakeSystem{dropIn: map[string]string{}} }
+
+func (f *fakeSystem) SSHAccessDropInExists(context.Context, string) (bool, error) {
+	f.calls = append(f.calls, "ssh")
+	return f.sshPresent, f.sshErr
+}
 
 func (f *fakeSystem) EnsureChrootRoot(_ context.Context, _ string) error {
 	f.calls = append(f.calls, "ensure")
@@ -76,7 +83,7 @@ func TestApplyEnableWritesValidatesReloadsThenSetsPassword(t *testing.T) {
 	if !observation.Enabled || !observation.PasswordSet {
 		t.Fatalf("observation = %+v, want enabled and password set", observation)
 	}
-	want := []string{"ensure", "write", "validate", "reload", "setpass"}
+	want := []string{"ssh", "ensure", "write", "validate", "reload", "setpass"}
 	if strings.Join(system.calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %v, want %v", system.calls, want)
 	}
@@ -100,6 +107,24 @@ func TestApplyEnableRemovesDropInWhenSSHDValidationFails(t *testing.T) {
 	}
 	if system.calls[len(system.calls)-1] != "remove" {
 		t.Fatalf("calls = %v, want the failed drop-in removed last", system.calls)
+	}
+}
+
+// The SSH-access block sorts before this one and sshd keeps the first value of
+// each keyword, so a jail written next to it is not enforced and the password it
+// issues cannot authenticate. Refuse before anything is written.
+func TestApplyRefusesWhileSSHAccessIsInstalled(t *testing.T) {
+	system := newFakeSystem()
+	system.sshPresent = true
+	_, err := operatorWith(system).Apply(context.Background(), validRequest)
+	if !errors.Is(err, ErrSSHAccessPresent) {
+		t.Fatalf("Apply() error = %v, want ErrSSHAccessPresent", err)
+	}
+	if strings.Join(system.calls, ",") != "ssh" {
+		t.Fatalf("calls = %v, want the request refused before anything is written", system.calls)
+	}
+	if system.lastPassword != "" {
+		t.Fatal("a refused enable must not set a password the jail cannot serve")
 	}
 }
 

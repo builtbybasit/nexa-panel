@@ -21,6 +21,26 @@ func (c runtimeCatalog) Allowed(context.Context, string) (bool, error) { return 
 
 type fakeOperator struct{ renderer siteoperator.Renderer }
 
+// PlanTeardown mirrors the real operator: the same rendered plan, but with an
+// empty before-state so a rollback removes every managed path.
+func (o fakeOperator) PlanTeardown(ctx context.Context, site siteoperator.Site) (siteoperator.Plan, error) {
+	plan, err := o.Plan(ctx, site)
+	if err != nil {
+		return siteoperator.Plan{}, err
+	}
+	plan.Before = make([]siteoperator.Snapshot, len(plan.Artifacts))
+	for index := range plan.Artifacts {
+		plan.Before[index] = siteoperator.Snapshot{Path: plan.Artifacts[index].Path}
+	}
+	plan.RetiredBefore = make([]siteoperator.Snapshot, len(plan.Retired))
+	for index, path := range plan.Retired {
+		plan.RetiredBefore[index] = siteoperator.Snapshot{Path: path}
+	}
+	plan.EnabledBefore = false
+	plan.Teardown = true
+	return plan, nil
+}
+
 func (o fakeOperator) Plan(_ context.Context, site siteoperator.Site) (siteoperator.Plan, error) {
 	plan, err := o.renderer.Render(site)
 	if err != nil {
@@ -143,3 +163,5 @@ func waitJob(t *testing.T, queue *jobs.Module, id *int64) {
 	}
 	t.Fatal("job timeout")
 }
+
+func (fakeOperator) Purge(context.Context, siteoperator.Site) error { return nil }

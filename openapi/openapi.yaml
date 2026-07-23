@@ -30,6 +30,8 @@ paths:
     $ref: ./paths/identity.yaml#/auth_mfa_confirm
   /auth/mfa/verify:
     $ref: ./paths/identity.yaml#/auth_mfa_verify
+  /auth/mfa/recover:
+    $ref: ./paths/identity.yaml#/auth_mfa_recover
   /auth/mfa/disable:
     $ref: ./paths/identity.yaml#/auth_mfa_disable
   /auth/password:
@@ -68,6 +70,8 @@ paths:
     $ref: ./paths/sites.yaml#/sites
   /sites/{id}:
     $ref: ./paths/sites.yaml#/sites_id
+  /sites/{id}/settings:
+    $ref: ./paths/sites.yaml#/sites_id_settings
   /sites/{id}/plan:
     $ref: ./paths/sites.yaml#/sites_id_plan
   /sites/{id}/activate:
@@ -88,6 +92,8 @@ paths:
     $ref: ./paths/site-files.yaml#/sites_id_files_move
   /sites/{id}/files/copy:
     $ref: ./paths/site-files.yaml#/sites_id_files_copy
+  /sites/{id}/files/chmod:
+    $ref: ./paths/site-files.yaml#/sites_id_files_chmod
   /sites/{id}/files/delete:
     $ref: ./paths/site-files.yaml#/sites_id_files_delete
   /sites/{id}/files/uploads:
@@ -196,10 +202,14 @@ paths:
     $ref: ./paths/backups.yaml#/backups_plans_id_run
   /backups/plans/{id}/copies:
     $ref: ./paths/backups.yaml#/backups_plans_id_copies
+  /backups/copies/{copyId}/restore/preview:
+    $ref: ./paths/backups.yaml#/backups_copies_copyId_restore_preview
   /backups/copies/{copyId}/restore:
     $ref: ./paths/backups.yaml#/backups_copies_copyId_restore
   /backups/copies/{copyId}:
     $ref: ./paths/backups.yaml#/backups_copies_copyId
+  /backups/system:
+    $ref: ./paths/backups.yaml#/backups_system
   /admin-tools:
     $ref: ./paths/admin-tools.yaml#/admin-tools
   /admin-tools/{kind}/plan:
@@ -222,6 +232,28 @@ paths:
     $ref: ./paths/php.yaml#/php_settings
   /php/sites/{id}/settings:
     $ref: ./paths/php.yaml#/php_sites_id_settings
+  /sites/{id}/ssh:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh
+  /sites/{id}/ssh/enable:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh_enable
+  /sites/{id}/ssh/disable:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh_disable
+  /sites/{id}/ssh/keys:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh_keys
+  /sites/{id}/ssh/keys/generate:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh_keys_generate
+  /sites/{id}/ssh/keys/{keyId}:
+    $ref: ./paths/deploy.yaml#/sites_id_ssh_keys_keyId
+  /sites/{id}/deploy-key:
+    $ref: ./paths/deploy.yaml#/sites_id_deploy-key
+  /sites/{id}/deploy-key/test:
+    $ref: ./paths/deploy.yaml#/sites_id_deploy-key_test
+  /sites/{id}/deployment-mode:
+    $ref: ./paths/deploy.yaml#/sites_id_deployment-mode
+  /sites/{id}/deployment/env:
+    $ref: ./paths/deploy.yaml#/sites_id_deployment_env
+  /sites/{id}/deployment/prepare:
+    $ref: ./paths/deploy.yaml#/sites_id_deployment_prepare
 components:
   responses:
     ClientError:
@@ -297,6 +329,12 @@ components:
       $ref: ./components/schemas/sites.yaml#/SitePlanTarget
     SiteRoute:
       $ref: ./components/schemas/sites.yaml#/SiteRoute
+    SiteSettings:
+      $ref: ./components/schemas/sites.yaml#/SiteSettings
+    SiteBasicAuth:
+      $ref: ./components/schemas/sites.yaml#/SiteBasicAuth
+    SiteRateLimit:
+      $ref: ./components/schemas/sites.yaml#/SiteRateLimit
     CreateDomain:
       $ref: ./components/schemas/domains.yaml#/CreateDomain
     Domain:
@@ -379,6 +417,24 @@ components:
       $ref: ./components/schemas/scheduled-tasks.yaml#/SchedulePlan
     ScheduleRunRecord:
       $ref: ./components/schemas/scheduled-tasks.yaml#/ScheduleRunRecord
+    SshAccess:
+      $ref: ./components/schemas/deploy.yaml#/SshAccess
+    SshKey:
+      $ref: ./components/schemas/deploy.yaml#/SshKey
+    GeneratedSshKey:
+      $ref: ./components/schemas/deploy.yaml#/GeneratedSshKey
+    DeployKey:
+      $ref: ./components/schemas/deploy.yaml#/DeployKey
+    DeploymentModeChange:
+      $ref: ./components/schemas/deploy.yaml#/DeploymentModeChange
+    SharedEnv:
+      $ref: ./components/schemas/deploy.yaml#/SharedEnv
+    DeployTool:
+      $ref: ./components/schemas/deploy.yaml#/DeployTool
+    FirewallSshCheck:
+      $ref: ./components/schemas/deploy.yaml#/FirewallSshCheck
+    NodePreparation:
+      $ref: ./components/schemas/deploy.yaml#/NodePreparation
     Job:
       $ref: ./components/schemas/jobs.yaml#/Job
     JobEvent:

@@ -134,10 +134,41 @@ export async function listBackupCopies(planId: string) {
   return (await request<{ items: BackupCopy[] }>(`/api/v1/backups/plans/${planId}/copies`)).items
 }
 
-export interface BackupRestoreRequest {
+export interface BackupRestoreChoices {
   sites: { entry: string; siteId: string; clear: boolean }[]
   databases: { entry: string; databaseRef: string; clear: boolean }[]
   allowUnverified: boolean
+}
+
+export interface BackupRestoreRequest extends BackupRestoreChoices {
+  /** Short-lived server binding for the exact plan the operator reviewed. */
+  previewToken: string
+}
+
+interface BackupRestorePreviewItem {
+  kind: 'site' | 'database'
+  sourceEntry: string
+  destinationRef: string
+  destinationLabel: string
+  clear: boolean
+  impact: string
+}
+
+export interface BackupRestorePreview {
+  copyId: string
+  copyName: string
+  integrityState: BackupCopy['integrityState']
+  warnings: string[]
+  items: BackupRestorePreviewItem[]
+  previewToken: string
+  expiresAt: string
+}
+
+export function previewBackupRestore(copyId: string, body: BackupRestoreChoices) {
+  return request<BackupRestorePreview>(`/api/v1/backups/copies/${copyId}/restore/preview`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
 }
 
 export function restoreBackupCopy(copyId: string, body: BackupRestoreRequest) {
@@ -146,4 +177,28 @@ export function restoreBackupCopy(copyId: string, body: BackupRestoreRequest) {
 
 export function deleteBackupCopy(copyId: string) {
   return request<void>(`/api/v1/backups/copies/${copyId}`, { method: 'DELETE' })
+}
+
+// --- panel-state (system) backups ------------------------------------------
+// These back up the panel's OWN state — control.db plus master.key — off-node,
+// so a lost disk doesn't take every stored credential with it. Restore is a
+// deliberate CLI step (see docs/runbooks/panel-state-restore.md); the archive
+// is credential-equivalent, so it only belongs on a trusted, encrypted remote.
+
+export interface SystemBackupCopy {
+  id: string
+  accountId: string
+  copyName: string
+  remotePath: string
+  sizeBytes: number
+  sha256: string
+  createdAt: string
+}
+
+export async function listSystemBackupCopies() {
+  return (await request<{ items: SystemBackupCopy[] }>('/api/v1/backups/system')).items
+}
+
+export function runSystemBackup(accountId: string) {
+  return request<{ id: number }>('/api/v1/backups/system', { method: 'POST', body: JSON.stringify({ accountId }) })
 }

@@ -26,6 +26,10 @@ export type Permission =
   | 'backups.write'
   | 'services.read'
   | 'services.write'
+  | 'firewall.read'
+  | 'firewall.write'
+  | 'deploy.read'
+  | 'deploy.write'
   | 'users.manage'
 
 const readOnlyPermissions = [
@@ -42,6 +46,8 @@ const readOnlyPermissions = [
   'applications.read',
   'backups.read',
   'services.read',
+  'firewall.read',
+  'deploy.read',
 ] as const satisfies readonly Permission[]
 
 const developerPermissions = [
@@ -56,6 +62,8 @@ const developerPermissions = [
   'schedules.write',
   'applications.read',
   'backups.read',
+  'deploy.read',
+  'deploy.write',
 ] as const satisfies readonly Permission[]
 
 const operatorPermissions = [
@@ -69,6 +77,8 @@ const operatorPermissions = [
   'applications.write',
   'backups.write',
   'services.write',
+  'firewall.write',
+  'deploy.write',
 ] as const satisfies readonly Permission[]
 
 const adminPermissions = [...operatorPermissions, 'audit.read', 'operations.apply', 'users.manage', 'system.update'] as const satisfies readonly Permission[]

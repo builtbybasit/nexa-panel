@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import QrcodeVue from 'qrcode.vue'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import {
   AppAlert,
@@ -39,6 +39,17 @@ const copied = ref(false)
 
 // Disable flow
 const password = ref('')
+
+/** Only the rules the server says it applies; nothing is assumed before it answers. */
+const passwordHint = computed(() => {
+  const policy = identity.passwordPolicy
+  if (!policy) return undefined
+  const rules = [
+    ...(policy.denylistApplied ? ['common passwords'] : []),
+    ...(policy.rejectsUsername ? ['passwords containing your username'] : []),
+  ]
+  return rules.length ? `The server rejects ${rules.join(' and ')}.` : undefined
+})
 
 // Change-password flow
 const currentPassword = ref('')
@@ -225,10 +236,7 @@ function downloadRecoveryCodes() {
           <AppButton v-if="!identity.mfaEnabled" variant="primary" icon="lock" @click="openEnable">
             Enable
           </AppButton>
-          <AppButton v-else-if="identity.user?.role !== 'admin'" variant="danger" icon="lock" @click="openDisable">
-            Disable
-          </AppButton>
-          <span v-else class="max-w-48 text-right text-xs text-ink-muted">Required for administrator accounts</span>
+          <AppButton v-else variant="danger" icon="lock" @click="openDisable">Disable</AppButton>
         </div>
       </div>
     </AppCard>
@@ -318,7 +326,8 @@ function downloadRecoveryCodes() {
     <AppDialog :open="dialog === 'disable'" title="Disable two-factor authentication" size="sm" @close="closeDialog">
       <form id="disable-mfa-form" class="space-y-4" @submit.prevent="submitDisable">
         <p class="text-[13px] leading-relaxed text-ink-secondary">
-          Your account will be protected by a password only. Enter your current password to confirm.
+          Your account will be protected by a password only, and this change is recorded in the audit log. Enter your
+          current password to confirm.
         </p>
         <FormField label="Current password">
           <AppInput
@@ -356,9 +365,12 @@ function downloadRecoveryCodes() {
         <PasswordField
           v-model="newPassword"
           label="New password"
-          :minimum-length="12"
+          :minimum-length="identity.passwordPolicy?.minLength"
+          :maximum-length="identity.passwordPolicy?.maxLength"
+          :required-classes="identity.passwordPolicy?.requiredClasses"
+          :class-exempt-length="identity.passwordPolicy?.classExemptLength"
           autocomplete="new-password"
-          hint="At least 12 characters."
+          :hint="passwordHint"
           required
         />
         <FormField label="Confirm new password">
@@ -367,7 +379,8 @@ function downloadRecoveryCodes() {
             name="confirm-password"
             type="password"
             autocomplete="new-password"
-            minlength="12"
+            :minlength="identity.passwordPolicy?.minLength"
+            :maxlength="identity.passwordPolicy?.maxLength"
             required
           />
         </FormField>

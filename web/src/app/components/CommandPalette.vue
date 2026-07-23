@@ -50,12 +50,37 @@ watch(
 )
 
 // Failures are silently skipped: an unreachable source simply contributes no results.
-const lazy = { enabled: hasOpened, retry: false, staleTime: 60_000 } as const
-const sitesQuery = useQuery({ queryKey: ['palette', 'sites'], queryFn: listSites, ...lazy })
-const domainsQuery = useQuery({ queryKey: ['palette', 'domains'], queryFn: () => listDomains(), ...lazy })
-const certificatesQuery = useQuery({ queryKey: ['palette', 'certificates'], queryFn: () => listCertificates(), ...lazy })
-const postgresQuery = useQuery({ queryKey: ['palette', 'postgres-databases'], queryFn: listPostgresDatabases, ...lazy })
-const mysqlQuery = useQuery({ queryKey: ['palette', 'mysql-databases'], queryFn: listMysqlDatabases, ...lazy })
+const lazy = { retry: false, staleTime: 60_000 } as const
+const sitesQuery = useQuery({
+  queryKey: ['palette', 'sites'],
+  queryFn: listSites,
+  enabled: computed(() => hasOpened.value && identity.can('sites.read')),
+  ...lazy,
+})
+const domainsQuery = useQuery({
+  queryKey: ['palette', 'domains'],
+  queryFn: () => listDomains(),
+  enabled: computed(() => hasOpened.value && identity.can('domains.read')),
+  ...lazy,
+})
+const certificatesQuery = useQuery({
+  queryKey: ['palette', 'certificates'],
+  queryFn: () => listCertificates(),
+  enabled: computed(() => hasOpened.value && identity.can('certificates.read')),
+  ...lazy,
+})
+const postgresQuery = useQuery({
+  queryKey: ['palette', 'postgres-databases'],
+  queryFn: listPostgresDatabases,
+  enabled: computed(() => hasOpened.value && identity.can('databases.read')),
+  ...lazy,
+})
+const mysqlQuery = useQuery({
+  queryKey: ['palette', 'mysql-databases'],
+  queryFn: listMysqlDatabases,
+  enabled: computed(() => hasOpened.value && identity.can('databases.read')),
+  ...lazy,
+})
 
 interface PaletteItem {
   id: string

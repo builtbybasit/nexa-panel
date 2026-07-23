@@ -1,0 +1,62 @@
+[Unit]
+Description=Nexa Panel off-node panel-state backup (control.db + master.key)
+Documentation=https://github.com/nexa-panel/nexa-panel
+After=nexa-api.service
+Requires=nexa-api.service
+# No system-backup destination configured yet -> skip cleanly instead of failing.
+# An operator opts in by writing NEXA_SYSTEM_BACKUP_ACCOUNT=<account id|name> to
+# /etc/nexa-panel/system-backup.env; until that file exists this unit is a no-op
+# (systemd records a skipped, not failed, start), so a fresh node never spams
+# failures for a backup destination the operator has not chosen yet.
+ConditionPathExists=/etc/nexa-panel/system-backup.env
+# No Restart= on a timer-driven oneshot, so there is no crash loop to guard
+# against; a start limit here would only disable scheduled backups after a run
+# of transient failures, which is exactly when they matter most.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=nexa
+Group=nexa
+UMask=0077
+Environment=NEXA_LOG_LEVEL=info
+# Names the backup storage account (rclone remote) to ship the panel state to.
+EnvironmentFile=/etc/nexa-panel/system-backup.env
+# Enqueues a durable backup.system job into control.db; the running nexa-api
+# worker claims it and ships control.db + master.key off-node. Mirrors the
+# production state path used by nexa-api.service and the CLI default.
+ExecStart=/usr/bin/nexa backup system --account ${NEXA_SYSTEM_BACKUP_ACCOUNT} --state /var/lib/nexa-panel/control.db
+# No StateDirectory=, for the same reason as nexa-api.service: systemd would
+# recursively chown /var/lib/nexa-panel on every timer firing and take the
+# root-owned install/ ownership proof with it. tmpfiles owns the tree.
+ReadWritePaths=/var/lib/nexa-panel
+# This process only opens control.db and inserts one job row; the archiving is
+# done by the nexa-api worker under its own limits.
+MemoryHigh=128M
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=4096
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=true
+KeyringMode=private
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=

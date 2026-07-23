@@ -21,6 +21,7 @@ const (
 	copyStatusUploaded   = "uploaded"
 	integrityUnverified  = "unverified"
 	integrityPassed      = "passed"
+	integrityFailed      = "failed"
 	restoreTestNotTested = "not_tested"
 	restoreTestPassed    = "passed"
 	restoreTestFailed    = "failed"

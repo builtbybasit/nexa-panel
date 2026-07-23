@@ -1,12 +1,17 @@
 package selfupdate
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,21 +59,129 @@ func (f fakeDownloader) Fetch(_ context.Context, url string, _ int64) ([]byte, e
 type fakeRunner struct {
 	versionOutput string
 	versionErr    error
-	commands      []Command
+	// packagingErr fails the release installer, standing in for a node where
+	// --sync-packaging cannot complete.
+	packagingErr    error
+	packagingOutput string
+	signatureErr    error
+	packagingHook   func(Command) error
+	commands        []Command
 }
 
-func (r *fakeRunner) Run(_ context.Context, command Command) ([]byte, error) {
+func (r *fakeRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 	r.commands = append(r.commands, command)
+	// A real exec fails immediately on a dead context; the restore paths must
+	// not depend on the caller's context still being alive.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(command.Args) == 1 && command.Args[0] == "version" {
 		return []byte(r.versionOutput), r.versionErr
+	}
+	if len(command.Args) > 1 && command.Args[1] == releaseInstallerFlag {
+		if r.packagingHook != nil {
+			if err := r.packagingHook(command); err != nil {
+				return []byte(r.packagingOutput), err
+			}
+		}
+		return []byte(r.packagingOutput), r.packagingErr
+	}
+	if command.Name == "ssh-keygen" {
+		return []byte("signature verification failed"), r.signatureErr
 	}
 	return nil, nil
 }
 
 func checksumOf(data []byte) []byte {
 	sum := sha256.Sum256(data)
-	line := hex.EncodeToString(sum[:]) + "  nexa-linux-amd64\n"
+	line := hex.EncodeToString(sum[:]) + "  nexa-panel-linux-amd64.tar.gz\n"
 	return []byte(line)
+}
+
+// releaseArchive builds a release tarball in the published layout: a single
+// versioned top-level directory holding bin/nexa, the packaging tree, the
+// installer scripts, and the RELEASE stamp. extra adds or replaces members (a
+// path relative to the top-level directory) so a test can express a hostile
+// archive without hand-rolling the whole tar.
+func releaseArchive(t *testing.T, version string, binary []byte, extra map[string][]byte) []byte {
+	t.Helper()
+	root := "nexa-panel-" + version + "-linux-amd64/"
+	members := map[string][]byte{
+		"bin/nexa":                             binary,
+		"scripts/install.sh":                   []byte("#!/usr/bin/env bash\nexit 0\n"),
+		"scripts/nexa-seed-admin.sh":           []byte("#!/usr/bin/env bash\nexit 0\n"),
+		"packaging/systemd/nexa-agent.service": []byte("[Service]\n"),
+		releaseManifestEntry:                   []byte("version=" + version + "\ncommit=abc123def456\narch=amd64\nbuilt_at=2026-07-22T09:08:07Z\n"),
+	}
+	for name, contents := range extra {
+		members[name] = contents
+	}
+	names := make([]string, 0, len(members))
+	for name := range members {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var buffer bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buffer)
+	writer := tar.NewWriter(gzipWriter)
+	writeHeader(t, writer, &tar.Header{Name: root, Typeflag: tar.TypeDir, Mode: 0o755})
+	for _, name := range names {
+		writeHeader(t, writer, &tar.Header{Name: root + name, Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len(members[name]))})
+		if _, err := writer.Write(members[name]); err != nil {
+			t.Fatalf("write archive member: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	return buffer.Bytes()
+}
+
+func writeHeader(t *testing.T, writer *tar.Writer, header *tar.Header) {
+	t.Helper()
+	if err := writer.WriteHeader(header); err != nil {
+		t.Fatalf("write archive header: %v", err)
+	}
+}
+
+// releaseAssets pairs an archive with the checksum sidecar the operator will
+// verify it against, keyed by the URLs the fake source hands out.
+func releaseAssets(archive []byte) map[string][]byte {
+	return map[string][]byte{
+		archiveURL:   archive,
+		checksumURL:  checksumOf(archive),
+		signatureURL: []byte("-----BEGIN SSH SIGNATURE-----\ntest\n-----END SSH SIGNATURE-----\n"),
+	}
+}
+
+// archiveURL and checksumURL stand in for the asset API URLs a real release
+// resolves to.
+const (
+	archiveURL   = "https://api.github.com/repos/o/r/releases/assets/1"
+	checksumURL  = "https://api.github.com/repos/o/r/releases/assets/2"
+	signatureURL = "https://api.github.com/repos/o/r/releases/assets/3"
+	// amd64AssetName is the published bundle name the test operator's
+	// architecture must resolve to.
+	amd64AssetName = "nexa-panel-linux-amd64.tar.gz"
+)
+
+// testRelease is the canned 0.2.0 release the apply tests resolve.
+func testRelease() Release {
+	return Release{Version: "0.2.0", Tag: "v0.2.0", AssetName: amd64AssetName, AssetURL: archiveURL, ChecksumURL: checksumURL, SignatureURL: signatureURL}
+}
+
+// packagingSync returns the recorded installer invocation, if any.
+func packagingSync(runner *fakeRunner) *Command {
+	for index := range runner.commands {
+		if len(runner.commands[index].Args) > 1 && runner.commands[index].Args[1] == releaseInstallerFlag {
+			return &runner.commands[index]
+		}
+	}
+	return nil
 }
 
 func newTestOperator(t *testing.T, installed string, source ReleaseSource, downloader Downloader, runner Runner) (*HostOperator, string) {
@@ -77,14 +190,32 @@ func newTestOperator(t *testing.T, installed string, source ReleaseSource, downl
 	if err := os.WriteFile(binaryPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatalf("seed binary: %v", err)
 	}
+	allowedSigners := filepath.Join(t.TempDir(), "release-signers")
+	if err := os.WriteFile(allowedSigners, []byte(releaseSignerIdentity+" ssh-ed25519 AAAATEST\n"), 0o600); err != nil {
+		t.Fatalf("seed allowed signers: %v", err)
+	}
 	operator, err := NewHostOperator(HostConfig{
-		InstalledVersion: installed,
-		Source:           source,
-		Downloader:       downloader,
-		Runner:           runner,
-		BinaryPath:       binaryPath,
-		RestartDelay:     2 * time.Second,
-		Arch:             "amd64",
+		InstalledVersion:       installed,
+		Source:                 source,
+		Downloader:             downloader,
+		Runner:                 runner,
+		BinaryPath:             binaryPath,
+		ControlDatabasePath:    filepath.Join(t.TempDir(), "control.db"),
+		WorkRoot:               filepath.Join(t.TempDir(), "work"),
+		LockPath:               filepath.Join(t.TempDir(), "lifecycle.lock"),
+		AllowedSignersPath:     allowedSigners,
+		Arch:                   "amd64",
+		activationPollInterval: time.Millisecond,
+		managedPaths:           []string{},
+		activate: func(_ context.Context, statePath string) error {
+			state, err := readTransaction(statePath)
+			if err != nil {
+				return err
+			}
+			state.Phase = phaseSucceeded
+			state.Result.Activated = true
+			return writeTransaction(statePath, state)
+		},
 	})
 	if err != nil {
 		t.Fatalf("new operator: %v", err)
@@ -93,7 +224,7 @@ func newTestOperator(t *testing.T, installed string, source ReleaseSource, downl
 }
 
 func TestLatestReportsUpdateAvailable(t *testing.T) {
-	source := fakeSource{release: Release{Version: "0.2.0", Tag: "v0.2.0", AssetURL: "a", ChecksumURL: "c"}}
+	source := fakeSource{release: testRelease()}
 	operator, _ := newTestOperator(t, "0.1.0", source, fakeDownloader{}, &fakeRunner{})
 
 	availability, err := operator.Latest(context.Background())
@@ -109,7 +240,7 @@ func TestLatestReportsUpdateAvailable(t *testing.T) {
 }
 
 func TestLatestReportsUpToDate(t *testing.T) {
-	source := fakeSource{release: Release{Version: "0.1.0", Tag: "v0.1.0", AssetURL: "a", ChecksumURL: "c"}}
+	source := fakeSource{release: Release{Version: "0.1.0", Tag: "v0.1.0", AssetURL: archiveURL, ChecksumURL: checksumURL}}
 	operator, _ := newTestOperator(t, "0.1.0", source, fakeDownloader{}, &fakeRunner{})
 
 	availability, err := operator.Latest(context.Background())
@@ -121,13 +252,28 @@ func TestLatestReportsUpToDate(t *testing.T) {
 	}
 }
 
+func TestLifecycleLockSerializesInstallUpdateAndUninstall(t *testing.T) {
+	first, _ := newTestOperator(t, "0.1.0", fakeSource{}, fakeDownloader{}, &fakeRunner{})
+	second, _ := newTestOperator(t, "0.1.0", fakeSource{}, fakeDownloader{}, &fakeRunner{})
+	second.lockPath = first.lockPath
+
+	_, unlock, err := first.acquireHostLock(context.Background())
+	if err != nil {
+		t.Fatalf("acquire first lock: %v", err)
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	if _, _, err := second.acquireHostLock(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second lifecycle operation acquired the shared lock: %v", err)
+	}
+}
+
 func TestApplySwapsAndSchedulesRestart(t *testing.T) {
 	binary := []byte("new-nexa-binary-bytes")
-	source := fakeSource{release: Release{Version: "0.2.0", Tag: "v0.2.0", AssetURL: "https://x/asset", ChecksumURL: "https://x/asset.sha256"}}
-	downloader := fakeDownloader{assets: map[string][]byte{
-		"https://x/asset":        binary,
-		"https://x/asset.sha256": checksumOf(binary),
-	}}
+	archive := releaseArchive(t, "0.2.0", binary, nil)
+	source := fakeSource{release: testRelease()}
+	downloader := fakeDownloader{assets: releaseAssets(archive)}
 	runner := &fakeRunner{versionOutput: "0.2.0 (commit abc, built now)"}
 	operator, binaryPath := newTestOperator(t, "0.1.0", source, downloader, runner)
 
@@ -135,8 +281,8 @@ func TestApplySwapsAndSchedulesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if !result.Swapped || !result.RestartScheduled {
-		t.Fatalf("expected swap and restart scheduled, got %+v", result)
+	if !result.Swapped || !result.Activated {
+		t.Fatalf("expected a completed, health-verified activation, got %+v", result)
 	}
 	if result.PreviousVersion != "0.1.0" || result.TargetVersion != "0.2.0" {
 		t.Fatalf("unexpected result versions: %+v", result)
@@ -148,28 +294,40 @@ func TestApplySwapsAndSchedulesRestart(t *testing.T) {
 	if string(swapped) != string(binary) {
 		t.Fatalf("binary was not swapped in; got %q", swapped)
 	}
-	// The restart must be armed as a detached systemd-run timer covering both units.
-	var restart *Command
-	for index := range runner.commands {
-		if runner.commands[index].Name == "systemd-run" {
-			restart = &runner.commands[index]
-		}
+	// The release's own installer must have re-applied the packaging.
+	if !result.PackagingSynced {
+		t.Fatalf("expected the packaging to be synced, got %+v", result)
 	}
-	if restart == nil {
-		t.Fatal("expected a systemd-run restart to be scheduled")
+	sync := packagingSync(runner)
+	if sync == nil {
+		t.Fatal("expected the release installer to be run with " + releaseInstallerFlag)
 	}
-	joined := restart.Args
-	if !containsAll(joined, "--collect", "--on-active=2", "systemctl", "restart", "nexa-agent.service", "nexa-api.service") {
-		t.Fatalf("unexpected restart args: %v", joined)
+	if sync.Name != "/bin/bash" || !strings.HasSuffix(sync.Args[0], filepath.FromSlash(releaseInstallerEntry)) {
+		t.Fatalf("unexpected packaging sync command: %+v", sync)
+	}
+	// --no-start is not optional: without it the installer restarts nexa-agent
+	// mid-call and kills the RPC that is waiting on it.
+	if !containsAll(sync.Args, releaseInstallerFlag, releaseInstallerNoStart) {
+		t.Fatalf("the installer must be run packaging-only and without a restart: %v", sync.Args)
+	}
+	if len(sync.ExtraFiles) != 1 || sync.ExtraFiles[0] == nil {
+		t.Fatalf("packaging installer must inherit the held lifecycle lock as fd 3: %+v", sync.ExtraFiles)
+	}
+	if !containsAll(sync.Env, "NEXA_LIFECYCLE_LOCK_FD=3") {
+		t.Fatalf("packaging installer was not told which inherited fd proves lock ownership: %v", sync.Env)
+	}
+	state, err := readTransaction(operator.transactionPath())
+	if err != nil || state.Phase != phaseSucceeded || state.SnapshotDir == "" {
+		t.Fatalf("successful apply must retain a rollback journal, state=%+v err=%v", state, err)
 	}
 }
 
 func TestApplyRejectsChecksumMismatch(t *testing.T) {
-	binary := []byte("new-nexa-binary-bytes")
-	source := fakeSource{release: Release{Version: "0.2.0", Tag: "v0.2.0", AssetURL: "https://x/asset", ChecksumURL: "https://x/asset.sha256"}}
+	archive := releaseArchive(t, "0.2.0", []byte("new-nexa-binary-bytes"), nil)
+	source := fakeSource{release: testRelease()}
 	downloader := fakeDownloader{assets: map[string][]byte{
-		"https://x/asset":        binary,
-		"https://x/asset.sha256": checksumOf([]byte("different-bytes")),
+		archiveURL:  archive,
+		checksumURL: checksumOf([]byte("a-different-archive")),
 	}}
 	runner := &fakeRunner{versionOutput: "0.2.0"}
 	operator, binaryPath := newTestOperator(t, "0.1.0", source, downloader, runner)
@@ -187,13 +345,28 @@ func TestApplyRejectsChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsAnUntrustedReleaseSignature(t *testing.T) {
+	archive := releaseArchive(t, "0.2.0", []byte("new-nexa-binary-bytes"), nil)
+	runner := &fakeRunner{versionOutput: "0.2.0", signatureErr: errors.New("incorrect signature")}
+	operator, binaryPath := newTestOperator(t, "0.1.0", fakeSource{release: testRelease()}, fakeDownloader{assets: releaseAssets(archive)}, runner)
+
+	if _, err := operator.Apply(context.Background(), Change{}); err == nil || !strings.Contains(err.Error(), "signature") {
+		t.Fatalf("expected authenticity failure, got %v", err)
+	}
+	if data, _ := os.ReadFile(binaryPath); string(data) != "old-binary" {
+		t.Fatalf("an untrusted release must not change the live binary; got %q", data)
+	}
+	for _, command := range runner.commands {
+		if command.Name == "/bin/bash" || command.Name == "systemd-run" {
+			t.Fatalf("untrusted bytes reached a mutating command: %+v", command)
+		}
+	}
+}
+
 func TestApplyRejectsMismatchedBinaryVersion(t *testing.T) {
-	binary := []byte("new-nexa-binary-bytes")
-	source := fakeSource{release: Release{Version: "0.2.0", Tag: "v0.2.0", AssetURL: "https://x/asset", ChecksumURL: "https://x/asset.sha256"}}
-	downloader := fakeDownloader{assets: map[string][]byte{
-		"https://x/asset":        binary,
-		"https://x/asset.sha256": checksumOf(binary),
-	}}
+	archive := releaseArchive(t, "0.2.0", []byte("new-nexa-binary-bytes"), nil)
+	source := fakeSource{release: testRelease()}
+	downloader := fakeDownloader{assets: releaseAssets(archive)}
 	// The staged binary reports a different version than the release promised.
 	runner := &fakeRunner{versionOutput: "9.9.9 (commit zzz)"}
 	operator, binaryPath := newTestOperator(t, "0.1.0", source, downloader, runner)
@@ -208,8 +381,8 @@ func TestApplyRejectsMismatchedBinaryVersion(t *testing.T) {
 
 func TestApplyRejectsDowngradeAndNoOp(t *testing.T) {
 	source := fakeSource{byVer: map[string]Release{
-		"0.1.0": {Version: "0.1.0", Tag: "v0.1.0", AssetURL: "a", ChecksumURL: "c"},
-		"0.0.9": {Version: "0.0.9", Tag: "v0.0.9", AssetURL: "a", ChecksumURL: "c"},
+		"0.1.0": {Version: "0.1.0", Tag: "v0.1.0", AssetURL: archiveURL, ChecksumURL: checksumURL},
+		"0.0.9": {Version: "0.0.9", Tag: "v0.0.9", AssetURL: archiveURL, ChecksumURL: checksumURL},
 	}}
 	operator, _ := newTestOperator(t, "0.1.0", source, fakeDownloader{}, &fakeRunner{})
 
@@ -233,12 +406,12 @@ func TestApplyLocalBinaryInstallsWithoutDownloadOrVersionGuard(t *testing.T) {
 		t.Fatalf("stage local binary: %v", err)
 	}
 
-	result, err := operator.Apply(context.Background(), Change{BinaryPath: staged})
+	result, err := operator.ApplyLocalBinary(context.Background(), staged)
 	if err != nil {
 		t.Fatalf("apply local binary: %v", err)
 	}
-	if !result.Swapped || !result.RestartScheduled {
-		t.Fatalf("expected swap and restart, got %+v", result)
+	if !result.Swapped || !result.Activated {
+		t.Fatalf("expected completed local activation, got %+v", result)
 	}
 	if result.PreviousVersion != "0.1.0-dev" || result.TargetVersion != "0.1.0-dev" {
 		t.Fatalf("unexpected result versions: %+v", result)
@@ -246,24 +419,15 @@ func TestApplyLocalBinaryInstallsWithoutDownloadOrVersionGuard(t *testing.T) {
 	if data, _ := os.ReadFile(binaryPath); string(data) != string(newBytes) {
 		t.Fatalf("local binary was not swapped in; got %q", data)
 	}
-	var restart *Command
-	for index := range runner.commands {
-		if runner.commands[index].Name == "systemd-run" {
-			restart = &runner.commands[index]
-		}
-	}
-	if restart == nil {
-		t.Fatal("expected a restart to be scheduled for a local install")
-	}
 }
 
 func TestApplyLocalBinaryRejectsBadPaths(t *testing.T) {
 	operator, binaryPath := newTestOperator(t, "0.1.0", fakeSource{}, fakeDownloader{}, &fakeRunner{versionOutput: "0.1.0"})
 
-	if _, err := operator.Apply(context.Background(), Change{BinaryPath: "relative/path"}); err == nil {
+	if _, err := operator.ApplyLocalBinary(context.Background(), "relative/path"); err == nil {
 		t.Fatal("expected a relative binary path to be rejected")
 	}
-	if _, err := operator.Apply(context.Background(), Change{BinaryPath: "/no/such/file/nexa"}); err == nil {
+	if _, err := operator.ApplyLocalBinary(context.Background(), "/no/such/file/nexa"); err == nil {
 		t.Fatal("expected a missing binary to be rejected")
 	}
 	if data, _ := os.ReadFile(binaryPath); string(data) != "old-binary" {
@@ -280,7 +444,7 @@ func TestApplyLocalBinaryRejectsNonRunnable(t *testing.T) {
 	if err := os.WriteFile(staged, []byte("garbage"), 0o755); err != nil {
 		t.Fatalf("stage file: %v", err)
 	}
-	if _, err := operator.Apply(context.Background(), Change{BinaryPath: staged}); err == nil {
+	if _, err := operator.ApplyLocalBinary(context.Background(), staged); err == nil {
 		t.Fatal("expected a non-runnable binary to be rejected")
 	}
 	if data, _ := os.ReadFile(binaryPath); string(data) != "old-binary" {
@@ -299,4 +463,98 @@ func containsAll(haystack []string, needles ...string) bool {
 		}
 	}
 	return true
+}
+
+// TestApplyPackagingFailureLeavesTheLiveBinaryUntouched proves packaging is
+// transactional: the old binary remains live and no activation is launched.
+func TestApplyPackagingFailureLeavesTheLiveBinaryUntouched(t *testing.T) {
+	archive := releaseArchive(t, "0.2.0", []byte("new-nexa-binary-bytes"), nil)
+	downloader := fakeDownloader{assets: releaseAssets(archive)}
+	runner := &fakeRunner{
+		versionOutput:   "0.2.0 (commit abc)",
+		packagingErr:    errors.New("exit status 1"),
+		packagingOutput: "error: tmpfiles rule rejected\n",
+	}
+	operator, binaryPath := newTestOperator(t, "0.1.0", fakeSource{release: testRelease()}, downloader, runner)
+
+	result, err := operator.Apply(context.Background(), Change{})
+	if err == nil {
+		t.Fatal("expected a packaging failure to be reported")
+	}
+	if !strings.Contains(err.Error(), "tmpfiles rule rejected") {
+		t.Fatalf("the installer's own message should reach the operator: %v", err)
+	}
+	if result.Swapped || result.PackagingSynced || result.Activated {
+		t.Fatalf("a packaging failure must not move the live binary, got %+v", result)
+	}
+	if data, _ := os.ReadFile(binaryPath); string(data) != "old-binary" {
+		t.Fatalf("the original binary must remain live; got %q", data)
+	}
+	for _, command := range runner.commands {
+		if command.Name == "systemd-run" {
+			t.Fatal("no restart should be armed when the packaging did not apply")
+		}
+	}
+	state, stateErr := readTransaction(operator.transactionPath())
+	if stateErr != nil || state.Phase != phaseFailed {
+		t.Fatalf("failed packaging must leave a recoverable terminal journal: state=%+v err=%v", state, stateErr)
+	}
+}
+
+// TestApplyRestoresTheOldBinaryWhenTheCallerCancels is the regression test for
+// a restore that inherited the caller's context: the failure it undoes is often
+// the cancellation (or apply deadline) itself, and a restore that could not
+// exec the binary it reinstalls left the new binary live on a host that was
+// supposed to roll back.
+func TestApplyRestoresTheOldBinaryWhenTheCallerCancels(t *testing.T) {
+	archive := releaseArchive(t, "0.2.0", []byte("new-nexa-binary-bytes"), nil)
+	runner := &fakeRunner{versionOutput: "0.2.0 (commit abc)"}
+	operator, binaryPath := newTestOperator(t, "0.1.0", fakeSource{release: testRelease()}, fakeDownloader{assets: releaseAssets(archive)}, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The update dies the way a disconnected client or the apply timeout kills
+	// it: after the new binary is live, before activation completes.
+	operator.activate = func(context.Context, string) error {
+		cancel()
+		return context.Canceled
+	}
+
+	if _, err := operator.Apply(ctx, Change{}); err == nil {
+		t.Fatal("expected the cancelled activation to fail the apply")
+	}
+	if data, _ := os.ReadFile(binaryPath); string(data) != "old-binary" {
+		t.Fatalf("the previous binary must be live after a cancelled apply; got %q", data)
+	}
+	state, err := readTransaction(operator.transactionPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase != phaseFailed || !state.Result.RolledBack {
+		t.Fatalf("a cancelled apply must journal a completed rollback: %+v", state)
+	}
+}
+
+// TestApplyLocalBinarySaysPackagingWasNotTouched keeps the operator-push path
+// honest: it installs a binary, and nothing else.
+func TestApplyLocalBinarySaysPackagingWasNotTouched(t *testing.T) {
+	runner := &fakeRunner{versionOutput: "0.1.0-dev (commit abc)"}
+	operator, _ := newTestOperator(t, "0.1.0-dev", fakeSource{}, fakeDownloader{}, runner)
+
+	staged := filepath.Join(t.TempDir(), "nexa-linux-amd64")
+	if err := os.WriteFile(staged, []byte("freshly-built"), 0o755); err != nil {
+		t.Fatalf("stage local binary: %v", err)
+	}
+	result, err := operator.ApplyLocalBinary(context.Background(), staged)
+	if err != nil {
+		t.Fatalf("apply local binary: %v", err)
+	}
+	if result.PackagingSynced {
+		t.Fatal("a local binary push applies no packaging")
+	}
+	if !strings.Contains(result.PackagingNote, "complete signed release") {
+		t.Fatalf("the note should direct the operator to a complete release, got %q", result.PackagingNote)
+	}
+	if sync := packagingSync(runner); sync != nil {
+		t.Fatalf("no installer should run for a local push, got %+v", sync)
+	}
 }

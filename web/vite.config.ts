@@ -22,7 +22,7 @@ export default defineConfig({
       // Keep the browser's Host header so the API's Origin/Host CSRF
       // comparison passes in development (string shorthand implies
       // changeOrigin: true, which rewrites Host to the target).
-      '/api': { target: 'http://127.0.0.1:8080', changeOrigin: false },
+      '/api': { target: 'http://127.0.0.1:8888', changeOrigin: false },
     },
   },
 })

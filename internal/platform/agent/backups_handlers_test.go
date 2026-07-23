@@ -13,6 +13,7 @@ import (
 
 type backupBoundaryFake struct {
 	runCalls     int
+	systemCalls  int
 	restoreCalls int
 	deleteCalls  int
 }
@@ -24,6 +25,11 @@ func (*backupBoundaryFake) TestAccount(context.Context, backupoperator.Account) 
 func (f *backupBoundaryFake) Run(context.Context, backupoperator.RunRequest) (backupoperator.Manifest, error) {
 	f.runCalls++
 	return backupoperator.Manifest{}, nil
+}
+
+func (f *backupBoundaryFake) RunSystem(context.Context, backupoperator.SystemRunRequest) (backupoperator.Manifest, error) {
+	f.systemCalls++
+	return backupoperator.Manifest{IntegrityChecked: true}, nil
 }
 
 func (f *backupBoundaryFake) Restore(context.Context, backupoperator.RestoreRequest) error {
@@ -55,6 +61,38 @@ func TestBackupRunHTTPRejectsClientControlledFilesystemPaths(t *testing.T) {
 	}
 	if operator.runCalls != 0 {
 		t.Fatalf("operator Run calls = %d, want none for an invalid request", operator.runCalls)
+	}
+}
+
+func TestBackupRunSystemHTTPRejectsClientControlledStagingRoot(t *testing.T) {
+	operator := new(backupBoundaryFake)
+	server := &Server{backups: operator}
+	request := backupoperator.SystemRunRequest{
+		Account:  backupoperator.Account{Type: backupoperator.TypeLocal, Path: "/srv/backups"},
+		CopyName: "copy_1", Limit: 3, StagingRoot: "/",
+	}
+	response := serveBackupJSON(t, server.backupRunSystemHTTP, request)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusUnprocessableEntity, response.Body.String())
+	}
+	if operator.systemCalls != 0 {
+		t.Fatalf("operator RunSystem calls = %d, want none for an invalid request", operator.systemCalls)
+	}
+}
+
+func TestBackupRunSystemHTTPAcceptsValidRequest(t *testing.T) {
+	operator := new(backupBoundaryFake)
+	server := &Server{backups: operator}
+	request := backupoperator.SystemRunRequest{
+		Account:  backupoperator.Account{Type: backupoperator.TypeLocal, Path: "/srv/backups"},
+		CopyName: "copy_1", Limit: 3,
+	}
+	response := serveBackupJSON(t, server.backupRunSystemHTTP, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if operator.systemCalls != 1 {
+		t.Fatalf("operator RunSystem calls = %d, want 1", operator.systemCalls)
 	}
 }
 

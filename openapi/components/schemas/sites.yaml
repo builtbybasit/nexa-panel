@@ -32,6 +32,7 @@ Site:
   - rootPath
   - socketPath
   - status
+  - deploymentMode
   - createdAt
   - updatedAt
   properties:
@@ -61,7 +62,18 @@ Site:
       - active
       - rolling_back
       - rolled_back
+      - deleting
       - failed
+    settings:
+      $ref: '#/SiteSettings'
+    deploymentMode:
+      description: >-
+        Who owns the document root: the panel (standard) or a release tree the
+        deployer publishes into (deployer). Always present on a site read.
+      type: string
+      enum:
+      - standard
+      - deployer
     lastJobId:
       type: integer
       format: int64
@@ -73,6 +85,234 @@ Site:
     updatedAt:
       type: string
       format: date-time
+SiteSettings:
+  type: object
+  additionalProperties: false
+  description: >-
+    Per-site Nginx/PHP-FPM tuning. Every field is optional; an absent field
+    falls back to a hardened default, so an empty object ({}) re-renders the
+    baseline configuration identically.
+  properties:
+    hsts:
+      type: boolean
+      description: Emit an HTTP Strict-Transport-Security response header.
+    hstsMaxAge:
+      type: integer
+      minimum: 0
+      maximum: 63072000
+      description: >-
+        HSTS max-age in seconds; only used when hsts is enabled. An explicit 0
+        (or absent) falls back to 15552000 (180 days).
+    http2:
+      type: boolean
+      description: Enable HTTP/2. Absent defaults to on.
+    http3:
+      type: boolean
+      description: Enable HTTP/3 (QUIC). Absent or false defaults to off.
+    httpsRedirect:
+      type: boolean
+      description: >-
+        Redirect plain HTTP to HTTPS with a 301 on the port-80 server block.
+        Absent defaults to true, which is the historical behaviour; an explicit
+        false makes port 80 serve the site directly instead. The setting only
+        has an effect once the site has a TLS certificate, and the ACME
+        challenge location stays reachable over plain HTTP either way, so
+        certificate issuance and renewal are unaffected. Note that an absent
+        value and an explicit true render identically; OpenAPI cannot express
+        that "absent means on" on a plain boolean, so it is documented here in
+        prose (the same convention used for http2).
+    subdirectory:
+      type: string
+      maxLength: 128
+      pattern: '^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$'
+      description: >-
+        Document root to serve, relative to the site's public/ directory (for
+        example `dist` or `app/public`). Absent or empty serves public/ itself.
+        It is public-relative rather than site-root-relative on purpose: the
+        site's logs/, private/, tmp/, and backups/ directories are siblings of
+        public/, so a root-relative value could publish them. Traversal (`..`),
+        absolute paths, and non-canonical values are rejected, and the directory
+        is created on the node when the setting is applied.
+    charset:
+      type: string
+      enum:
+      - ''
+      - 'off'
+      - utf-8
+      - iso-8859-1
+      - iso-8859-2
+      - iso-8859-15
+      - windows-1251
+      - windows-1252
+      - koi8-r
+      - koi8-u
+      - big5
+      - euc-jp
+      - euc-kr
+      - gb2312
+      - shift_jis
+      description: >-
+        Character set advertised by Nginx for this site. Absent or empty emits
+        no `charset` directive at all, leaving the character set entirely to the
+        application's own Content-Type header — that is the default and it is
+        byte-identical to the configuration Nexa generated before this setting
+        existed. An explicit `off` emits `charset off;`, which differs from
+        absent only in that it also overrides a charset inherited from the
+        server-wide http{} configuration. Values are lowercased server-side and
+        must be one of the enumerated tokens; arbitrary charset names are
+        rejected so the token can never escape the directive.
+    gzip:
+      type: boolean
+      description: Enable gzip response compression. Absent defaults to on.
+    gzipLevel:
+      type: integer
+      minimum: 1
+      maximum: 9
+      description: gzip compression level. 0 or absent falls back to 5.
+    staticCacheDays:
+      type: integer
+      minimum: 0
+      maximum: 3650
+      description: >-
+        Number of days to cache static assets via an expires header. Absent
+        defaults to 30. An explicit 0 emits no expires header, which differs
+        from absent; OpenAPI cannot express that distinction on a plain
+        integer, so it is documented here in prose.
+    clientMaxBodyMb:
+      type: integer
+      minimum: 1
+      maximum: 2048
+      description: >-
+        Nginx client_max_body_size in megabytes (note the lowercase 'b' in the
+        key). Absent defaults to 64.
+    pmMode:
+      type: string
+      enum:
+      - ondemand
+      - dynamic
+      - static
+      description: PHP-FPM process manager mode. Absent defaults to ondemand.
+    pmMaxChildren:
+      type: integer
+      minimum: 1
+      maximum: 1024
+      description: PHP-FPM pm.max_children. 0 or absent falls back to 3.
+    pmMaxRequests:
+      type: integer
+      minimum: 0
+      maximum: 100000
+      description: >-
+        PHP-FPM pm.max_requests. Absent defaults to 500. An explicit 0 means
+        unlimited, which differs from absent; OpenAPI cannot express that
+        distinction on a plain integer, so it is documented here in prose.
+    accessLog:
+      type: boolean
+      description: Write the Nginx access log for this site. Absent defaults to on.
+    errorLog:
+      type: boolean
+      description: Write the Nginx error log for this site. Absent defaults to on.
+    indexFiles:
+      type: array
+      maxItems: 8
+      items:
+        type: string
+        maxLength: 64
+        pattern: '^[A-Za-z0-9_-][A-Za-z0-9._-]*$'
+      description: >-
+        Ordered list of application files Nginx tries when a directory is
+        requested (the `index` directive). Absent or empty renders the baseline
+        `index.php index.html`. Entries must be plain filenames — no directory
+        separators, no traversal, no leading dot — and are emitted in exactly
+        the order given, which is the order Nginx tries them. Duplicates are
+        rejected. The first entry ending in `.php` also becomes the front
+        controller that `location /` falls back to; when no entry ends in
+        `.php` the fallback stays `index.php`.
+    workingDirectory:
+      type: string
+      maxLength: 128
+      pattern: '^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$'
+      description: >-
+        PHP-FPM `chdir` for this site's worker processes, relative to the SITE
+        ROOT (for example `public` or `app`). Absent or empty chdirs to the
+        site root itself. This is a different axis from `subdirectory`, which
+        is relative to public/ and selects the document root Nginx publishes:
+        this setting publishes nothing, it only sets a worker's initial working
+        directory, so it may legitimately name a directory outside public/.
+        Traversal (`..`), absolute paths, and non-canonical values are
+        rejected, and the directory is created on the node when the setting is
+        applied. Depth is capped at 8 segments.
+    basicAuth:
+      $ref: '#/SiteBasicAuth'
+    rateLimit:
+      $ref: '#/SiteRateLimit'
+    logRotation:
+      $ref: '#/SiteLogRotation'
+SiteBasicAuth:
+  type: object
+  additionalProperties: false
+  properties:
+    enabled:
+      type: boolean
+    realm:
+      type: string
+      maxLength: 64
+      description: HTTP basic-auth realm. Absent or empty falls back to "Restricted".
+    username:
+      type: string
+      pattern: ^[a-z0-9_-]{1,32}$
+    password:
+      type: string
+      writeOnly: true
+      maxLength: 256
+      description: >-
+        Plaintext password, hashed server-side. An empty value on save keeps
+        the current password. Always empty on read.
+SiteRateLimit:
+  type: object
+  additionalProperties: false
+  properties:
+    enabled:
+      type: boolean
+    requestsPerSecond:
+      type: integer
+      minimum: 1
+      maximum: 10000
+    burst:
+      type: integer
+      minimum: 0
+      maximum: 10000
+SiteLogRotation:
+  type: object
+  additionalProperties: false
+  description: >-
+    Optional logrotate stanza for the site's own logs (logs/access.log,
+    logs/error.log, logs/php-error.log). Absent or disabled emits no file at
+    all, which is the historical behaviour: Nexa does not rotate site logs
+    unless this is turned on.
+  properties:
+    enabled:
+      type: boolean
+      description: >-
+        Write /etc/logrotate.d/nexa-<slug>. Disabling it stops the panel from
+        managing the file on the next apply.
+    keepFiles:
+      type: integer
+      minimum: 1
+      maximum: 365
+      description: >-
+        Number of rotated copies to keep before the oldest is discarded
+        (logrotate `rotate N`). 0 or absent falls back to 14.
+    frequency:
+      type: string
+      enum:
+      - hourly
+      - daily
+      - weekly
+      description: >-
+        Rotation interval. Absent or empty falls back to daily. `hourly` is
+        only honoured if the node invokes logrotate hourly; the Debian/Ubuntu
+        default logrotate.timer fires once a day, in which case an hourly
+        stanza rotates at most once per day.
 SiteArtifact:
   type: object
   required:
@@ -87,6 +327,9 @@ SiteArtifact:
       - site-root
       - php-fpm-pool
       - nginx-site
+      - nginx-ratelimit
+      - nginx-htpasswd
+      - logrotate
     path:
       type: string
     mode:
@@ -95,6 +338,13 @@ SiteArtifact:
       type: string
 SitePlan:
   type: object
+  description: >-
+    A signed node configuration plan. This endpoint is readable with sites.read,
+    so basic-auth credential material is withheld from the response: the
+    passwordHash field is empty and the password file's body, before-state, and
+    digest read "[redacted]". Only the response is redacted — the stored plan
+    keeps the real credential, which the node needs to re-render the file
+    byte-identically when the plan is applied.
   required:
   - id
   - kind
@@ -122,6 +372,23 @@ SitePlan:
       type: array
       items:
         type: object
+    retired:
+      type: array
+      items:
+        type: string
+      description: >-
+        Managed paths this site must not have once the plan is applied — the
+        conditional artifacts (rate-limit zone, htpasswd file, logrotate stanza)
+        whose setting is currently off. The node re-derives this list from the
+        plan's settings and refuses any path it would not itself have produced,
+        so a plan can only ever delete files the operator owns for this site.
+    retiredBefore:
+      type: array
+      items:
+        type: object
+      description: >-
+        Pre-apply snapshots of the retired paths, so a rollback can restore
+        whatever the removal took away.
     enabledBefore:
       type: boolean
     warnings:
@@ -161,6 +428,8 @@ SitePlanTarget:
       type: string
     socketPath:
       type: string
+    settings:
+      $ref: '#/SiteSettings'
     routes:
       type: array
       items:

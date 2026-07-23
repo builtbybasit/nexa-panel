@@ -32,7 +32,7 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "jobs_unavailable", "Jobs could not be loaded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{"items": redactJobsForAPI(items)})
 }
 
 func (m *Module) getHTTP(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +51,7 @@ func (m *Module) getHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "job_not_found", "The job does not exist.")
 		return
 	}
-	writeJSON(w, http.StatusOK, job)
+	writeJSON(w, http.StatusOK, redactJobForAPI(job))
 }
 
 func (m *Module) diagnosticsHTTP(w http.ResponseWriter, r *http.Request) {
@@ -77,7 +77,7 @@ func (m *Module) diagnosticsHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, job)
+	writeJSON(w, http.StatusAccepted, redactJobForAPI(job))
 }
 
 func (m *Module) eventsHTTP(w http.ResponseWriter, r *http.Request) {

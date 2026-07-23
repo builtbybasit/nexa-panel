@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
@@ -86,6 +87,20 @@ func (m *Module) claim(ctx context.Context) (jobModel, error) {
 	return model, err
 }
 
+// invokeHandler runs a job handler and converts any panic into a returned
+// error so it flows through the same failure path as a normally returned error,
+// keeping the single worker goroutine and the whole process alive.
+func (m *Module) invokeHandler(ctx context.Context, handler Handler, model *jobModel, report func(int, string) error) (result any, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			m.panics.Add(1)
+			m.logger.Error("job handler panic recovered", "job_id", model.ID, "kind", model.Kind, "error", recovered, "stack", string(debug.Stack()))
+			err = fmt.Errorf("job handler panicked: %v", recovered)
+		}
+	}()
+	return handler(ctx, json.RawMessage(model.RequestJSON), report)
+}
+
 func (m *Module) execute(workerContext context.Context, model jobModel) {
 	m.handlersMu.RLock()
 	registration, registered := m.handlers[model.Kind]
@@ -126,7 +141,7 @@ func (m *Module) execute(workerContext context.Context, model jobModel) {
 		return nil
 	}
 
-	result, err := registration.handler(executionContext, json.RawMessage(model.RequestJSON), report)
+	result, err := m.invokeHandler(executionContext, registration.handler, &model, report)
 	cancelExecution()
 	<-heartbeatDone
 	select {
@@ -314,8 +329,9 @@ func (m *Module) wake() {
 	}
 }
 
+// recordAudit writes the generic queue bookkeeping entry. Job lifecycle events
+// are high-volume and are not the security record of a change — the modules
+// record their own targeted entry — so they stay best-effort.
 func (m *Module) recordAudit(ctx context.Context, entry audit.Entry) {
-	if err := m.audit.Record(ctx, entry); err != nil {
-		m.logger.Error("record job audit event", "action", entry.Action, "error", err)
-	}
+	m.Audit().RecordBestEffort(ctx, entry)
 }

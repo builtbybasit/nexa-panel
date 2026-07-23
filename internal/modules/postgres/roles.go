@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	postgresoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/postgres"
 )
@@ -52,6 +53,10 @@ func (m *Module) CreateRole(ctx context.Context, request CreateRoleRequest, acto
 	}
 	model.LastJobID = &job.ID
 	_, err = m.attachJob(ctx, resourceRole, id, job.ID, StatusPlanning)
+	m.jobs.Audit().RecordBestEffort(ctx, audit.Entry{
+		ActorUserID: actor, Action: "postgresql.role_created", Subject: "postgresql-role:" + id,
+		Metadata: map[string]any{"name": model.Name, "instanceId": model.InstanceID},
+	})
 	return model.toRole(), job, err
 }
 

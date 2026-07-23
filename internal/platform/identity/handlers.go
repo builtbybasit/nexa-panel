@@ -21,41 +21,69 @@ func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	response := map[string]any{
 		"bootstrapRequired": bootstrapRequired, "authenticated": false,
-		"mfaEnabled": false, "mfaChallengeRequired": false, "mfaEnrollmentRequired": false,
+		"mfaEnabled": false, "mfaChallengeRequired": false, "mfaEnrollmentRecommended": false,
+		// The bootstrap and password-change forms render the policy as
+		// requirements, so it rides along on the status the UI already fetches
+		// before anyone is signed in.
+		"passwordPolicy": passwordPolicy(),
+	}
+	// Tell the setup UI whether this caller must present the out-of-band bootstrap
+	// token: a loopback operator may bootstrap directly, a remote one must supply
+	// the token the server printed to its owner-only file.
+	if bootstrapRequired {
+		response["bootstrapTokenRequired"] = !m.bootstrapRequestAllowed(r, "")
 	}
 	if person, err := m.authenticate(r.Context(), r); err == nil {
 		response["user"] = person.User
 		enrolled := person.TOTPConfirmedAt != nil
 		response["mfaEnabled"] = enrolled
-		if person.Role == "admin" && !enrolled {
-			response["mfaEnrollmentRequired"] = true
-		} else if enrolled && person.MFAVerifiedAt == nil {
+		// Enrollment is optional for every role: a password-only session is fully
+		// authenticated, and the missing factor is only a recommendation the UI may
+		// surface. An enrolled session stays unauthenticated until it answers.
+		if enrolled && person.MFAVerifiedAt == nil {
 			response["mfaChallengeRequired"] = true
 		} else {
 			response["authenticated"] = true
+			response["mfaEnrollmentRecommended"] = !enrolled
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
+type bootstrapRequest struct {
+	credentials
+	// BootstrapToken is the body-field alternative to the X-Nexa-Bootstrap-Token
+	// header for callers that cannot set custom headers.
+	BootstrapToken string `json:"bootstrapToken,omitempty"`
+}
+
 func (m *Module) bootstrapHTTP(w http.ResponseWriter, r *http.Request) {
-	var input credentials
+	var input bootstrapRequest
 	if err := decodeJSON(w, r, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	input.Username = strings.TrimSpace(input.Username)
-	if err := validateCredentials(input); err != nil {
+	// An unauthenticated REMOTE client must never be able to claim the admin
+	// account on a public bind: require either loopback access or the bootstrap
+	// token before any account is created.
+	if !m.bootstrapRequestAllowed(r, input.BootstrapToken) {
+		m.recordAudit(r.Context(), audit.Entry{Action: "identity.bootstrap", Subject: "user:pending", RemoteAddress: remoteAddress(r), Metadata: map[string]any{"result": "forbidden"}})
+		writeError(w, http.StatusForbidden, "bootstrap_forbidden", "First-run setup must be proven from the server: supply the bootstrap token or connect from the local host.")
+		return
+	}
+	creds := input.credentials
+	creds.Username = strings.TrimSpace(creds.Username)
+	if err := validateCredentials(creds); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_credentials", err.Error())
 		return
 	}
-	passwordHash, err := hashPassword(input.Password, m.parameters)
+	passwordHash, err := hashPassword(creds.Password, m.parameters)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "identity_unavailable", "Administrator could not be created.")
 		return
 	}
 
-	user := User{ID: randomID(16), Username: input.Username, Role: "admin"}
+	user := User{ID: randomID(16), Username: creds.Username, Role: "admin"}
 	now := m.now().UTC()
 	err = m.database.RunInTx(r.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
 		exists, err := tx.NewSelect().Model((*userModel)(nil)).Exists(ctx)
@@ -81,7 +109,13 @@ func (m *Module) bootstrapHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "session_unavailable", "Administrator was created, but a session could not be started.")
 		return
 	}
+	// The administrator now exists: permanently close the bootstrap window and
+	// remove the on-disk token so it can never be replayed.
+	m.clearBootstrapToken()
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &user.ID, Action: "identity.bootstrap", Subject: "user:" + user.ID, RemoteAddress: remoteAddress(r)})
+	// The administrator is signed in already. First run is the natural moment to
+	// offer a second factor, so the client is pointed at enrollment — an offer it
+	// may skip, never a gate.
 	writeJSON(w, http.StatusCreated, map[string]any{"user": user, "next": "mfa_enrollment"})
 }
 
@@ -125,13 +159,11 @@ func (m *Module) loginHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = m.database.NewUpdate().Model((*userModel)(nil)).
 		Set("last_login_at = ?", lastLogin).Where("id = ?", user.ID).Exec(r.Context())
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &user.ID, Action: "identity.password_accepted", Subject: "user:" + user.ID, RemoteAddress: remoteAddress(r)})
+	// MFA is optional to enroll, so an account without a confirmed factor is signed
+	// in on its password alone; an enrolled one must answer the challenge first.
 	next := "mfa_challenge"
 	if model.TOTPConfirmedAt == nil {
-		if user.Role == "admin" {
-			next = "mfa_enrollment"
-		} else {
-			next = "authenticated"
-		}
+		next = "authenticated"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": user, "next": next})
 }
@@ -193,7 +225,7 @@ func (m *Module) changePasswordHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Your current password is required.")
 		return
 	}
-	if err := validatePassword(input.NewPassword); err != nil {
+	if err := validatePassword(input.NewPassword, person.Username); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_credentials", err.Error())
 		return
 	}
@@ -243,6 +275,11 @@ func (m *Module) changePasswordHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (m *Module) logoutHTTP(w http.ResponseWriter, r *http.Request) {
 	person, err := m.requireSession(r)
+	if errors.Is(err, errCSRFRejected) {
+		m.logger.Warn("rejected sign-out without a valid CSRF token", "path", r.URL.Path, "remote", remoteAddress(r))
+		writeError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return

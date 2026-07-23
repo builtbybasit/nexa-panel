@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 )
 
@@ -81,6 +83,25 @@ func (m *Module) prepareHTTP(w http.ResponseWriter, r *http.Request) {
 		verb = "Renew"
 	case "revoke":
 		verb = "Revoke"
+	}
+	// Recorded before the submit so a revocation — the destructive operation, it
+	// tears the live certificate off the site — is never queued unattributed.
+	// Issue and renew are additive and stay best-effort.
+	entry := audit.Entry{
+		ActorUserID: &user.ID, Action: "certificate." + request.Operation + "_requested",
+		Subject: "certificate:" + certificate.ID, RemoteAddress: httpapi.RemoteAddress(r),
+		Metadata: map[string]any{
+			"siteId": certificate.SiteID, "primaryDomain": certificate.PrimaryDomain, "domains": certificate.Domains,
+			"before": map[string]any{"status": string(certificate.Status)},
+		},
+	}
+	if request.Operation == "revoke" {
+		if err := m.jobs.Audit().RecordSensitive(r.Context(), entry); err != nil {
+			writeError(w, 503, "audit_unavailable", "The revocation was refused because it could not be recorded in the audit log.")
+			return
+		}
+	} else {
+		m.jobs.Audit().RecordBestEffort(r.Context(), entry)
 	}
 	job, err := m.jobs.SubmitTitled(r.Context(), "certificate.plan", verb+" certificate", map[string]string{"certificateId": r.PathValue("id"), "operation": request.Operation}, &user.ID)
 	if err != nil {

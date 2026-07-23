@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 )
@@ -56,6 +57,10 @@ func (m *Module) CreateAccount(ctx context.Context, request CreateAccountRequest
 	}
 	model.LastJobID = &job.ID
 	_, err = m.attachJob(ctx, resourceAccount, id, job.ID, StatusPlanning)
+	m.jobs.Audit().RecordBestEffort(ctx, audit.Entry{
+		ActorUserID: actor, Action: "mysql.account_created", Subject: "mysql-account:" + id,
+		Metadata: map[string]any{"name": model.Name, "host": model.Host, "engineId": model.EngineID},
+	})
 	return model.toAccount(), job, err
 }
 

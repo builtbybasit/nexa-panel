@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	mysqloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/mysql"
 )
@@ -38,8 +39,12 @@ func (m *Module) CreateDatabase(ctx context.Context, request CreateDatabaseReque
 	if err != nil || owner.EngineID != request.EngineID || Status(owner.Status) != StatusActive {
 		return Database{}, jobs.Job{}, errors.New("owner account must be active on the selected engine")
 	}
+	site, err := m.owningSiteID(ctx, request.SiteID)
+	if err != nil {
+		return Database{}, jobs.Job{}, err
+	}
 	now := m.now().UTC()
-	model := &databaseModel{ID: randomResourceID("database"), EngineID: request.EngineID, Name: request.Name, OwnerAccountID: owner.ID, Status: string(StatusPlanning), CreatedAt: now, UpdatedAt: now}
+	model := &databaseModel{ID: randomResourceID("database"), EngineID: request.EngineID, Name: request.Name, OwnerAccountID: owner.ID, SiteID: site, Status: string(StatusPlanning), CreatedAt: now, UpdatedAt: now}
 	if _, err := m.database.NewInsert().Model(model).Exec(ctx); err != nil {
 		return Database{}, jobs.Job{}, friendlyUnique(err, "database name is already managed on this engine")
 	}
@@ -50,7 +55,30 @@ func (m *Module) CreateDatabase(ctx context.Context, request CreateDatabaseReque
 	}
 	model.LastJobID = &job.ID
 	_, err = m.attachJob(ctx, resourceDatabase, model.ID, job.ID, StatusPlanning)
+	m.jobs.Audit().RecordBestEffort(ctx, audit.Entry{
+		ActorUserID: actor, Action: "mysql.database_created", Subject: "mysql-database:" + model.ID,
+		Metadata: map[string]any{"name": model.Name, "engineId": model.EngineID, "ownerAccountId": owner.ID, "ownerAccount": owner.Name, "siteId": request.SiteID},
+	})
 	return model.toDatabase(), job, err
+}
+
+// owningSiteID resolves the optional site a database is being created for. The
+// row is verified to exist here rather than left to the foreign key so the
+// caller gets a request error instead of an opaque constraint failure, and the
+// sites table is read directly because this module must not depend on the sites
+// module (which reads these tables during teardown).
+func (m *Module) owningSiteID(ctx context.Context, siteID string) (*string, error) {
+	if strings.TrimSpace(siteID) == "" {
+		return nil, nil
+	}
+	exists, err := m.database.NewSelect().TableExpr("sites").Where("id = ?", siteID).Count(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if exists == 0 {
+		return nil, errors.New("the site this database belongs to does not exist")
+	}
+	return &siteID, nil
 }
 
 // sizeRefreshInterval bounds how often a list request re-measures databases.

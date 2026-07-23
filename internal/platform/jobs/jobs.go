@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -103,7 +104,13 @@ type Module struct {
 	done       chan struct{}
 	startOnce  sync.Once
 	closeOnce  sync.Once
+	panics     atomic.Uint64
 }
+
+// PanicCount reports how many job handler panics have been recovered by the
+// worker. It mirrors the control-plane HTTP panic counter and is exposed for
+// observability and tests.
+func (m *Module) PanicCount() uint64 { return m.panics.Load() }
 
 type jobModel struct {
 	bun.BaseModel  `bun:"table:jobs,alias:job"`

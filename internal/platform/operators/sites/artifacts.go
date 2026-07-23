@@ -30,11 +30,35 @@ func (o *HostOperator) validatePlan(plan Plan) error {
 			return errors.New("site activation plan contains an unmanaged artifact")
 		}
 	}
+	// The retired list drives deletions, so it is held to the same standard as the
+	// artifacts: it must match the freshly re-rendered list exactly, in order, and
+	// carry one snapshot per path. A plan can therefore only remove a path this
+	// renderer would itself have produced for this site.
+	if len(plan.Retired) != len(expected.Retired) || len(plan.RetiredBefore) != len(plan.Retired) {
+		return errors.New("site activation plan contains an unmanaged removal")
+	}
+	for index, path := range plan.Retired {
+		if path != expected.Retired[index] || plan.RetiredBefore[index].Path != path {
+			return errors.New("site activation plan contains an unmanaged removal")
+		}
+	}
 	return nil
 }
 
 func (o *HostOperator) checkBefore(plan Plan) error {
 	for _, expected := range plan.Before {
+		current, err := readSnapshot(expected.Path)
+		if err != nil {
+			return err
+		}
+		if current.Exists != expected.Exists || current.Digest != expected.Digest {
+			return errors.New("site state changed after planning; create a new plan")
+		}
+	}
+	// A retired path is about to be deleted and its snapshot is the only record of
+	// what was there, so it gets the same drift check: if it changed since
+	// planning, the snapshot can no longer roll the removal back faithfully.
+	for _, expected := range plan.RetiredBefore {
 		current, err := readSnapshot(expected.Path)
 		if err != nil {
 			return err
@@ -62,8 +86,26 @@ func (o *HostOperator) writeArtifacts(artifacts []Artifact) error {
 	return nil
 }
 
+// removeRetired deletes the conditional artifacts whose setting is now off. A
+// path that is already absent is the normal case — every site that has never
+// enabled a conditional setting retires all three — so a missing file is not an
+// error.
+func (o *HostOperator) removeRetired(plan Plan) error {
+	for _, path := range plan.Retired {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (o *HostOperator) restore(plan Plan) error {
 	var failures []string
+	for index := len(plan.RetiredBefore) - 1; index >= 0; index-- {
+		if err := writeSnapshot(plan.RetiredBefore[index]); err != nil {
+			failures = append(failures, err.Error())
+		}
+	}
 	for index := len(plan.Before) - 1; index >= 0; index-- {
 		if err := writeSnapshot(plan.Before[index]); err != nil {
 			failures = append(failures, err.Error())

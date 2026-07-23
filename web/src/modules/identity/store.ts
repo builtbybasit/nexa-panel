@@ -1,5 +1,8 @@
 import { defineStore } from 'pinia'
 
+import { appQueryClient } from '@/shared/query/client'
+import { requestDiscardUnsavedChanges } from '@/shared/navigation/unsavedChanges'
+
 import { hasPermission, type Permission } from './permissions'
 
 import {
@@ -9,10 +12,12 @@ import {
   getIdentityStatus,
   login as loginRequest,
   logout as logoutRequest,
+  recoverAdministratorMFA,
   verifyMFA,
   type AuthenticationNext,
   type MFAEnrollment,
   type PasswordResponse,
+  type PasswordPolicy,
   type User,
 } from './api'
 
@@ -26,6 +31,11 @@ export const useIdentityStore = defineStore('identity', {
     user: undefined as User | undefined,
     /** Whether the signed-in account has a confirmed second factor. */
     mfaEnabled: false,
+    /** The account could add a second factor. A nudge only: enrollment is optional. */
+    mfaEnrollmentRecommended: false,
+    bootstrapTokenRequired: false,
+    /** Undefined until the server publishes its policy; forms render nothing before then. */
+    passwordPolicy: undefined as PasswordPolicy | undefined,
     enrollment: undefined as MFAEnrollment | undefined,
     recoveryCodes: [] as string[],
     error: '',
@@ -42,13 +52,11 @@ export const useIdentityStore = defineStore('identity', {
         const status = await getIdentityStatus()
         this.user = status.user
         this.mfaEnabled = status.mfaEnabled
-        // Second-factor setup is optional, so we never force the enroll phase on
-        // load: an account without MFA is simply authenticated.
+        this.mfaEnrollmentRecommended = status.mfaEnrollmentRecommended
+        this.bootstrapTokenRequired = status.bootstrapTokenRequired
+        this.passwordPolicy = status.passwordPolicy
         if (status.bootstrapRequired) this.phase = 'bootstrap'
-        else if (status.mfaEnrollmentRequired) {
-          this.phase = 'enroll'
-          await this.prepareEnrollment()
-        } else if (status.mfaChallengeRequired) this.phase = 'challenge'
+        else if (status.mfaChallengeRequired) this.phase = 'challenge'
         else if (status.authenticated) this.phase = 'authenticated'
         else this.phase = 'login'
       } catch (error) {
@@ -58,8 +66,8 @@ export const useIdentityStore = defineStore('identity', {
         this.loading = false
       }
     },
-    async bootstrap(username: string, password: string) {
-      await this.runPassword(() => bootstrapRequest(username, password))
+    async bootstrap(username: string, password: string, bootstrapToken = '') {
+      await this.runPassword(() => bootstrapRequest(username, password, bootstrapToken))
     },
     async login(username: string, password: string) {
       await this.runPassword(() => loginRequest(username, password))
@@ -69,6 +77,7 @@ export const useIdentityStore = defineStore('identity', {
       this.error = ''
       try {
         const response = await action()
+        appQueryClient.clear()
         this.user = response.user
         this.setNextPhase(response.next)
         if (this.phase === 'enroll') await this.prepareEnrollment()
@@ -80,13 +89,15 @@ export const useIdentityStore = defineStore('identity', {
       }
     },
     setNextPhase(next: AuthenticationNext) {
+      // `mfa_enrollment` is the server offering a second factor, not demanding
+      // one: the session behind it is already authenticated, so this phase is
+      // always skippable.
+      this.mfaEnrollmentRecommended = next === 'mfa_enrollment'
       if (next === 'mfa_enrollment') this.phase = 'enroll'
       else if (next === 'mfa_challenge') this.phase = 'challenge'
       else this.phase = 'authenticated'
     },
-    /** Non-admin accounts may defer MFA; administrators must complete enrollment. */
     skipEnrollment() {
-      if (this.user?.role === 'admin') return
       this.enrollment = undefined
       this.error = ''
       this.phase = 'authenticated'
@@ -94,6 +105,7 @@ export const useIdentityStore = defineStore('identity', {
     /** Reflect an enable/disable performed from the in-panel account security page. */
     setMfaEnabled(enabled: boolean) {
       this.mfaEnabled = enabled
+      this.mfaEnrollmentRecommended = !enabled
     },
     async prepareEnrollment() {
       this.loading = true
@@ -114,6 +126,7 @@ export const useIdentityStore = defineStore('identity', {
         this.recoveryCodes = response.recoveryCodes
         this.enrollment = undefined
         this.mfaEnabled = true
+        this.mfaEnrollmentRecommended = false
         this.phase = 'recovery'
       })
     },
@@ -121,11 +134,29 @@ export const useIdentityStore = defineStore('identity', {
       this.recoveryCodes = []
       this.phase = 'authenticated'
     },
+    /**
+     * Answer the sign-in challenge. A recovery code signs in every role — it is a
+     * single-use factor, not a bypass — so an administrator who lost their phone
+     * lands in the panel and can replace or disable the factor from there.
+     */
     async verify(code: string, recovery: boolean) {
       await this.runMFA(async () => {
         this.user = await verifyMFA(code, recovery)
         this.mfaEnabled = true
         this.phase = 'authenticated'
+      })
+    },
+    /**
+     * Replace a lost administrator factor from the challenge itself. The server
+     * spends the recovery code, retires the old secret and hands back fresh
+     * enrollment material, so the operator continues straight into pairing.
+     */
+    async recoverEnrollment(recoveryCode: string) {
+      await this.runMFA(async () => {
+        this.enrollment = await recoverAdministratorMFA(recoveryCode)
+        this.mfaEnabled = false
+        this.mfaEnrollmentRecommended = true
+        this.phase = 'enroll'
       })
     },
     async runMFA(action: () => Promise<void>) {
@@ -141,20 +172,26 @@ export const useIdentityStore = defineStore('identity', {
       }
     },
     async logout() {
+      if (!requestDiscardUnsavedChanges()) return
       this.loading = true
       this.error = ''
       try {
         await logoutRequest()
-        this.user = undefined
-        this.mfaEnabled = false
-        this.phase = 'login'
-        this.enrollment = undefined
-        this.recoveryCodes = []
+        this.expireSession()
       } catch (error) {
         this.error = error instanceof Error ? error.message : 'Sign out failed.'
       } finally {
         this.loading = false
       }
+    },
+    expireSession() {
+      appQueryClient.clear()
+      this.user = undefined
+      this.mfaEnabled = false
+      this.mfaEnrollmentRecommended = false
+      this.phase = 'login'
+      this.enrollment = undefined
+      this.recoveryCodes = []
     },
   },
 })

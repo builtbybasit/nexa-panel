@@ -15,6 +15,7 @@ User:
       type: string
       enum:
       - viewer
+      - developer
       - operator
       - admin
 UserResponse:
@@ -35,9 +36,11 @@ PasswordResponse:
     next:
       type: string
       description: >-
-        Where the client should go next. `mfa_enrollment` is mandatory for an
-        administrator without a confirmed factor; `mfa_challenge` is required
-        for an enrolled account; `authenticated` means no further step is needed.
+        Where the client should go next. `mfa_enrollment` is an offer, not a
+        gate: the session is already authenticated and the client may skip it.
+        `mfa_challenge` is mandatory for an account with a confirmed factor —
+        the session stays unauthenticated until the challenge is answered.
+        `authenticated` means no further step is needed.
       enum:
       - mfa_enrollment
       - mfa_challenge
@@ -49,7 +52,8 @@ IdentityStatus:
   - authenticated
   - mfaEnabled
   - mfaChallengeRequired
-  - mfaEnrollmentRequired
+  - mfaEnrollmentRecommended
+  - passwordPolicy
   properties:
     bootstrapRequired:
       type: boolean
@@ -60,14 +64,58 @@ IdentityStatus:
       description: Whether the current session's account has a confirmed second factor.
     mfaChallengeRequired:
       type: boolean
-    mfaEnrollmentRequired:
+      description: >-
+        Whether the enrolled account must answer its second-factor challenge
+        before the session is authenticated. This is never skippable.
+    mfaEnrollmentRecommended:
       type: boolean
-      description: Whether the administrator must finish MFA enrollment before using protected routes.
+      description: >-
+        Whether the authenticated account has no second factor and could add one.
+        Enrollment is optional for every role, including admin, so this is a
+        recommendation the client may surface but must never block on.
+    bootstrapTokenRequired:
+      type: boolean
+      description: Whether a remote bootstrap request must include the server-issued bootstrap token.
+    passwordPolicy:
+      $ref: '#/PasswordPolicy'
     user:
       $ref: '#/User'
+PasswordPolicy:
+  type: object
+  description: >-
+    The set-time password policy the server enforces, published so sign-up and
+    password-change forms can render exactly the same requirements. The denylist
+    itself is never exposed, only the fact that one is applied.
+  required:
+  - minLength
+  - maxLength
+  - requiredClasses
+  - classExemptLength
+  - denylistApplied
+  - rejectsUsername
+  properties:
+    minLength:
+      type: integer
+    maxLength:
+      type: integer
+    requiredClasses:
+      type: integer
+      description: How many of lowercase, uppercase, digit and symbol a password must mix.
+    classExemptLength:
+      type: integer
+      description: Length at or above which a passphrase is exempt from the character-class rule.
+    denylistApplied:
+      type: boolean
+      description: Whether common and predictable passwords are rejected.
+    rejectsUsername:
+      type: boolean
+      description: Whether a password containing the account's username is rejected.
 TOTPCode:
   type: string
   pattern: ^[0-9]{6}$
+RecoveryCode:
+  type: string
+  pattern: ^[A-Fa-f0-9]{4}(-[A-Fa-f0-9]{4}){3}$
 MFAEnrollment:
   type: object
   required:
@@ -147,5 +195,25 @@ Credentials:
     password:
       type: string
       format: password
+      minLength: 1
+      maxLength: 1024
+BootstrapRequest:
+  type: object
+  additionalProperties: false
+  required:
+  - username
+  - password
+  properties:
+    username:
+      type: string
+      minLength: 3
+      maxLength: 64
+    password:
+      type: string
+      format: password
+      minLength: 1
+      maxLength: 1024
+    bootstrapToken:
+      type: string
       minLength: 1
       maxLength: 1024

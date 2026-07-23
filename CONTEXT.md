@@ -130,3 +130,33 @@ _Avoid_: Job, log line
 **Site Grant**:
 An administrator-managed assignment that limits a developer account to specific sites; ungranted sites stay invisible.
 _Avoid_: Share, permission flag, role
+
+## Deployments
+
+**SSH Access**:
+Interactive shell login to a site delivered through the site's own Unix Owner, an sshd drop-in, and a set of operator-installed authorized keys; mutually exclusive with that site's SFTP jail.
+_Avoid_: SFTP access, shell account, root login
+
+**Deploy Key**:
+The site-scoped keypair generated on the node so the site's Unix Owner can read one Git repository; only the public half and its fingerprint ever reach the control plane.
+_Avoid_: Access token, credential, private key
+
+**Deployer Mode**:
+The site setting under which an external deploy tool owns the served tree, so the panel renders the virtual host against the Current Release and never manages a file beneath it.
+_Avoid_: Git mode, deployment method, standard mode
+
+**Release**:
+One immutable directory of application files placed under a site's release tree by a deploy tool and owned by that site's Unix Owner; the panel observes releases but never writes one.
+_Avoid_: Build, version, artifact
+
+**Current Release**:
+The symlink the deploy tool swaps to publish a Release, and the only path the virtual host and Runtime Pool of a deployer-mode site resolve through.
+_Avoid_: Live directory, latest release, document root
+
+**Shared Path**:
+The per-site directory of state that outlives every Release — uploads, caches, and the shared environment file — linked into each Release by the deploy tool.
+_Avoid_: Persistent volume, storage, site root
+
+**Prepared Node**:
+A node observed to carry every tool a deploy needs, recorded by a preparation run that installs what is missing and reports, without changing, whether the firewall still admits SSH.
+_Avoid_: Provisioned server, healthy node, prerequisite check

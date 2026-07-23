@@ -28,14 +28,14 @@ type Module struct {
 	sites    SiteCatalog
 	access   AccessPolicy
 	operator filesoperator.Operator
-	audit    audit.Recorder
+	audit    audit.Sink
 }
 
 func New(queue *jobs.Module, catalog SiteCatalog, access AccessPolicy, operator filesoperator.Operator, recorder audit.Recorder) (*Module, error) {
 	if queue == nil || catalog == nil || access == nil || operator == nil || recorder == nil {
 		return nil, errors.New("files jobs, site catalog, access policy, operator, and audit recorder are required")
 	}
-	m := &Module{jobs: queue, sites: catalog, access: access, operator: operator, audit: recorder}
+	m := &Module{jobs: queue, sites: catalog, access: access, operator: operator, audit: audit.NewSink(recorder, nil)}
 	if err := queue.RegisterHandler("files.archive", m.archiveJob); err != nil {
 		return nil, err
 	}
@@ -70,6 +70,7 @@ func (m *Module) Register(registry module.Registry) error {
 		{"POST /api/v1/sites/{id}/files/mkdir", "files.write", http.HandlerFunc(m.mkdirHTTP)},
 		{"POST /api/v1/sites/{id}/files/move", "files.write", http.HandlerFunc(m.moveHTTP)},
 		{"POST /api/v1/sites/{id}/files/copy", "files.write", http.HandlerFunc(m.copyHTTP)},
+		{"POST /api/v1/sites/{id}/files/chmod", "files.write", http.HandlerFunc(m.chmodHTTP)},
 		{"POST /api/v1/sites/{id}/files/delete", "files.write", http.HandlerFunc(m.deleteHTTP)},
 		{"POST /api/v1/sites/{id}/files/uploads", "files.write", http.HandlerFunc(m.uploadBeginHTTP)},
 		{"PUT /api/v1/sites/{id}/files/uploads/{uploadId}", "files.write", http.HandlerFunc(m.uploadChunkHTTP)},

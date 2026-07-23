@@ -12,7 +12,11 @@ import (
 )
 
 func (m *Module) applyRouting(ctx context.Context, site sites.Site, routes []siteoperator.Route, tls *siteoperator.TLS, tlsDomains []string) error {
-	plan, err := m.siteOperator.Plan(ctx, siteoperator.Site{ID: site.ID, Slug: site.Slug, PrimaryDomain: site.PrimaryDomain, PHPVersion: site.PHPVersion, UnixUser: site.UnixUser, RootPath: site.RootPath, SocketPath: site.SocketPath, Routes: routes, TLS: tls, TLSDomains: tlsDomains})
+	definition, err := m.sites.Definition(ctx, site.ID, routes, tls, tlsDomains)
+	if err != nil {
+		return err
+	}
+	plan, err := m.siteOperator.Plan(ctx, definition)
 	if err != nil {
 		return err
 	}

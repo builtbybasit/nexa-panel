@@ -14,6 +14,7 @@ const identity = useIdentityStore()
 const username = ref('')
 const password = ref('')
 const confirmPassword = ref('')
+const bootstrapToken = ref('')
 const verificationCode = ref('')
 const useRecoveryCode = ref(false)
 const localError = ref('')
@@ -33,7 +34,22 @@ const headline = computed(() => {
 })
 const errorMessage = computed(() => localError.value || identity.error)
 const enrollmentFailed = computed(() => !identity.enrollment && !identity.loading && !!identity.error)
-const enrollmentRequired = computed(() => identity.user?.role === 'admin')
+const passwordPolicy = computed(() => identity.passwordPolicy)
+/**
+ * The server's policy, rendered rule for rule rather than paraphrased — the
+ * denylist and username rules are the two that surprise people at submit time.
+ * Empty until the status response arrives, so nothing is ever guessed here.
+ */
+const passwordRequirements = computed(() => {
+  const policy = passwordPolicy.value
+  if (!policy) return []
+  return [
+    `${policy.minLength}–${policy.maxLength} characters.`,
+    `Mix at least ${policy.requiredClasses} of lowercase, uppercase, digits and symbols — unless the passphrase is ${policy.classExemptLength} characters or longer.`,
+    ...(policy.denylistApplied ? ['Common and predictable passwords are rejected.'] : []),
+    ...(policy.rejectsUsername ? ['The password cannot contain your username.'] : []),
+  ]
+})
 
 function focusCodeField(select = false) {
   const el = codeField.value?.$el as HTMLInputElement | undefined
@@ -48,10 +64,11 @@ async function submitCredentials() {
     return
   }
   try {
-    if (isBootstrap.value) await identity.bootstrap(username.value, password.value)
+    if (isBootstrap.value) await identity.bootstrap(username.value, password.value, bootstrapToken.value)
     else await identity.login(username.value, password.value)
     password.value = ''
     confirmPassword.value = ''
+    bootstrapToken.value = ''
   } catch {
     // The store exposes the server-safe error below.
   }
@@ -63,6 +80,20 @@ async function submitMFA() {
     if (identity.phase === 'enroll') await identity.confirmEnrollment(verificationCode.value)
     else await identity.verify(verificationCode.value, useRecoveryCode.value)
     verificationCode.value = ''
+  } catch {
+    // The store exposes the server-safe error below; reselect the code for a quick retry.
+    await nextTick()
+    focusCodeField(true)
+  }
+}
+
+/** Spend a recovery code to retire a lost authenticator and pair a new one. */
+async function replaceAuthenticator() {
+  localError.value = ''
+  try {
+    await identity.recoverEnrollment(verificationCode.value)
+    verificationCode.value = ''
+    useRecoveryCode.value = false
   } catch {
     // The store exposes the server-safe error below; reselect the code for a quick retry.
     await nextTick()
@@ -163,10 +194,15 @@ function downloadRecoveryCodes() {
             <p class="mt-1.5 text-sm text-ink-secondary">
               {{
                 isBootstrap
-                  ? 'Use at least 12 characters. Administrators must connect an authenticator before entering the panel.'
+                  ? 'Choose a password that satisfies the requirements this server enforces.'
                   : 'Enter your username and password to continue.'
               }}
             </p>
+            <ul v-if="isBootstrap && passwordRequirements.length" class="mt-2 space-y-1 text-[13px] text-ink-muted">
+              <li v-for="requirement in passwordRequirements" :key="requirement" class="flex gap-2">
+                <span aria-hidden="true">•</span><span>{{ requirement }}</span>
+              </li>
+            </ul>
           </div>
 
           <FormField label="Username">
@@ -187,11 +223,33 @@ function downloadRecoveryCodes() {
               type="password"
               :autocomplete="isBootstrap ? 'new-password' : 'current-password'"
               required
-              :minlength="isBootstrap ? 12 : 1"
+              :minlength="isBootstrap ? passwordPolicy?.minLength : 1"
+              :maxlength="passwordPolicy?.maxLength"
             />
           </FormField>
           <FormField v-if="isBootstrap" label="Confirm password">
-            <AppInput v-model="confirmPassword" name="confirm-password" type="password" autocomplete="new-password" required minlength="12" />
+            <AppInput
+              v-model="confirmPassword"
+              name="confirm-password"
+              type="password"
+              autocomplete="new-password"
+              required
+              :minlength="passwordPolicy?.minLength"
+              :maxlength="passwordPolicy?.maxLength"
+            />
+          </FormField>
+          <FormField
+            v-if="isBootstrap && identity.bootstrapTokenRequired"
+            label="Server setup token"
+            hint="Read this one-time token from /etc/nexa-panel/bootstrap.token on the server."
+          >
+            <AppInput
+              v-model.trim="bootstrapToken"
+              name="bootstrap-token"
+              type="password"
+              autocomplete="off"
+              required
+            />
           </FormField>
 
           <AppAlert v-if="errorMessage" tone="danger">{{ errorMessage }}</AppAlert>
@@ -203,13 +261,13 @@ function downloadRecoveryCodes() {
         <form v-else-if="identity.phase === 'enroll'" class="space-y-4" @submit.prevent="submitMFA">
           <div class="mb-6">
             <p class="text-[11px] font-bold tracking-[0.14em] text-accent-400 uppercase">
-              {{ enrollmentRequired ? 'Required administrator factor' : 'Recommended second factor' }}
+              Recommended second factor
             </p>
             <h2 class="mt-1.5 text-2xl font-semibold tracking-tight text-ink">Connect an authenticator</h2>
             <p class="mt-1.5 text-sm text-ink-secondary">
               A code from your authenticator means a stolen password alone can never reach your servers. Scan the QR
-              code with any authenticator app, then enter its six-digit code.
-              <template v-if="!enrollmentRequired"> You can also defer this and enable it later from account security.</template>
+              code with any authenticator app, then enter its six-digit code. You can also defer this and enable it
+              later from account security.
             </p>
           </div>
 
@@ -251,7 +309,6 @@ function downloadRecoveryCodes() {
             Verify and enable two-factor authentication
           </AppButton>
           <button
-            v-if="!enrollmentRequired"
             type="button"
             class="w-full text-center text-[13px] font-medium text-ink-secondary transition-colors hover:text-ink"
             :disabled="identity.loading"
@@ -303,6 +360,17 @@ function downloadRecoveryCodes() {
           </button>
           <AppAlert v-if="errorMessage" tone="danger">{{ errorMessage }}</AppAlert>
           <AppButton variant="primary" type="submit" :loading="identity.loading" class="w-full">Verify and sign in</AppButton>
+          <!-- Administrators whose authenticator is gone for good pair a new one here; the
+               same recovery code is spent either way, so this never weakens the challenge. -->
+          <AppButton
+            v-if="useRecoveryCode"
+            type="button"
+            class="w-full"
+            :disabled="identity.loading || !verificationCode"
+            @click="replaceAuthenticator"
+          >
+            Replace my authenticator instead
+          </AppButton>
           <button
             type="button"
             class="w-full text-center text-[13px] font-medium text-ink-muted transition-colors hover:text-ink"

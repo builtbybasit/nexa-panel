@@ -34,6 +34,12 @@ type MoveRequest struct {
 	Overwrite bool         `json:"overwrite"`
 }
 
+type ChmodRequest struct {
+	Scope sitefs.Scope `json:"scope"`
+	Path  string       `json:"path"`
+	Mode  string       `json:"mode"`
+}
+
 type CopyRequest struct {
 	Scope sitefs.Scope `json:"scope"`
 	From  string       `json:"from"`
@@ -118,6 +124,12 @@ func (c *UnixClient) Mkdir(ctx context.Context, scope sitefs.Scope, path string)
 func (c *UnixClient) Move(ctx context.Context, scope sitefs.Scope, from, to string, overwrite bool) (Entry, error) {
 	var entry Entry
 	err := c.call(ctx, "/v1/files/move", MoveRequest{Scope: scope, From: from, To: to, Overwrite: overwrite}, &entry)
+	return entry, err
+}
+
+func (c *UnixClient) Chmod(ctx context.Context, scope sitefs.Scope, path, mode string) (Entry, error) {
+	var entry Entry
+	err := c.call(ctx, "/v1/files/chmod", ChmodRequest{Scope: scope, Path: path, Mode: mode}, &entry)
 	return entry, err
 }
 

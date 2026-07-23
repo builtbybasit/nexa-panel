@@ -12,11 +12,15 @@ import (
 type NodeSystem interface {
 	PrepareSite(ctx context.Context, site Site) error
 	SecureArtifacts(ctx context.Context, site Site, artifacts []Artifact) error
+	VerifyDocumentRoot(ctx context.Context, site Site) error
 	ValidatePHP(ctx context.Context, version string) error
 	ValidateNginx(ctx context.Context) error
 	ReloadPHP(ctx context.Context, version string) error
 	ReloadNginx(ctx context.Context) error
 	VerifyHost(ctx context.Context, site Site) error
+	// RemoveSite is PrepareSite's counterpart: it deletes the account and the
+	// directory tree PrepareSite created, and nothing else.
+	RemoveSite(ctx context.Context, site Site) error
 }
 
 type HostOperator struct {
@@ -72,11 +76,57 @@ func (o *HostOperator) Plan(_ context.Context, site Site) (Plan, error) {
 		filtered = append(filtered, artifact)
 	}
 	plan.Artifacts = filtered
+	// Snapshot the retired paths too, so restore() can put back a stanza that a
+	// failed activation had already removed.
+	plan.RetiredBefore = make([]Snapshot, 0, len(plan.Retired))
+	for _, path := range plan.Retired {
+		before, err := readSnapshot(path)
+		if err != nil {
+			return Plan{}, err
+		}
+		plan.RetiredBefore = append(plan.RetiredBefore, before)
+	}
 	plan.EnabledBefore, err = o.enabled(site.Slug)
 	if err != nil {
 		return Plan{}, err
 	}
 	return plan, nil
+}
+
+// PlanTeardown renders the site exactly as Plan does — validatePlan re-renders
+// and demands byte-exact equality, so the artifacts must still be the real ones —
+// but reports an empty before-state for every managed path. Rolling this plan
+// back therefore removes each artifact and leaves the vhost disabled. The
+// retired paths are blanked the same way, so a conditional artifact is removed
+// whether or not its setting happened to be on when the site was torn down.
+func (o *HostOperator) PlanTeardown(ctx context.Context, site Site) (Plan, error) {
+	plan, err := o.Plan(ctx, site)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan.Before = make([]Snapshot, len(plan.Artifacts))
+	for index := range plan.Artifacts {
+		plan.Before[index] = Snapshot{Path: plan.Artifacts[index].Path}
+	}
+	plan.RetiredBefore = make([]Snapshot, len(plan.Retired))
+	for index, path := range plan.Retired {
+		plan.RetiredBefore[index] = Snapshot{Path: path}
+	}
+	plan.EnabledBefore = false
+	plan.Teardown = true
+	return plan, nil
+}
+
+// Purge removes the site's managed Unix account and its managed site root, the
+// two pieces of host state no artifact covers. It runs after the teardown
+// rollback has stripped the configuration, and is verified rather than trusted:
+// the site is re-validated against this renderer, so only the account and root
+// derived from a well-formed slug can ever be named.
+func (o *HostOperator) Purge(ctx context.Context, site Site) error {
+	if err := o.renderer.validate(site); err != nil {
+		return err
+	}
+	return o.system.RemoveSite(ctx, site)
 }
 
 func (o *HostOperator) Apply(ctx context.Context, plan Plan) (Observation, error) {
@@ -95,11 +145,17 @@ func (o *HostOperator) Apply(ctx context.Context, plan Plan) (Observation, error
 	if err := o.writeArtifacts(plan.Artifacts); err != nil {
 		return Observation{}, o.rollbackFailure(ctx, plan, err)
 	}
+	if err := o.removeRetired(plan); err != nil {
+		return Observation{}, o.rollbackFailure(ctx, plan, err)
+	}
 	if err := o.system.SecureArtifacts(ctx, plan.Site, plan.Artifacts); err != nil {
 		return Observation{}, o.rollbackFailure(ctx, plan, fmt.Errorf("secure site artifacts: %w", err))
 	}
 	if err := o.setEnabled(plan.Site.Slug, true); err != nil {
 		return Observation{}, o.rollbackFailure(ctx, plan, err)
+	}
+	if err := o.system.VerifyDocumentRoot(ctx, plan.Site); err != nil {
+		return Observation{}, o.rollbackFailure(ctx, plan, fmt.Errorf("verify site document root: %w", err))
 	}
 	if err := o.system.ValidatePHP(ctx, plan.Site.PHPVersion); err != nil {
 		return Observation{}, o.rollbackFailure(ctx, plan, fmt.Errorf("validate PHP-FPM configuration: %w", err))
@@ -142,7 +198,19 @@ func (o *HostOperator) Rollback(ctx context.Context, plan Plan) (Observation, er
 		if err != nil {
 			return Observation{}, err
 		}
-		if !current.Exists || current.Digest != digestString(artifact.Content) {
+		// A teardown converges: an artifact it wants gone that is already gone is
+		// the end state it is driving towards, not drift. This is what lets a
+		// retried or resumed teardown finish instead of refusing forever once the
+		// first attempt has removed anything. An artifact that is still present
+		// gets the ordinary rollback's digest gate either way, so drifted content
+		// is never blindly deleted.
+		if !current.Exists {
+			if plan.Teardown {
+				continue
+			}
+			return Observation{}, errors.New("managed site changed after activation; automatic rollback is unsafe")
+		}
+		if current.Digest != digestString(artifact.Content) {
 			return Observation{}, errors.New("managed site changed after activation; automatic rollback is unsafe")
 		}
 	}

@@ -50,8 +50,18 @@ func (o *HostOperator) Apply(ctx context.Context, plan Plan) (Observation, error
 // returns the site's directives as they now read. No FPM reload is needed: PHP
 // re-reads .user.ini per-directory on its own user_ini refresh cycle.
 func (o *HostOperator) saveSiteSettings(ctx context.Context, change Change) (Observation, error) {
-	scope := *change.Site
-	values, err := readININil(userIniPath(scope.RootPath))
+	// Re-normalized rather than trusted: the scope reaches here through a
+	// persisted, signed plan, but it is what resolves the path this call writes,
+	// and the boundary is cheap to re-cross.
+	scope, err := o.normalizeSiteScope(ctx, *change.Site)
+	if err != nil {
+		return Observation{}, err
+	}
+	path, err := userIniPath(scope)
+	if err != nil {
+		return Observation{}, err
+	}
+	values, err := readININil(path)
 	if err != nil {
 		return Observation{}, err
 	}

@@ -44,6 +44,10 @@ type CreateDatabaseRequest struct {
 	EngineID       string `json:"engineId"`
 	Name           string `json:"name"`
 	OwnerAccountID string `json:"ownerAccountId"`
+	// Optional: the site this database is being created for. Recording it here
+	// is what lets a site teardown find its databases by relation instead of by
+	// guessing at their names.
+	SiteID string `json:"siteId,omitempty"`
 }
 
 type CreateGrantRequest struct {

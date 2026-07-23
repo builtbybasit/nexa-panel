@@ -2,6 +2,7 @@ package admintools
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -148,6 +149,171 @@ func TestLaunchTokenExchangesOnceForScopedHttpOnlySession(t *testing.T) {
 	}
 }
 
+// newLaunchGatewayModule builds a launch-capable module on a real control-plane
+// database with a clock the test drives, so session lifetime is exercised
+// without sleeping.
+func newLaunchGatewayModule(t *testing.T, clock *time.Time) *Module {
+	t.Helper()
+	ctx := context.Background()
+	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistence.RunMigrations(ctx, database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	auditLog, err := audit.New(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, err := jobs.NewWithConfig(ctx, database, auditLog, slog.New(slog.NewTextHandler(io.Discard, nil)), jobs.Config{PollInterval: 5 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := secrets.New(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := admintooloperator.Defaults()
+	for index := range tools {
+		tools[index].Status = "active"
+	}
+	resolver := func(context.Context, string, string, string) (Credential, error) {
+		return Credential{Host: "host.containers.internal", Port: 5432, Database: "app_db", Username: "app_user", Secret: []byte("database-secret")}, nil
+	}
+	module, err := New(ctx, database, queue, &fakeOperator{tools: tools}, WithLaunchGateway(cipher, resolver, auditLog))
+	if err != nil {
+		t.Fatal(err)
+	}
+	module.now = func() time.Time { return *clock }
+	if _, err := module.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return module
+}
+
+// toolSubRequest models the XHR/fetch traffic pgAdmin's SPA issues after the
+// first navigation — the requests that were failing with a 401 minutes into a
+// working session.
+func toolSubRequest(kind admintooloperator.Kind, sessionToken string) *http.Request {
+	request := httptest.NewRequest(http.MethodGet, "/tools/"+string(kind)+"/browser/nodes/server/1/", nil)
+	request.Header.Set("X-Requested-With", "XMLHttpRequest")
+	request.Header.Set("Accept", "application/json")
+	request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionToken})
+	return request
+}
+
+func establishToolSession(t *testing.T, module *Module, kind admintooloperator.Kind, engine string, user identity.User) string {
+	t.Helper()
+	ctx := context.Background()
+	launchToken, path, err := module.CreateLaunch(ctx, kind, LaunchRequest{SourceEngine: engine, DatabaseID: "database-1", AccountID: "account-1"}, user, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	request.AddCookie(&http.Cookie{Name: launchCookieName, Value: launchToken})
+	_, sessionToken, exchanged, err := module.authorizeProxy(ctx, kind, user.ID, request)
+	if err != nil || !exchanged {
+		t.Fatalf("launch exchange failed: exchanged=%v err=%v", exchanged, err)
+	}
+	return sessionToken
+}
+
+func TestActiveToolSessionSlidesPastTheLaunchDeadlineButNotPastTheLifetimeCap(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now().UTC().Truncate(time.Second)
+	module := newLaunchGatewayModule(t, &clock)
+	user := identity.User{ID: "user-1", Username: "admin", Role: "admin"}
+	sessionToken := establishToolSession(t, module, admintooloperator.PGAdmin, "postgresql", user)
+
+	// Steady sub-request traffic well past the former fixed 15-minute deadline.
+	for elapsed := 0; elapsed < 90; elapsed += 5 {
+		clock = clock.Add(5 * time.Minute)
+		model, observed, _, err := module.authorizeProxy(ctx, admintooloperator.PGAdmin, user.ID, toolSubRequest(admintooloperator.PGAdmin, sessionToken))
+		if err != nil || observed != sessionToken {
+			t.Fatalf("active tool session expired after %d minutes of continuous use: %v", elapsed+5, err)
+		}
+		if !model.SessionExpiresAt.After(clock) {
+			t.Fatalf("session deadline %s was not slid past the clock %s", model.SessionExpiresAt, clock)
+		}
+	}
+	// The slide is bounded: activity cannot keep a launch alive indefinitely.
+	clock = clock.Add(toolSessionMaxLifetime)
+	if _, _, _, err := module.authorizeProxy(ctx, admintooloperator.PGAdmin, user.ID, toolSubRequest(admintooloperator.PGAdmin, sessionToken)); err == nil {
+		t.Fatal("tool session outlived the absolute lifetime cap")
+	}
+}
+
+func TestToolSessionRenewalIsSkippedWhileMostOfTheIdleWindowRemains(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now().UTC().Truncate(time.Second)
+	module := newLaunchGatewayModule(t, &clock)
+	user := identity.User{ID: "user-1", Username: "admin", Role: "admin"}
+	sessionToken := establishToolSession(t, module, admintooloperator.PGAdmin, "postgresql", user)
+
+	clock = clock.Add(time.Minute)
+	_, _, renewed, err := module.authorizeProxy(ctx, admintooloperator.PGAdmin, user.ID, toolSubRequest(admintooloperator.PGAdmin, sessionToken))
+	if err != nil || renewed {
+		t.Fatalf("an early sub-request wrote a renewal: renewed=%v err=%v", renewed, err)
+	}
+	clock = clock.Add(toolSessionRenewAfter)
+	_, _, renewed, err = module.authorizeProxy(ctx, admintooloperator.PGAdmin, user.ID, toolSubRequest(admintooloperator.PGAdmin, sessionToken))
+	if err != nil || !renewed {
+		t.Fatalf("the deadline was not extended once the renewal threshold passed: renewed=%v err=%v", renewed, err)
+	}
+}
+
+func TestIdleToolSessionExpires(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now().UTC().Truncate(time.Second)
+	module := newLaunchGatewayModule(t, &clock)
+	user := identity.User{ID: "user-1", Username: "admin", Role: "admin"}
+	sessionToken := establishToolSession(t, module, admintooloperator.PGAdmin, "postgresql", user)
+
+	clock = clock.Add(toolSessionIdleWindow + time.Minute)
+	if _, _, _, err := module.authorizeProxy(ctx, admintooloperator.PGAdmin, user.ID, toolSubRequest(admintooloperator.PGAdmin, sessionToken)); err == nil {
+		t.Fatal("an idle tool session remained authorized past the idle window")
+	}
+}
+
+func TestToolSessionIsNotUsableByAnotherPanelUser(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now().UTC().Truncate(time.Second)
+	module := newLaunchGatewayModule(t, &clock)
+	owner := identity.User{ID: "user-1", Username: "admin", Role: "admin"}
+	other := identity.User{ID: "user-2", Username: "operator", Role: "admin"}
+
+	launchToken, path, err := module.CreateLaunch(ctx, admintooloperator.PHPMyAdmin, LaunchRequest{SourceEngine: "mysql", DatabaseID: "database-1", AccountID: "account-1"}, owner, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stolenLaunch := httptest.NewRequest(http.MethodGet, path, nil)
+	stolenLaunch.AddCookie(&http.Cookie{Name: launchCookieName, Value: launchToken})
+	if _, _, _, err := module.authorizeProxy(ctx, admintooloperator.PHPMyAdmin, other.ID, stolenLaunch); err == nil {
+		t.Fatal("a second panel user redeemed another user's launch token")
+	}
+	// The rejection must not have burned the owner's single-use launch.
+	ownerLaunch := httptest.NewRequest(http.MethodGet, path, nil)
+	ownerLaunch.AddCookie(&http.Cookie{Name: launchCookieName, Value: launchToken})
+	_, sessionToken, exchanged, err := module.authorizeProxy(ctx, admintooloperator.PHPMyAdmin, owner.ID, ownerLaunch)
+	if err != nil || !exchanged {
+		t.Fatalf("owner could not redeem their own launch after the cross-user attempt: %v", err)
+	}
+	if _, _, _, err := module.authorizeProxy(ctx, admintooloperator.PHPMyAdmin, other.ID, toolSubRequest(admintooloperator.PHPMyAdmin, sessionToken)); err == nil {
+		t.Fatal("a second panel user used another user's established tool session")
+	}
+	// A cross-user attempt must not slide the owner's deadline either.
+	clock = clock.Add(toolSessionIdleWindow - time.Minute)
+	if _, _, _, err := module.authorizeProxy(ctx, admintooloperator.PHPMyAdmin, other.ID, toolSubRequest(admintooloperator.PHPMyAdmin, sessionToken)); err == nil {
+		t.Fatal("a second panel user used another user's established tool session")
+	}
+	clock = clock.Add(2 * time.Minute)
+	if _, _, _, err := module.authorizeProxy(ctx, admintooloperator.PHPMyAdmin, owner.ID, toolSubRequest(admintooloperator.PHPMyAdmin, sessionToken)); err == nil {
+		t.Fatal("a foreign request kept the owner's session alive")
+	}
+}
+
 func TestPGAdminProxyHeaderIsDerivedServerSideAndStripsClientForgery(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/tools/pgadmin/", nil)
 	request.Header.Set("X-Nexa-PgAdmin-forged", "attacker@nexa.example.com")
@@ -214,7 +380,9 @@ func TestAdminToolProxyConfinesUpstreamRedirectsAndCookies(t *testing.T) {
 	response.Header.Add("Set-Cookie", "nexa_session=forged; Path=/; Domain=panel.example.com")
 	response.Header.Add("Set-Cookie", "pga4_session=tool-session; Path=/; Domain=panel.example.com")
 
-	rewriteAdminToolProxyResponse(response, admintooloperator.PGAdmin, "/tools/pgadmin", true)
+	if err := rewriteAdminToolProxyResponse(response, admintooloperator.PGAdmin, "/tools/pgadmin", true); err != nil {
+		t.Fatal(err)
+	}
 	if got := response.Header.Get("Location"); got != "/tools/pgadmin/steal?next=1" {
 		t.Fatalf("Location = %q, want a panel-local tool path", got)
 	}
@@ -227,6 +395,108 @@ func TestAdminToolProxyConfinesUpstreamRedirectsAndCookies(t *testing.T) {
 	}
 	if cookies[0].Domain != "" || cookies[0].Path != "/tools/pgadmin/" || !cookies[0].HttpOnly || !cookies[0].Secure || cookies[0].SameSite != http.SameSiteStrictMode {
 		t.Fatalf("tool cookie was not securely scoped: %+v", cookies[0])
+	}
+}
+
+func TestPGAdminHTMLRootAssetsStayInsideTheAuthorizedToolPrefix(t *testing.T) {
+	body := `<html><head><link href="/browser/browser.css"><script src='/static/vendor/require.min.js'></script></head><body><a href="/tools/pgadmin/browser/">Browser</a></body></html>`
+	response := &http.Response{
+		Header:        make(http.Header),
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+	}
+	response.Header.Set("Content-Type", "text/html; charset=utf-8")
+	response.Header.Set("Content-Length", fmt.Sprint(len(body)))
+	if err := rewriteAdminToolProxyResponse(response, admintooloperator.PGAdmin, "/tools/pgadmin", false); err != nil {
+		t.Fatal(err)
+	}
+	rewritten, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(rewritten)
+	for _, escaped := range []string{`href="/browser/`, `src='/static/`} {
+		if strings.Contains(text, escaped) {
+			t.Fatalf("pgAdmin asset escaped the authenticated proxy prefix: %s", text)
+		}
+	}
+	for _, wanted := range []string{`href="/tools/pgadmin/browser/browser.css"`, `src='/tools/pgadmin/static/vendor/require.min.js'`} {
+		if !strings.Contains(text, wanted) {
+			t.Fatalf("rewritten pgAdmin page is missing %q: %s", wanted, text)
+		}
+	}
+	if strings.Count(text, "/tools/pgadmin/tools/pgadmin/") != 0 {
+		t.Fatalf("an already-prefixed URL was rewritten twice: %s", text)
+	}
+}
+
+// phpMyAdmin is served natively rather than through pgAdmin's script-name
+// contract, so the gateway must neither invent subpath metadata for it nor
+// rewrite its HTML — while still confining its redirects and cookies.
+func TestPHPMyAdminProxyGetsNoSubpathMetadata(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "https://panel.example.com/tools/phpmyadmin/index.php", nil)
+	request.Header.Set("X-Script-Name", "/attacker-prefix")
+	request.Header.Set("X-Scheme", "javascript")
+	sanitizeAdminToolProxyRequest(request, admintooloperator.PHPMyAdmin, nil)
+
+	if got := request.Header.Get("X-Script-Name"); got != "" {
+		t.Fatalf("X-Script-Name = %q, want no forwarded value for phpMyAdmin", got)
+	}
+	if got := request.Header.Get("X-Scheme"); got != "" {
+		t.Fatalf("X-Scheme = %q, want no forwarded value for phpMyAdmin", got)
+	}
+}
+
+func TestPHPMyAdminProxyConfinesUpstreamRedirectsAndCookies(t *testing.T) {
+	response := &http.Response{Header: make(http.Header)}
+	response.Header.Set("Location", "//attacker.example/steal?next=1")
+	response.Header.Set("X-Sendfile", "/internal/secrets")
+	response.Header.Set("Access-Control-Allow-Origin", "*")
+	response.Header.Add("Set-Cookie", "nexa_session=forged; Path=/; Domain=panel.example.com")
+	response.Header.Add("Set-Cookie", "phpMyAdmin=tool-session; Path=/; Domain=panel.example.com")
+	response.Header.Add("Set-Cookie", "pmaAuth-1=tool-auth; Path=/")
+
+	if err := rewriteAdminToolProxyResponse(response, admintooloperator.PHPMyAdmin, "/tools/phpmyadmin", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Header.Get("Location"); got != "/tools/phpmyadmin/steal?next=1" {
+		t.Fatalf("Location = %q, want a panel-local tool path", got)
+	}
+	if response.Header.Get("X-Sendfile") != "" || response.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("upstream response controls escaped the application proxy: %+v", response.Header)
+	}
+	cookies := response.Cookies()
+	if len(cookies) != 2 || cookies[0].Name != "phpMyAdmin" || cookies[1].Name != "pmaAuth-1" {
+		t.Fatalf("response cookies = %+v, want only the tool cookies", cookies)
+	}
+	for _, cookie := range cookies {
+		if cookie.Domain != "" || cookie.Path != "/tools/phpmyadmin/" || !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteStrictMode {
+			t.Fatalf("tool cookie was not securely scoped: %+v", cookie)
+		}
+	}
+}
+
+func TestPHPMyAdminHTMLIsForwardedWithoutAssetRewriting(t *testing.T) {
+	body := `<html><head><link href="themes/pmahomme/css/theme.css"></head><body><a href="index.php?route=/database">db</a></body></html>`
+	response := &http.Response{
+		Header:        make(http.Header),
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+	}
+	response.Header.Set("Content-Type", "text/html; charset=utf-8")
+	response.Header.Set("Content-Length", fmt.Sprint(len(body)))
+	if err := rewriteAdminToolProxyResponse(response, admintooloperator.PHPMyAdmin, "/tools/phpmyadmin", false); err != nil {
+		t.Fatal(err)
+	}
+	forwarded, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(forwarded) != body {
+		t.Fatalf("phpMyAdmin HTML was rewritten: %s", forwarded)
+	}
+	if got := response.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
 	}
 }
 

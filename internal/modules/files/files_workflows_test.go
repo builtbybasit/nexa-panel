@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -103,6 +104,11 @@ func (o *fakeOperator) Move(_ context.Context, scope sitefs.Scope, from, to stri
 	return filesoperator.Entry{Name: to, Kind: "file"}, o.fail
 }
 
+func (o *fakeOperator) Chmod(_ context.Context, scope sitefs.Scope, path, mode string) (filesoperator.Entry, error) {
+	o.record("Chmod", scope, path, mode)
+	return filesoperator.Entry{Name: path, Kind: "file", Mode: "rwxr-xr-x"}, o.fail
+}
+
 func (o *fakeOperator) Copy(_ context.Context, scope sitefs.Scope, from, to string) (filesoperator.CopyResult, error) {
 	o.record("Copy", scope, from, to)
 	return filesoperator.CopyResult{Copied: 2}, o.fail
@@ -183,6 +189,18 @@ func (r authenticatedRegistry) HandleAuthorized(pattern, permission string, hand
 	return nil
 }
 
+// csrfTokenFor mirrors the double-submit token the identity module binds to a
+// session, so seeded sessions can satisfy the same check real ones do.
+func csrfTokenFor(sessionToken string) string { return "csrf-" + sessionToken }
+
+// authenticate presents both halves of the double submit plus a same-origin
+// signal, which is what the identity middleware requires of an unsafe request.
+func authenticate(request *http.Request, cookie *http.Cookie) {
+	request.AddCookie(cookie)
+	request.Header.Set("Origin", "http://"+request.Host)
+	request.Header.Set("X-CSRF-Token", csrfTokenFor(cookie.Value))
+}
+
 func seedIdentitySession(t *testing.T, database *bun.DB, id, username, role, token string) *http.Cookie {
 	t.Helper()
 	ctx := context.Background()
@@ -193,9 +211,10 @@ func seedIdentitySession(t *testing.T, database *bun.DB, id, username, role, tok
 		t.Fatalf("seed user %s: %v", username, err)
 	}
 	hash := sha256.Sum256([]byte(token))
+	csrfHash := sha256.Sum256([]byte(csrfTokenFor(token)))
 	if _, err := database.ExecContext(ctx,
-		`INSERT INTO identity_sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at, mfa_verified_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		"session_"+id, id, hash[:], now, now.Add(time.Hour), now, now); err != nil {
+		`INSERT INTO identity_sessions (id, user_id, token_hash, csrf_token_hash, created_at, expires_at, last_seen_at, mfa_verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"session_"+id, id, hash[:], csrfHash[:], now, now.Add(time.Hour), now, now); err != nil {
 		t.Fatalf("seed session for %s: %v", username, err)
 	}
 	return &http.Cookie{Name: "nexa_session", Value: token}
@@ -214,6 +233,10 @@ type harness struct {
 }
 
 func newHarness(t *testing.T) *harness {
+	return newHarnessWithRecorder(t, nil)
+}
+
+func newHarnessWithRecorder(t *testing.T, recorder audit.Recorder) *harness {
 	t.Helper()
 	ctx := context.Background()
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
@@ -249,7 +272,10 @@ func newHarness(t *testing.T) *harness {
 	active := sites.Site{ID: "site_active", Slug: "granted", RootPath: "/srv/nexa/sites/granted", UnixUser: "nexa_granted", Status: sites.StatusActive}
 	inactive := sites.Site{ID: "site_planning", Slug: "pending", RootPath: "/srv/nexa/sites/pending", UnixUser: "nexa_pending", Status: sites.StatusPlanning}
 	operator := &fakeOperator{body: []byte("body{color:red}")}
-	filesModule, err := New(queue, fakeCatalog{active.ID: active, inactive.ID: inactive}, fakeAccessPolicy{allowed: map[string]bool{active.ID: true}}, operator, auditLog)
+	if recorder == nil {
+		recorder = auditLog
+	}
+	filesModule, err := New(queue, fakeCatalog{active.ID: active, inactive.ID: inactive}, fakeAccessPolicy{allowed: map[string]bool{active.ID: true}}, operator, recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,6 +293,12 @@ func newHarness(t *testing.T) *harness {
 	}
 }
 
+type unavailableAuditRecorder struct{}
+
+func (unavailableAuditRecorder) Record(context.Context, audit.Entry) error {
+	return errors.New("audit store is locked")
+}
+
 func (h *harness) do(t *testing.T, method, path string, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
 	var reader io.Reader
@@ -274,7 +306,7 @@ func (h *harness) do(t *testing.T, method, path string, body string, cookie *htt
 		reader = strings.NewReader(body)
 	}
 	request := httptest.NewRequest(method, path, reader)
-	request.AddCookie(cookie)
+	authenticate(request, cookie)
 	response := httptest.NewRecorder()
 	h.mux.ServeHTTP(response, request)
 	return response
@@ -404,6 +436,53 @@ func TestFilesWriteAuditAndConflictPassthrough(t *testing.T) {
 	}
 }
 
+func TestFileMutationIsRefusedBeforeTheNodeWhenAuditIsUnavailable(t *testing.T) {
+	h := newHarnessWithRecorder(t, unavailableAuditRecorder{})
+	response := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/files/delete", `{"path":"public/index.php","recursive":false}`, h.admin)
+	if response.Code != http.StatusServiceUnavailable || errorCode(t, response) != "audit_unavailable" {
+		t.Fatalf("delete without audit = %d %s", response.Code, response.Body.String())
+	}
+	if len(h.operator.calls) != 0 {
+		t.Fatalf("node mutation ran before its audit event was durable: %+v", h.operator.calls)
+	}
+}
+
+// TestFileReadsAreAuditedBestEffort pins that content leaving a site root is
+// recorded, and that — unlike a mutation — the read still succeeds when the
+// audit log is unavailable.
+func TestFileReadsAreAuditedBestEffort(t *testing.T) {
+	h := newHarness(t)
+
+	if response := h.do(t, http.MethodGet, "/api/v1/sites/"+h.site.ID+"/files/content?path=public/index.php", "", h.admin); response.Code != http.StatusOK {
+		t.Fatalf("read = %d %s", response.Code, response.Body.String())
+	}
+	if response := h.do(t, http.MethodGet, "/api/v1/sites/"+h.site.ID+"/files/download?path=public/asset.css", "", h.admin); response.Code != http.StatusOK {
+		t.Fatalf("download = %d %s", response.Code, response.Body.String())
+	}
+
+	events, err := h.audit.List(context.Background(), 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wanted := map[string]string{"files.read": "public/index.php", "files.download": "public/asset.css"}
+	for _, event := range events {
+		path, tracked := wanted[event.Action]
+		if !tracked || event.Subject != "site:"+h.site.ID || event.Metadata["path"] != path {
+			continue
+		}
+		delete(wanted, event.Action)
+	}
+	if len(wanted) != 0 {
+		t.Fatalf("missing read audit events %+v in %+v", wanted, events)
+	}
+
+	unauditable := newHarnessWithRecorder(t, unavailableAuditRecorder{})
+	response := unauditable.do(t, http.MethodGet, "/api/v1/sites/"+unauditable.site.ID+"/files/download?path=public/asset.css", "", unauditable.admin)
+	if response.Code != http.StatusOK {
+		t.Fatalf("download without audit = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestFilesUploadChunkAndDownloadStreaming(t *testing.T) {
 	h := newHarness(t)
 	uploadID := strings.Repeat("a", 32)
@@ -511,5 +590,45 @@ func TestFilesJobsEmbedValidatedScope(t *testing.T) {
 	}
 	if response := h.do(t, http.MethodPost, "/api/v1/sites/"+h.inactive.ID+"/files/archive", `{"paths":["public"],"target":"backups/x.tar.gz"}`, h.dev); response.Code != http.StatusNotFound {
 		t.Fatalf("developer archive on hidden = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestFilesChmodWiringAndAudit(t *testing.T) {
+	h := newHarness(t)
+
+	if response := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/files/chmod", `{"path":"public/script.sh","mode":"755"}`, h.viewer); response.Code != http.StatusForbidden {
+		t.Fatalf("viewer chmod = %d %s", response.Code, response.Body.String())
+	}
+
+	response := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/files/chmod", `{"path":"public/script.sh","mode":"755"}`, h.admin)
+	if response.Code != http.StatusOK {
+		t.Fatalf("chmod = %d %s", response.Code, response.Body.String())
+	}
+	var entry filesoperator.Entry
+	if err := json.Unmarshal(response.Body.Bytes(), &entry); err != nil || entry.Mode != "rwxr-xr-x" {
+		t.Fatalf("chmod shape = %s, %v", response.Body.String(), err)
+	}
+	if call := h.operator.last(); call.method != "Chmod" || call.args[0] != "public/script.sh" || call.args[1] != "755" {
+		t.Fatalf("operator chmod call = %+v", call)
+	}
+
+	events, err := h.audit.List(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Action == "files.chmod" && event.Subject == "site:"+h.site.ID && event.Metadata["path"] == "public/script.sh" && event.Metadata["mode"] == "755" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("files.chmod audit event missing from %+v", events)
+	}
+
+	h.operator.fail = &filesoperator.OperationError{Code: filesoperator.CodeInvalid, Message: "The mode must be three octal digits, such as 755."}
+	invalid := h.do(t, http.MethodPost, "/api/v1/sites/"+h.site.ID+"/files/chmod", `{"path":"public/script.sh","mode":"9999"}`, h.admin)
+	if invalid.Code != http.StatusUnprocessableEntity || errorCode(t, invalid) != filesoperator.CodeInvalid {
+		t.Fatalf("invalid mode passthrough = %d %s", invalid.Code, invalid.Body.String())
 	}
 }

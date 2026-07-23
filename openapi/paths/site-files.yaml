@@ -366,6 +366,59 @@ sites_id_files_copy:
           application/json:
             schema:
               $ref: ../components/schemas/common.yaml#/Error
+sites_id_files_chmod:
+  post:
+    operationId: chmodSiteFile
+    summary: Change Site File Permissions
+    tags:
+    - Files
+    x-permission: files.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - $ref: ../components/parameters.yaml#/SiteID
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - path
+            - mode
+            properties:
+              path:
+                type: string
+              mode:
+                type: string
+                description: Three octal digits, such as "755".
+                pattern: ^[0-7]{3}$
+    responses:
+      '200':
+        description: The permissions were changed; the updated entry is returned.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/files.yaml#/FileEntry
+      '404':
+        description: The site or path does not exist.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '409':
+        description: The site is not active.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
+      '422':
+        description: The path is outside the write zone or the mode is not three octal digits.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/common.yaml#/Error
 sites_id_files_delete:
   post:
     operationId: deleteSiteFile

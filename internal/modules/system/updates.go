@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
@@ -16,6 +18,8 @@ import (
 // updateJobKind is the durable job that performs a self-update through the
 // privileged agent.
 const updateJobKind = "system.update"
+
+var errNoUpdateAvailable = errors.New("no panel update is available")
 
 // updates holds the dependencies behind the self-update routes. It is only set
 // when WithUpdates is supplied, so a control plane running without a self-update
@@ -35,7 +39,7 @@ func WithUpdates(queue *jobs.Module, operator selfupdateoperator.Operator) Optio
 			return
 		}
 		m.updates = &updates{jobs: queue, operator: operator}
-		if err := queue.RegisterHandler(updateJobKind, m.applyUpdateJob); err != nil {
+		if err := queue.RegisterHandlerWithOptions(updateJobKind, m.applyUpdateJob, jobs.HandlerOptions{RecoveryPolicy: jobs.RecoveryRetry}); err != nil {
 			m.initErr = err
 		}
 	}
@@ -84,11 +88,17 @@ func (m *Module) applyUpdateHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	title := "Update Nexa Panel"
-	if request.Version != "" {
-		title = "Update Nexa Panel to " + request.Version
+	change, err := m.resolveUpdateChange(r.Context(), request.Version)
+	if err != nil {
+		if errors.Is(err, errNoUpdateAvailable) {
+			httpapi.WriteError(w, http.StatusConflict, "system_update_unavailable", "The node is already running the newest available release.")
+			return
+		}
+		httpapi.WriteError(w, http.StatusServiceUnavailable, "system_update_check_failed", "The node could not resolve the requested release.")
+		return
 	}
-	job, err := m.updates.jobs.SubmitTitled(r.Context(), updateJobKind, title, selfupdateoperator.Change{Version: request.Version}, &user.ID)
+	title := "Update Nexa Panel to " + change.Version
+	job, err := m.updates.jobs.SubmitTitled(r.Context(), updateJobKind, title, change, &user.ID)
 	if err != nil {
 		httpapi.WriteError(w, http.StatusUnprocessableEntity, "system_update_invalid", err.Error())
 		return
@@ -96,20 +106,42 @@ func (m *Module) applyUpdateHTTP(w http.ResponseWriter, r *http.Request) {
 	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"job": job})
 }
 
-// applyUpdateJob proxies the apply to the privileged agent. The agent downloads,
-// verifies, and swaps the binary, then arms a detached restart and returns
-// before it fires — so this handler reports success and completes the job record
-// while the panel is still running, moments before it bounces.
+// resolveUpdateChange turns the convenience "latest" request into an immutable
+// version before it enters the durable queue. A restart retry must ask the agent
+// about the same transaction, not silently advance to a newer release published
+// between attempts.
+func (m *Module) resolveUpdateChange(ctx context.Context, requestedVersion string) (selfupdateoperator.Change, error) {
+	version := strings.TrimSpace(requestedVersion)
+	if version != "" {
+		return selfupdateoperator.Change{Version: version}, nil
+	}
+	availability, err := m.updates.operator.Latest(ctx)
+	if err != nil {
+		return selfupdateoperator.Change{}, fmt.Errorf("resolve latest panel release: %w", err)
+	}
+	if !availability.UpdateAvailable || availability.Latest == nil || strings.TrimSpace(availability.Latest.Version) == "" {
+		return selfupdateoperator.Change{}, errNoUpdateAvailable
+	}
+	return selfupdateoperator.Change{Version: strings.TrimSpace(availability.Latest.Version)}, nil
+}
+
+// applyUpdateJob proxies the pinned release to the privileged agent. The first
+// attempt is interrupted by the API restart; RecoveryRetry invokes it again and
+// the agent's transaction journal then returns only the terminal verified result.
 func (m *Module) applyUpdateJob(ctx context.Context, raw json.RawMessage, report func(progress int, message string) error) (any, error) {
 	var change selfupdateoperator.Change
 	if err := json.Unmarshal(raw, &change); err != nil {
 		return nil, errors.New("invalid system update request")
 	}
-	_ = report(20, "Asking the node to download and verify the release.")
+	if err := report(20, "Asking the node to apply and verify the release transaction."); err != nil {
+		return nil, err
+	}
 	result, err := m.updates.operator.Apply(ctx, change)
 	if err != nil {
 		return nil, err
 	}
-	_ = report(90, "Update installed; the panel will restart momentarily.")
+	if err := report(90, "Update transaction reached a verified terminal state."); err != nil {
+		return nil, err
+	}
 	return result, nil
 }

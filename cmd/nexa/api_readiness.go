@@ -7,18 +7,26 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/agentclient"
+	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/uptrace/bun"
 )
 
-// apiReadiness checks the two local dependencies required for safe request
-// handling: durable control-plane state and an authenticated privileged-agent
-// request. Opening the socket alone is insufficient because a missing or stale
-// credential makes every agent-backed feature unavailable.
+// apiReadiness checks the local dependencies required for safe request
+// handling: a reachable control-plane database, a schema this binary's
+// migrations have actually been applied to, and an authenticated
+// privileged-agent request. Opening the socket alone is insufficient because a
+// missing or stale credential makes every agent-backed feature unavailable, and
+// a reachable database at the wrong schema revision serves errors from every
+// module — which is also exactly what a half-completed self-update leaves
+// behind, so the update's activation health gate depends on this check.
 // It deliberately performs no mutations and relies on the caller's deadline.
 func apiReadiness(database *bun.DB, agentCheck func(context.Context) error) func(context.Context) error {
 	return func(ctx context.Context) error {
 		if err := database.PingContext(ctx); err != nil {
 			return fmt.Errorf("control-plane database: %w", err)
+		}
+		if err := persistence.AssertMigrationsCurrent(ctx, database); err != nil {
+			return fmt.Errorf("control-plane schema: %w", err)
 		}
 		if err := agentCheck(ctx); err != nil {
 			return fmt.Errorf("privileged agent: %w", err)

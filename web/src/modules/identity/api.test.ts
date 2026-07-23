@@ -12,6 +12,7 @@ import {
   IdentityRequestError,
   listUsers,
   logout,
+  recoverAdministratorMFA,
   replaceUserSites,
   updateUser,
   verifyMFA,
@@ -45,10 +46,10 @@ describe('identity API', () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json(response, { status: 201 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(bootstrap('admin', 'a-strong-password')).resolves.toEqual(response)
+    await expect(bootstrap('admin', 'a-strong-password', 'setup-token')).resolves.toEqual(response)
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/bootstrap', {
       method: 'POST',
-      body: JSON.stringify({ username: 'admin', password: 'a-strong-password' }),
+      body: JSON.stringify({ username: 'admin', password: 'a-strong-password', bootstrapToken: 'setup-token' }),
       credentials: 'same-origin',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     })
@@ -68,6 +69,20 @@ describe('identity API', () => {
     await expect(confirmMFA('123456')).resolves.toEqual({ user, recoveryCodes: ['AAAA-BBBB-CCCC-DDDD'] })
     await expect(verifyMFA('AAAA-BBBB-CCCC-DDDD', true)).resolves.toEqual(user)
     expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/v1/auth/mfa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ recoveryCode: 'AAAA-BBBB-CCCC-DDDD' }),
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    })
+  })
+
+  it('uses an administrator recovery code to begin mandatory factor replacement', async () => {
+    const enrollment = { secret: 'NEWSECRETVALUE', provisioningUri: 'otpauth://totp/Nexa%20Panel:admin' }
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(enrollment))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(recoverAdministratorMFA('AAAA-BBBB-CCCC-DDDD')).resolves.toEqual(enrollment)
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/auth/mfa/recover', {
       method: 'POST',
       body: JSON.stringify({ recoveryCode: 'AAAA-BBBB-CCCC-DDDD' }),
       credentials: 'same-origin',

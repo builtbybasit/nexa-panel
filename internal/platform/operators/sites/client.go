@@ -22,6 +22,12 @@ func (c *UnixClient) Plan(ctx context.Context, site Site) (Plan, error) {
 	return plan, err
 }
 
+func (c *UnixClient) PlanTeardown(ctx context.Context, site Site) (Plan, error) {
+	var plan Plan
+	err := c.call(ctx, http.MethodPost, "/v1/sites/teardown-plan", site, &plan)
+	return plan, err
+}
+
 func (c *UnixClient) Apply(ctx context.Context, plan Plan) (Observation, error) {
 	var observation Observation
 	err := c.call(ctx, http.MethodPost, "/v1/sites/apply", plan, &observation)
@@ -32,6 +38,10 @@ func (c *UnixClient) Rollback(ctx context.Context, plan Plan) (Observation, erro
 	var observation Observation
 	err := c.call(ctx, http.MethodPost, "/v1/sites/rollback", plan, &observation)
 	return observation, err
+}
+
+func (c *UnixClient) Purge(ctx context.Context, site Site) error {
+	return c.call(ctx, http.MethodPost, "/v1/sites/purge", site, nil)
 }
 
 func (c *UnixClient) call(ctx context.Context, method, path string, input, output any) error {

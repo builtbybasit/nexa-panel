@@ -29,14 +29,13 @@ export interface SystemOverview {
   warnings: string[]
 }
 
+/**
+ * Node state for the header and sidebar. Both poll it on every authenticated
+ * page, so it has to go through the shared helper: a hand-rolled fetch omits
+ * the background marker and the poll alone would renew the idle timeout.
+ */
 export async function getSystemOverview(): Promise<SystemOverview> {
-  const response = await fetch('/api/v1/system/overview', {
-    headers: { Accept: 'application/json' },
-  })
-  if (!response.ok) {
-    throw new Error(`System overview request failed with status ${response.status}`)
-  }
-  return (await response.json()) as SystemOverview
+  return request<SystemOverview>('/api/v1/system/overview', undefined, 'System overview request')
 }
 
 interface SystemRelease {

@@ -59,6 +59,10 @@ type DomainCatalog interface {
 
 type SiteCatalog interface {
 	Get(context.Context, string) (sites.Site, error)
+	// Definition assembles the full operator site — identity plus persisted
+	// per-site Settings — so re-applying routing after a certificate change keeps
+	// the site's settings intact. The caller supplies the routes and TLS it owns.
+	Definition(ctx context.Context, siteID string, routes []siteoperator.Route, tls *siteoperator.TLS, tlsDomains []string) (siteoperator.Site, error)
 }
 
 type Resolver interface {

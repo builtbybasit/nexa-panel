@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { listCertificates, type Certificate } from '@/modules/certificates/api'
 import { listDomains, type Domain } from '@/modules/domains/api'
@@ -24,9 +24,19 @@ import {
   StatusPill,
 } from '@/shared/ui'
 
-import { activateSite, getSitePlan, listSites, prepareSitePlan, rollbackSite, type SitePlan } from '../api'
+import {
+  activateSite,
+  deleteSite,
+  getSitePlan,
+  listSites,
+  prepareSitePlan,
+  rollbackSite,
+  type Site,
+  type SitePlan,
+} from '../api'
 
 const route = useRoute()
+const router = useRouter()
 const runner = useJobRunner()
 const identity = useIdentityStore()
 
@@ -64,6 +74,7 @@ const planExpiresAt = ref('')
 const planError = ref('')
 const activated = ref(false)
 const rollbackOpen = ref(false)
+const deleteOpen = ref(false)
 const arrived = ref(false)
 const planSection = ref<HTMLElement>()
 
@@ -127,6 +138,8 @@ const tiles = computed<ManageTile[]>(() => {
   if (identity.can('operations.apply')) items.push({ label: 'SFTP access', icon: 'server', to: `/sftp?site=${id}` })
   if (identity.can('logs.read')) items.push({ label: 'Logs', icon: 'file-text', to: `/logs?site=${id}` })
   if (identity.can('backups.read')) items.push({ label: 'Backup copies', icon: 'archive', to: '/backups' })
+  if (identity.can('deploy.read')) items.push({ label: 'Deployment', icon: 'rocket', to: `/sites/${id}/deployment` })
+  items.push({ label: 'Settings', icon: 'settings-2', to: `/sites/${id}/settings` })
   return items
 })
 
@@ -275,6 +288,23 @@ async function rollback() {
   })
 }
 
+async function deleteSiteAction() {
+  const current = site.value
+  if (!current || !canApplyOperations.value) return
+  deleteOpen.value = false
+  // A 409 guard (site_busy / site_has_dependents) rejects the DELETE before a
+  // job is queued; runner.run then surfaces the server's message (which lists
+  // the blocking domains or the certificate to remove first) as runner.error.
+  await runner.run(async () => (await deleteSite(current.id)).id, {
+    onSettled: refreshSite,
+    onSuccess: () => {
+      void router.push('/sites')
+    },
+    failureMessage: 'Deleting the site failed',
+    successToast: `${current.primaryDomain} was deleted`,
+  })
+}
+
 async function preparePlan() {
   const current = site.value
   if (!current || !canWriteSites.value) return
@@ -290,6 +320,7 @@ async function preparePlan() {
   })
 }
 
+
 // On arrival: bring the plan into view, or pick up a job that is already running.
 watch(
   site,
@@ -299,19 +330,22 @@ watch(
     if (current.status === 'plan_ready') {
       await loadPlan()
       await focusPlanSection()
-    } else if (['planning', 'activating', 'rolling_back'].includes(current.status) && current.lastJobId) {
+    } else if (['planning', 'activating', 'rolling_back', 'deleting'].includes(current.status) && current.lastJobId) {
       const wasActivating = current.status === 'activating'
+      const wasDeleting = current.status === 'deleting'
       runner.follow(current.lastJobId, {
         onSettled: refreshSite,
         onSuccess: async () => {
-          if (wasActivating) {
+          if (wasDeleting) {
+            void router.push('/sites')
+          } else if (wasActivating) {
             activated.value = true
           } else if (site.value?.status === 'plan_ready') {
             await loadPlan()
             await focusPlanSection()
           }
         },
-        failureMessage: wasActivating ? 'Activation failed' : 'The operation failed',
+        failureMessage: wasDeleting ? 'Deleting the site failed' : wasActivating ? 'Activation failed' : 'The operation failed',
       })
     }
   },
@@ -324,6 +358,7 @@ watch(siteId, () => {
   arrived.value = false
   activated.value = false
   rollbackOpen.value = false
+  deleteOpen.value = false
   plan.value = undefined
   planExpiresAt.value = ''
   planError.value = ''
@@ -522,9 +557,9 @@ watch(siteId, () => {
 
         <!-- A job is still running -->
         <AppCard
-          v-else-if="['planning', 'activating', 'rolling_back'].includes(site.status)"
+          v-else-if="['planning', 'activating', 'rolling_back', 'deleting'].includes(site.status)"
           eyebrow="Configuration"
-          title="Update in progress"
+          :title="site.status === 'deleting' ? 'Deletion in progress' : 'Update in progress'"
         >
           <AppAlert v-if="!runner.progress.value" tone="info">
             This site is being updated right now.
@@ -656,6 +691,26 @@ watch(siteId, () => {
         </AppCard>
       </div>
 
+      <AppCard
+        v-if="canApplyOperations && site.status !== 'deleting'"
+        eyebrow="Danger zone"
+        title="Delete this site"
+        description="Removes the site's Nginx and PHP-FPM configuration from the server and deletes it from the panel. This cannot be undone."
+      >
+        <AppAlert tone="warning" class="mb-4">
+          Detach any extra domains and remove its TLS certificate first — deletion is blocked while either still points at this
+          site so the server is never left with orphaned configuration.
+        </AppAlert>
+        <AppButton
+          variant="danger"
+          icon="trash"
+          :disabled="runner.busy.value"
+          @click="deleteOpen = true"
+        >
+          Delete site
+        </AppButton>
+      </AppCard>
+
       <AppConfirmDialog
         :open="canApplyOperations && rollbackOpen"
         :title="`Roll back ${site.primaryDomain}`"
@@ -665,6 +720,19 @@ watch(siteId, () => {
         @close="rollbackOpen = false"
       >
         Visitors will see the previous configuration as soon as the rollback finishes.
+      </AppConfirmDialog>
+
+      <AppConfirmDialog
+        :open="canApplyOperations && deleteOpen"
+        :title="`Delete ${site.primaryDomain}`"
+        confirm-label="Delete site"
+        :type-to-confirm="site.primaryDomain"
+        :busy="runner.busy.value"
+        @confirm="deleteSiteAction"
+        @close="deleteOpen = false"
+      >
+        This permanently removes <strong class="font-semibold text-ink">{{ site.displayName }}</strong> and strips its
+        configuration from the server. Visitors will no longer be served. This cannot be undone.
       </AppConfirmDialog>
     </template>
   </section>

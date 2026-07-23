@@ -24,5 +24,11 @@ export const backupsModule: FeatureModule = {
       component: () => import('./views/BackupCopiesView.vue'),
       meta: { moduleId: 'backups' },
     },
+    {
+      path: '/backups/system',
+      name: 'backup-system',
+      component: () => import('./views/SystemBackupsView.vue'),
+      meta: { moduleId: 'backups' },
+    },
   ],
 }

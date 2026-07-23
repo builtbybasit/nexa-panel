@@ -31,23 +31,36 @@ const (
 	StatusActive      Status = "active"
 	StatusRollingBack Status = "rolling_back"
 	StatusRolledBack  Status = "rolled_back"
+	StatusDeleting    Status = "deleting"
 	StatusFailed      Status = "failed"
 )
 
+// Deployment modes. Standard is the panel-owned document root every site has
+// today; deployer hands the release tree under {root}/app to an external
+// deployer and points the vhost at its current release.
+const (
+	DeploymentModeStandard = "standard"
+	DeploymentModeDeployer = "deployer"
+)
+
 type Site struct {
-	ID            string    `json:"id"`
-	Slug          string    `json:"slug"`
-	DisplayName   string    `json:"displayName"`
-	PrimaryDomain string    `json:"primaryDomain"`
-	PHPVersion    string    `json:"phpVersion"`
-	UnixUser      string    `json:"unixUser"`
-	RootPath      string    `json:"rootPath"`
-	SocketPath    string    `json:"socketPath"`
-	Status        Status    `json:"status"`
-	LastJobID     *int64    `json:"lastJobId,omitempty"`
-	Failure       string    `json:"failure,omitempty"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID            string                `json:"id"`
+	Slug          string                `json:"slug"`
+	DisplayName   string                `json:"displayName"`
+	PrimaryDomain string                `json:"primaryDomain"`
+	PHPVersion    string                `json:"phpVersion"`
+	UnixUser      string                `json:"unixUser"`
+	RootPath      string                `json:"rootPath"`
+	SocketPath    string                `json:"socketPath"`
+	Status        Status                `json:"status"`
+	Settings      siteoperator.Settings `json:"settings"`
+	// DeploymentMode is "standard" (the panel owns the document root) or
+	// "deployer" (a release tree owns it); see validDeploymentMode.
+	DeploymentMode string    `json:"deploymentMode"`
+	LastJobID      *int64    `json:"lastJobId,omitempty"`
+	Failure        string    `json:"failure,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type CreateRequest struct {
@@ -68,32 +81,71 @@ type AccessPolicy interface {
 	AccessibleSiteIDs(ctx context.Context, user identity.User) (bool, []string, error)
 }
 
-type Module struct {
-	database *bun.DB
-	jobs     *jobs.Module
-	runtimes RuntimeCatalog
-	operator siteoperator.Operator
-	access   AccessPolicy
-	now      func() time.Time
+// RouteSource and TLSProvider let a settings change on an already-active site
+// re-assemble the *complete* node definition — the extra domains and the TLS
+// certificate — instead of the bare primary-domain view the sites module holds
+// on its own. They are satisfied by the domains and certificates modules and
+// wired in after construction, mirroring how those modules already depend on the
+// sites catalog. When unset (e.g. in tests), settingsJob simply plans the bare
+// site, which is still safe because a bare re-render only drops customizations,
+// never corrupts the vhost.
+type RouteSource interface {
+	Routing(ctx context.Context, siteID, includeID string) ([]siteoperator.Route, error)
 }
+
+type TLSProvider interface {
+	TLSForSite(ctx context.Context, siteID string) (*siteoperator.TLS, []string, error)
+}
+
+type Module struct {
+	database    *bun.DB
+	jobs        *jobs.Module
+	runtimes    RuntimeCatalog
+	operator    siteoperator.Operator
+	access      AccessPolicy
+	routeSource RouteSource
+	tls         TLSProvider
+	// deployTeardown is optional; when unset a teardown simply removes the
+	// sites module's own artifacts, which is the pre-deployer behaviour.
+	deployTeardown DeployTeardown
+	now            func() time.Time
+}
+
+// DeployTeardown withdraws the node-side grants a deploy-side feature installed
+// for a site — today the deployer layout's narrow PHP-FPM reload permission,
+// which lives in /etc/sudoers.d and so outlives the site's own artifacts. The
+// deploy module satisfies it and is wired in after construction, like the other
+// cross-module links here, because it depends on this module in the other
+// direction.
+type DeployTeardown interface {
+	TeardownSiteDeployment(ctx context.Context, siteID string) error
+}
+
+func (m *Module) SetDeployTeardown(teardown DeployTeardown) { m.deployTeardown = teardown }
 
 func (m *Module) SetAccessPolicy(policy AccessPolicy) { m.access = policy }
 
+func (m *Module) SetRouteSource(source RouteSource) { m.routeSource = source }
+
+func (m *Module) SetTLSProvider(provider TLSProvider) { m.tls = provider }
+
 type siteModel struct {
-	bun.BaseModel `bun:"table:sites,alias:site"`
-	ID            string `bun:",pk"`
-	Slug          string
-	DisplayName   string
-	PrimaryDomain string
-	PHPVersion    string
-	UnixUser      string
-	RootPath      string
-	SocketPath    string
-	Status        string
-	LastJobID     *int64
-	Failure       *string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	bun.BaseModel  `bun:"table:sites,alias:site"`
+	ID             string `bun:",pk"`
+	Slug           string
+	DisplayName    string
+	PrimaryDomain  string
+	PHPVersion     string
+	UnixUser       string
+	RootPath       string
+	SocketPath     string
+	Status         string
+	SettingsJSON   *string
+	DeploymentMode string
+	LastJobID      *int64
+	Failure        *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type planModel struct {
@@ -118,7 +170,41 @@ func New(_ context.Context, database *bun.DB, jobQueue *jobs.Module, runtimeCata
 	if err := jobQueue.RegisterHandler("site.rollback", m.rollbackJob); err != nil {
 		return nil, err
 	}
+	// A teardown converges rather than half-applies: the node treats an artifact
+	// that is already gone as the desired end state, the account and root purge
+	// is idempotent, and the row delete is the last step. Retrying it after a
+	// crash is therefore safe — and it has to be retried, because the fail policy
+	// left the site in "deleting" forever, which siteDeletable rejects, making
+	// the site permanently undeletable.
+	if err := jobQueue.RegisterHandlerWithOptions("site.delete", m.deleteJob, jobs.HandlerOptions{RecoveryPolicy: jobs.RecoveryRetry}); err != nil {
+		return nil, err
+	}
+	if err := jobQueue.RegisterHandler("site.settings", m.settingsJob); err != nil {
+		return nil, err
+	}
+	if err := m.reconcileInterruptedTeardowns(context.Background()); err != nil {
+		return nil, err
+	}
 	return m, nil
+}
+
+// reconcileInterruptedTeardowns releases sites left in the transient "deleting"
+// status by a worker that died. The status is only ever correct while a teardown
+// job is live, and siteDeletable rejects every DELETE while it is set, so a row
+// that outlived its job used to be undeletable for good. The jobs module has
+// already recovered interrupted work by the time a module is constructed, so any
+// row with no queued or running job behind it is stranded and is returned to
+// "failed" — a state a fresh delete may act on.
+func (m *Module) reconcileInterruptedTeardowns(ctx context.Context) error {
+	_, err := m.database.NewUpdate().Model((*siteModel)(nil)).
+		Set("status = ?", StatusFailed).
+		Set("failure = ?", "The site removal was interrupted before it finished; delete the site again to complete it.").
+		Set("updated_at = ?", m.now().UTC()).
+		Where("status = ?", StatusDeleting).
+		Where("last_job_id IS NULL OR NOT EXISTS (SELECT 1 FROM jobs WHERE jobs.id = site.last_job_id AND jobs.state IN (?, ?))",
+			jobs.StateQueued, jobs.StateRunning).
+		Exec(ctx)
+	return err
 }
 
 func (m *Module) Descriptor() module.Descriptor {
@@ -138,10 +224,12 @@ func (m *Module) Register(registry module.Registry) error {
 		{"GET /api/v1/sites", "sites.read", http.HandlerFunc(m.listHTTP)},
 		{"POST /api/v1/sites", "sites.write", http.HandlerFunc(m.createHTTP)},
 		{"GET /api/v1/sites/{id}", "sites.read", http.HandlerFunc(m.getHTTP)},
+		{"PATCH /api/v1/sites/{id}/settings", "sites.write", http.HandlerFunc(m.updateSettingsHTTP)},
 		{"GET /api/v1/sites/{id}/plan", "sites.read", http.HandlerFunc(m.planHTTP)},
 		{"POST /api/v1/sites/{id}/plan", "sites.write", http.HandlerFunc(m.replanHTTP)},
 		{"POST /api/v1/sites/{id}/activate", "operations.apply", http.HandlerFunc(m.activateHTTP)},
 		{"POST /api/v1/sites/{id}/rollback", "operations.apply", http.HandlerFunc(m.rollbackHTTP)},
+		{"DELETE /api/v1/sites/{id}", "operations.apply", http.HandlerFunc(m.deleteHTTP)},
 	}
 	for _, route := range routes {
 		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {

@@ -10,13 +10,23 @@ const props = withDefaults(
     label?: string
     hint?: string
     error?: string
-    /** Drives both the input's minlength and the "N symbols" requirement chip. */
+    /** Mirrors the server's set-time password policy. */
     minimumLength?: number
+    maximumLength?: number
+    requiredClasses?: number
+    classExemptLength?: number
     autocomplete?: string
     placeholder?: string
     required?: boolean
   }>(),
-  { label: 'Password', minimumLength: 14, autocomplete: 'new-password' },
+  {
+    label: 'Password',
+    minimumLength: 14,
+    maximumLength: 1024,
+    requiredClasses: 3,
+    classExemptLength: 20,
+    autocomplete: 'new-password',
+  },
 )
 
 const model = defineModel<string>({ required: true })
@@ -76,10 +86,21 @@ async function copy() {
   }
 }
 
+const characterClassCount = computed(() =>
+  [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((pattern) => pattern.test(model.value)).length,
+)
+const formatSatisfied = computed(
+  () => characterClassCount.value >= props.requiredClasses || model.value.length >= props.classExemptLength,
+)
 const requirements = computed(() => [
-  { label: 'Special symbols', met: /[^A-Za-z0-9]/.test(model.value) },
-  { label: 'Different cases', met: /[a-z]/.test(model.value) && /[A-Z]/.test(model.value) },
-  { label: `${props.minimumLength} symbols`, met: model.value.length >= props.minimumLength },
+  {
+    label: `${props.minimumLength}–${props.maximumLength} characters`,
+    met: model.value.length >= props.minimumLength && model.value.length <= props.maximumLength,
+  },
+  {
+    label: `${props.requiredClasses} character types or ${props.classExemptLength}+ character passphrase`,
+    met: formatSatisfied.value,
+  },
 ])
 
 // Withheld until there is something to judge — verdicts on an untouched empty
@@ -87,9 +108,10 @@ const requirements = computed(() => [
 const verdict = computed(() => {
   if (!model.value) return undefined
   const met = requirements.value.filter((item) => item.met).length
-  if (met <= 1) return { label: 'Weak password', tone: 'border-rose-500/40 bg-rose-500/10 text-rose-300' }
-  if (met === 2) return { label: 'Fair password', tone: 'border-amber-500/40 bg-amber-500/10 text-amber-300' }
-  return { label: 'Strong password', tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' }
+  if (met < requirements.value.length) {
+    return { label: 'Policy not met', tone: 'border-rose-500/40 bg-rose-500/10 text-rose-300' }
+  }
+  return { label: 'Format accepted', tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' }
 })
 </script>
 
@@ -112,6 +134,7 @@ const verdict = computed(() => {
         :type="visible ? 'text' : 'password'"
         class="flex-1"
         :minlength="minimumLength"
+        :maxlength="maximumLength"
         :autocomplete="autocomplete"
         :placeholder="placeholder"
         :required="required"

@@ -173,6 +173,12 @@ func persistSubmission(
 	return model.toJob(), created, nil
 }
 
+// Audit exposes the queue's audit sink. Every job-backed module already holds
+// the queue, so this is how they record the targeted, human-attributable entry
+// for an accepted intent — "job.succeeded" says a job ran, not who changed what
+// — without threading a second dependency through their constructors.
+func (m *Module) Audit() audit.Sink { return audit.NewSink(m.audit, m.logger) }
+
 func sameActor(left, right *string) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil

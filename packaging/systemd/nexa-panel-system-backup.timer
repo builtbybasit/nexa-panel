@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily off-node Nexa Panel panel-state backup (control.db + master.key)
+Documentation=https://github.com/nexa-panel/nexa-panel
+
+[Timer]
+# Daily, with a randomized delay so a fleet of nodes does not all upload at the
+# same instant. Persistent=true runs a missed backup once the node comes back up
+# (e.g. after being powered off past the scheduled time).
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

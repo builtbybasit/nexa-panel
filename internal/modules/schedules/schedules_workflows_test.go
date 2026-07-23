@@ -156,6 +156,32 @@ func (r authenticatedRegistry) HandleAuthorized(pattern, permission string, hand
 	return nil
 }
 
+// csrfTokenFor mirrors the double-submit token the identity module binds to a
+// session, so seeded sessions can satisfy the same check real ones do.
+func csrfTokenFor(sessionToken string) string { return "csrf-" + sessionToken }
+
+// authenticate presents both halves of the double submit plus a same-origin
+// signal, which is what the identity middleware requires of an unsafe request.
+func authenticate(request *http.Request, cookie *http.Cookie) {
+	request.AddCookie(cookie)
+	request.Header.Set("Origin", "http://"+request.Host)
+	request.Header.Set("X-CSRF-Token", csrfTokenFor(cookie.Value))
+}
+
+// seedSiteRow writes the sites row behind a fake catalog entry, so a scheduled
+// task can satisfy its foreign key.
+func seedSiteRow(t *testing.T, database *bun.DB, site sites.Site) {
+	t.Helper()
+	now := time.Now().UTC()
+	if _, err := database.ExecContext(context.Background(), `
+		INSERT INTO sites (id, slug, display_name, primary_domain, php_version, unix_user, root_path, socket_path, status, deployment_mode, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		site.ID, site.Slug, site.Slug, site.Slug+".example.com", "8.4", site.UnixUser, site.RootPath,
+		"/run/php/nexa-"+site.Slug+".sock", string(site.Status), "standard", now, now); err != nil {
+		t.Fatalf("seed site %s: %v", site.ID, err)
+	}
+}
+
 func seedIdentitySession(t *testing.T, database *bun.DB, id, username, role, token string) *http.Cookie {
 	t.Helper()
 	ctx := context.Background()
@@ -166,9 +192,10 @@ func seedIdentitySession(t *testing.T, database *bun.DB, id, username, role, tok
 		t.Fatalf("seed user %s: %v", username, err)
 	}
 	hash := sha256.Sum256([]byte(token))
+	csrfHash := sha256.Sum256([]byte(csrfTokenFor(token)))
 	if _, err := database.ExecContext(ctx,
-		`INSERT INTO identity_sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at, mfa_verified_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		"session_"+id, id, hash[:], now, now.Add(time.Hour), now, now); err != nil {
+		`INSERT INTO identity_sessions (id, user_id, token_hash, csrf_token_hash, created_at, expires_at, last_seen_at, mfa_verified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"session_"+id, id, hash[:], csrfHash[:], now, now.Add(time.Hour), now, now); err != nil {
 		t.Fatalf("seed session for %s: %v", username, err)
 	}
 	return &http.Cookie{Name: "nexa_session", Value: token}
@@ -227,6 +254,11 @@ func newHarness(t *testing.T) *harness {
 	draft := sites.Site{ID: "site_draft", Slug: "sketch", RootPath: "/srv/nexa/sites/sketch", UnixUser: "nexa_sketch", Status: sites.StatusDraft}
 	operator := &fakeOperator{}
 	catalog := fakeCatalog{active.ID: active, inactive.ID: inactive, failed.ID: failed, draft.ID: draft}
+	// scheduled_tasks.site_id is a real foreign key, so the catalog the module
+	// reads through and the rows the task table points at have to agree.
+	for _, site := range catalog {
+		seedSiteRow(t, database, site)
+	}
 	schedulesModule, err := New(ctx, database, queue, catalog, fakeAccessPolicy{allowed: map[string]bool{active.ID: true}}, operator)
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +285,7 @@ func (h *harness) do(t *testing.T, method, path string, body string, cookie *htt
 		reader = strings.NewReader(body)
 	}
 	request := httptest.NewRequest(method, path, reader)
-	request.AddCookie(cookie)
+	authenticate(request, cookie)
 	response := httptest.NewRecorder()
 	h.mux.ServeHTTP(response, request)
 	return response

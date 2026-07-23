@@ -189,9 +189,23 @@ func (m *Module) updateUserHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_role", "Role must be admin, operator, developer, or viewer.")
 		return
 	}
+	id := r.PathValue("id")
 	passwordHash := ""
 	if input.Password != nil {
-		if err := validatePassword(*input.Password); err != nil {
+		// The policy rejects a password containing the account's own username, so
+		// the target's name is read up front; a missing row is reported the same
+		// way the transaction below would report it.
+		var username string
+		if err := m.database.NewSelect().Model((*userModel)(nil)).Column("username").
+			Where("id = ?", id).Scan(r.Context(), &username); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "user_not_found", "The requested user does not exist.")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be updated.")
+			return
+		}
+		if err := validatePassword(*input.Password, username); err != nil {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_credentials", err.Error())
 			return
 		}
@@ -202,7 +216,6 @@ func (m *Module) updateUserHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		passwordHash = hash
 	}
-	id := r.PathValue("id")
 	model := new(userModel)
 	err := m.database.RunInTx(r.Context(), nil, func(ctx context.Context, tx bun.Tx) error {
 		if err := tx.NewSelect().Model(model).

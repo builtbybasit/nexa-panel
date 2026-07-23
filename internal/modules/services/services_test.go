@@ -23,10 +23,10 @@ func (stubOperator) Apply(context.Context, services.Plan) (services.Observation,
 func TestToggleRejectsUnknownActionAndEmptyUnit(t *testing.T) {
 	m := &Module{operator: stubOperator{}}
 	ctx := context.Background()
-	if _, err := m.Toggle(ctx, "", "start", nil); err == nil {
+	if _, err := m.Toggle(ctx, "", "start", nil, false); err == nil {
 		t.Fatal("an empty unit must be rejected")
 	}
-	if _, err := m.Toggle(ctx, "nginx.service", "reboot", nil); err == nil {
+	if _, err := m.Toggle(ctx, "nginx.service", "reboot", nil, false); err == nil {
 		t.Fatal("an unsupported action word must be rejected")
 	}
 }

@@ -86,6 +86,42 @@ func TestDurableWorkerStoresFailure(t *testing.T) {
 	}
 }
 
+func TestDurableWorkerRecoversFromHandlerPanic(t *testing.T) {
+	module, _ := newTestModule(t)
+	if err := module.RegisterHandler("test.panic", func(context.Context, json.RawMessage, func(int, string) error) (any, error) {
+		panic("boom")
+	}); err != nil {
+		t.Fatalf("register panic handler: %v", err)
+	}
+	if err := module.RegisterHandler("test.after", func(context.Context, json.RawMessage, func(int, string) error) (any, error) {
+		return map[string]bool{"ok": true}, nil
+	}); err != nil {
+		t.Fatalf("register after handler: %v", err)
+	}
+
+	panicJob, err := module.Submit(context.Background(), "test.panic", struct{}{}, nil)
+	if err != nil {
+		t.Fatalf("Submit panic job: %v", err)
+	}
+	module.Start(context.Background())
+
+	failed := waitForState(t, module, panicJob.ID, StateFailed)
+	if !strings.Contains(failed.Failure, "job handler panicked") || !strings.Contains(failed.Failure, "boom") {
+		t.Fatalf("failure = %q, want it to mention the recovered panic", failed.Failure)
+	}
+	if got := module.PanicCount(); got != 1 {
+		t.Fatalf("PanicCount() = %d, want 1", got)
+	}
+
+	// The worker goroutine must survive the panic and keep processing jobs.
+	afterJob, err := module.Submit(context.Background(), "test.after", struct{}{}, nil)
+	if err != nil {
+		t.Fatalf("Submit after job: %v", err)
+	}
+	module.wake()
+	waitForState(t, module, afterJob.ID, StateSucceeded)
+}
+
 func TestHeartbeatKeepsLongRunningJobLeaseActive(t *testing.T) {
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
@@ -383,6 +419,82 @@ func (policy fakeJobSiteAccess) AccessibleSiteIDs(_ context.Context, user identi
 }
 
 func TestAuthenticatedDiagnosticsHTTPAndEventStream(t *testing.T) {
+	server, jobsModule, cookie, csrfToken := newAuthenticatedTestServer(t)
+
+	diagnosticsRequest := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/diagnostics",
+		strings.NewReader(`{"delayMilliseconds":10}`))
+	diagnosticsRequest.RemoteAddr = "127.0.0.1:12345"
+	diagnosticsRequest.Header.Set("Origin", "http://"+diagnosticsRequest.Host)
+	diagnosticsRequest.Header.Set("X-CSRF-Token", csrfToken)
+	diagnosticsRequest.AddCookie(cookie)
+	diagnosticsResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(diagnosticsResponse, diagnosticsRequest)
+	if diagnosticsResponse.Code != http.StatusAccepted {
+		t.Fatalf("diagnostics = %d %s", diagnosticsResponse.Code, diagnosticsResponse.Body.String())
+	}
+	var submitted Job
+	if err := json.Unmarshal(diagnosticsResponse.Body.Bytes(), &submitted); err != nil {
+		t.Fatalf("decode submitted job: %v", err)
+	}
+	waitForState(t, jobsModule, submitted.ID, StateSucceeded)
+
+	eventsRequest := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/jobs/%d/events", submitted.ID), nil)
+	eventsRequest.RemoteAddr = "127.0.0.1:12345"
+	eventsRequest.AddCookie(cookie)
+	eventsResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(eventsResponse, eventsRequest)
+	if eventsResponse.Code != http.StatusOK || !strings.Contains(eventsResponse.Body.String(), "event: progress") {
+		t.Fatalf("events = %d %s", eventsResponse.Code, eventsResponse.Body.String())
+	}
+}
+
+// TestJobAPIRedactsCredentialsInRequestAndResult pins the response-path
+// redaction: a job request or result that carries credential material must
+// never leave the API, on either the list or the get route.
+func TestJobAPIRedactsCredentialsInRequestAndResult(t *testing.T) {
+	server, jobsModule, cookie, _ := newAuthenticatedTestServer(t)
+	if err := jobsModule.RegisterHandler("test.secretive", func(ctx context.Context, request json.RawMessage, report func(int, string) error) (any, error) {
+		return map[string]any{"apiToken": "result-swordfish"}, nil
+	}); err != nil {
+		t.Fatalf("register handler: %v", err)
+	}
+	actor := "user-1"
+	submitted, err := jobsModule.Submit(context.Background(), "test.secretive", map[string]any{
+		"host":     "example.test",
+		"password": "request-hunter2",
+		"nested":   map[string]any{"sshPrivateKey": "request-pem"},
+		"accounts": []any{map[string]any{"passphrase": "request-open-sesame"}},
+	}, &actor)
+	if err != nil {
+		t.Fatalf("Submit returned an error: %v", err)
+	}
+	waitForState(t, jobsModule, submitted.ID, StateSucceeded)
+
+	for _, path := range []string{"/api/v1/jobs?limit=50", fmt.Sprintf("/api/v1/jobs/%d", submitted.ID)} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.RemoteAddr = "127.0.0.1:12345"
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s = %d %s", path, response.Code, response.Body.String())
+		}
+		body := response.Body.String()
+		for _, leaked := range []string{"request-hunter2", "request-pem", "request-open-sesame", "result-swordfish"} {
+			if strings.Contains(body, leaked) {
+				t.Fatalf("%s leaked %q: %s", path, leaked, body)
+			}
+		}
+		// Non-credential fields must survive, or the operations view loses the
+		// context that makes a job readable.
+		if !strings.Contains(body, "example.test") {
+			t.Fatalf("%s dropped a non-credential field: %s", path, body)
+		}
+	}
+}
+
+func newAuthenticatedTestServer(t *testing.T) (*controlplane.Server, *Module, *http.Cookie, string) {
+	t.Helper()
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
@@ -420,13 +532,26 @@ func TestAuthenticatedDiagnosticsHTTPAndEventStream(t *testing.T) {
 	}
 
 	bootstrapRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap",
-		strings.NewReader(`{"username":"admin","password":"a-strong-password"}`))
+		strings.NewReader(`{"username":"admin","password":"Str0ng-Console-Pass"}`))
+	bootstrapRequest.RemoteAddr = "127.0.0.1:12345"
 	bootstrapResponse := httptest.NewRecorder()
 	server.Handler().ServeHTTP(bootstrapResponse, bootstrapRequest)
 	if bootstrapResponse.Code != http.StatusCreated {
 		t.Fatalf("bootstrap = %d %s", bootstrapResponse.Code, bootstrapResponse.Body.String())
 	}
-	cookie := bootstrapResponse.Result().Cookies()[0]
+	var cookie *http.Cookie
+	csrfToken := ""
+	for _, issued := range bootstrapResponse.Result().Cookies() {
+		switch issued.Name {
+		case "nexa_session":
+			cookie = issued
+		case "nexa_csrf":
+			csrfToken = issued.Value
+		}
+	}
+	if cookie == nil || csrfToken == "" {
+		t.Fatalf("bootstrap did not issue both session and csrf cookies")
+	}
 	now := time.Now().UTC()
 	if _, err := database.ExecContext(ctx, "UPDATE identity_users SET totp_confirmed_at = ?", now); err != nil {
 		t.Fatalf("mark test MFA enrollment: %v", err)
@@ -434,28 +559,7 @@ func TestAuthenticatedDiagnosticsHTTPAndEventStream(t *testing.T) {
 	if _, err := database.ExecContext(ctx, "UPDATE identity_sessions SET mfa_verified_at = ?", now); err != nil {
 		t.Fatalf("mark test session verified: %v", err)
 	}
-
-	diagnosticsRequest := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/diagnostics",
-		strings.NewReader(`{"delayMilliseconds":10}`))
-	diagnosticsRequest.AddCookie(cookie)
-	diagnosticsResponse := httptest.NewRecorder()
-	server.Handler().ServeHTTP(diagnosticsResponse, diagnosticsRequest)
-	if diagnosticsResponse.Code != http.StatusAccepted {
-		t.Fatalf("diagnostics = %d %s", diagnosticsResponse.Code, diagnosticsResponse.Body.String())
-	}
-	var submitted Job
-	if err := json.Unmarshal(diagnosticsResponse.Body.Bytes(), &submitted); err != nil {
-		t.Fatalf("decode submitted job: %v", err)
-	}
-	waitForState(t, jobsModule, submitted.ID, StateSucceeded)
-
-	eventsRequest := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/jobs/%d/events", submitted.ID), nil)
-	eventsRequest.AddCookie(cookie)
-	eventsResponse := httptest.NewRecorder()
-	server.Handler().ServeHTTP(eventsResponse, eventsRequest)
-	if eventsResponse.Code != http.StatusOK || !strings.Contains(eventsResponse.Body.String(), "event: progress") {
-		t.Fatalf("events = %d %s", eventsResponse.Code, eventsResponse.Body.String())
-	}
+	return server, jobsModule, cookie, csrfToken
 }
 
 func newTestModule(t *testing.T) (*Module, *audit.Module) {

@@ -20,15 +20,17 @@ import (
 )
 
 type fakeBackupOperator struct {
-	lastAccount backupoperator.Account
-	lastRun     backupoperator.RunRequest
-	lastRestore backupoperator.RestoreRequest
-	lastDelete  backupoperator.DeleteRequest
-	installed   []backupoperator.ScheduleSpec
-	removed     []string
-	result      backupoperator.TestResult
-	manifest    backupoperator.Manifest
-	err         error
+	lastAccount    backupoperator.Account
+	lastRun        backupoperator.RunRequest
+	lastSystemRun  backupoperator.SystemRunRequest
+	lastRestore    backupoperator.RestoreRequest
+	lastDelete     backupoperator.DeleteRequest
+	installed      []backupoperator.ScheduleSpec
+	removed        []string
+	result         backupoperator.TestResult
+	manifest       backupoperator.Manifest
+	systemManifest backupoperator.Manifest
+	err            error
 }
 
 type fakeBackupAccess struct {
@@ -56,6 +58,19 @@ func (f *fakeBackupOperator) Run(_ context.Context, request backupoperator.RunRe
 	if manifest.CopyName == "" {
 		manifest.CopyName = request.CopyName
 	}
+	return manifest, nil
+}
+
+func (f *fakeBackupOperator) RunSystem(_ context.Context, request backupoperator.SystemRunRequest) (backupoperator.Manifest, error) {
+	f.lastSystemRun = request
+	if f.err != nil {
+		return backupoperator.Manifest{}, f.err
+	}
+	manifest := f.systemManifest
+	if manifest.CopyName == "" {
+		manifest.CopyName = request.CopyName
+	}
+	manifest.IntegrityChecked = true
 	return manifest, nil
 }
 
@@ -488,9 +503,13 @@ func TestRestoreJobResolvesDestinations(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	choices := restoreChoices{Sites: []siteSelection{{Entry: "site-blog.tar.gz", SiteID: "site_1", Clear: true}}}
+	reviewed, problem := module.buildRestorePlan(ctx, *record, choices)
+	if problem != nil {
+		t.Fatalf("build restore plan: %v", problem)
+	}
 	payload, _ := json.Marshal(restorePayload{
-		CopyID: "bkcopy_1",
-		Sites:  []siteSelection{{Entry: "site-blog.tar.gz", SiteID: "site_1", Clear: true}},
+		CopyID: "bkcopy_1", Sites: choices.Sites, PreviewDigest: reviewed.digest,
 	})
 	if _, err := module.restoreJob(ctx, payload, func(int, string) error { return nil }); err != nil {
 		t.Fatalf("restoreJob: %v", err)

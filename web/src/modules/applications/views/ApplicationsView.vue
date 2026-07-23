@@ -191,11 +191,13 @@ const toolReviewFacts = computed<Fact[]>(() => {
   if (!app || !plan) return []
   return [
     { label: 'Web client', value: app.label },
-    { label: 'Action', value: plan.operation === 'tool.stop' ? 'Stop' : 'Deploy' },
+    { label: 'Action', value: plan.operation === 'tool.stop' ? 'Uninstall' : 'Install' },
   ]
 })
 
-const toolApproveLabel = computed(() => (toolPlan.value?.operation === 'tool.stop' ? 'Stop' : 'Deploy'))
+// The card buttons read Install/Uninstall, so the review dialog must too: the
+// underlying tool.deploy/tool.stop lifecycle is an implementation detail here.
+const toolApproveLabel = computed(() => (toolPlan.value?.operation === 'tool.stop' ? 'Uninstall' : 'Install'))
 
 async function loadToolPlan(app: Application) {
   toolSelected.value = app

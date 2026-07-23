@@ -28,20 +28,31 @@ func (s *fakeNodeSystem) SecureArtifacts(context.Context, Site, []Artifact) erro
 	return s.call("secure")
 }
 
+func (s *fakeNodeSystem) VerifyDocumentRoot(context.Context, Site) error {
+	return s.call("verify-document-root")
+}
+
 func (s *fakeNodeSystem) ValidatePHP(context.Context, string) error { return s.call("validate-php") }
 
 func (s *fakeNodeSystem) ValidateNginx(context.Context) error     { return s.call("validate-nginx") }
 func (s *fakeNodeSystem) ReloadPHP(context.Context, string) error { return s.call("reload-php") }
 func (s *fakeNodeSystem) ReloadNginx(context.Context) error       { return s.call("reload-nginx") }
 func (s *fakeNodeSystem) VerifyHost(context.Context, Site) error  { return s.call("verify-host") }
+func (s *fakeNodeSystem) RemoveSite(context.Context, Site) error  { return s.call("remove-site") }
 
 func testHostOperator(t *testing.T, system NodeSystem) (*HostOperator, Site) {
 	t.Helper()
 	root := t.TempDir()
+	// Every root is pinned inside the temp dir, including the conditional-artifact
+	// ones: a test that enables rate limiting, basic auth, or log rotation would
+	// otherwise write to (and, on retirement, delete from) the real /etc.
 	renderer := Renderer{
 		NginxAvailableRoot: filepath.Join(root, "nginx", "available"),
 		PHPConfigRoot:      filepath.Join(root, "php"),
 		SiteRoot:           filepath.Join(root, "sites"), SocketRoot: filepath.Join(root, "run", "php"),
+		NginxConfDRoot:    filepath.Join(root, "nginx", "conf.d"),
+		NginxIncludesRoot: filepath.Join(root, "nginx", "includes"),
+		LogrotateRoot:     filepath.Join(root, "logrotate.d"),
 	}
 	operator, err := NewHostOperator(renderer, filepath.Join(root, "nginx", "enabled"), system)
 	if err != nil {
@@ -66,7 +77,7 @@ func TestHostOperatorAppliesVerifiesAndRollsBack(t *testing.T) {
 	if !observation.Active || len(observation.Artifacts) != 3 {
 		t.Fatalf("observation = %+v", observation)
 	}
-	wanted := []string{"prepare", "secure", "validate-php", "validate-nginx", "reload-php", "reload-nginx", "verify-host"}
+	wanted := []string{"prepare", "secure", "verify-document-root", "validate-php", "validate-nginx", "reload-php", "reload-nginx", "verify-host"}
 	if !reflect.DeepEqual(system.calls, wanted) {
 		t.Fatalf("calls = %v", system.calls)
 	}
@@ -142,5 +153,161 @@ func TestHostOperatorRejectsEnabledSymlinkToUnmanagedDefinition(t *testing.T) {
 	}
 	if _, err := operator.Plan(context.Background(), site); err == nil || !strings.Contains(err.Error(), "outside its managed definition") {
 		t.Fatalf("Plan() error = %v, want an unmanaged enabled-symlink error", err)
+	}
+}
+
+// Turning a conditional setting off must actually remove its file from the node.
+// Apply only writes the artifacts a plan carries, so a stanza written by an
+// earlier activation would otherwise survive indefinitely — and a stale logrotate
+// stanza is not inert: it keeps rotating the site's logs while the panel reports
+// rotation off.
+func TestHostOperatorRemovesRetiredArtifactOnDisable(t *testing.T) {
+	operator, site := testHostOperator(t, new(fakeNodeSystem))
+	stanza := filepath.Join(operator.renderer.LogrotateRoot, "nexa-demo-site")
+
+	site.Settings.LogRotation = LogRotation{Enabled: true, KeepFiles: 7, Frequency: "daily"}
+	plan, err := operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatalf("apply with rotation enabled: %v", err)
+	}
+	if _, err := os.Stat(stanza); err != nil {
+		t.Fatalf("stanza missing after enabling rotation: %v", err)
+	}
+
+	site.Settings.LogRotation = LogRotation{}
+	plan, err = operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatalf("apply with rotation disabled: %v", err)
+	}
+	if _, err := os.Stat(stanza); !os.IsNotExist(err) {
+		t.Fatalf("stanza survived disabling; logs would keep rotating (stat err = %v)", err)
+	}
+}
+
+// A rollback has to put back what the removal took away, or disabling a setting
+// and then failing verification would silently lose the previous stanza.
+func TestHostOperatorRestoresRetiredArtifactOnRollback(t *testing.T) {
+	operator, site := testHostOperator(t, new(fakeNodeSystem))
+	stanza := filepath.Join(operator.renderer.LogrotateRoot, "nexa-demo-site")
+
+	site.Settings.LogRotation = LogRotation{Enabled: true, KeepFiles: 7, Frequency: "daily"}
+	plan, err := operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(stanza)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Disable it, but fail the host verification so Apply auto-rolls back.
+	site.Settings.LogRotation = LogRotation{}
+	failing, _ := testHostOperator(t, &fakeNodeSystem{fail: "verify-host"})
+	failing.renderer = operator.renderer
+	failing.enabledRoot = operator.enabledRoot
+	plan, err = failing.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := failing.Apply(context.Background(), plan); err == nil {
+		t.Fatal("apply should have failed on verify-host")
+	}
+	restored, err := os.ReadFile(stanza)
+	if err != nil {
+		t.Fatalf("retired stanza was not restored by the rollback: %v", err)
+	}
+	if string(restored) != string(original) {
+		t.Fatalf("restored stanza differs:\n got: %s\nwant: %s", restored, original)
+	}
+}
+
+// The teardown regression, at the operator boundary: the first attempt removed
+// the artifacts, and every later attempt then refused with "managed site changed
+// after activation" because absent looked like drift. A teardown is retried
+// whenever its job is interrupted, so it has to converge instead.
+func TestTeardownRollbackConvergesWhenTheArtifactsAreAlreadyGone(t *testing.T) {
+	system := new(fakeNodeSystem)
+	operator, site := testHostOperator(t, system)
+	plan, err := operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	teardown, err := operator.PlanTeardown(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !teardown.Teardown {
+		t.Fatal("PlanTeardown did not mark the plan as a teardown")
+	}
+	if _, err := operator.Rollback(context.Background(), teardown); err != nil {
+		t.Fatalf("first teardown: %v", err)
+	}
+	observation, err := operator.Rollback(context.Background(), teardown)
+	if err != nil {
+		t.Fatalf("second teardown must converge, got: %v", err)
+	}
+	if observation.Active {
+		t.Fatal("site is still enabled after a converged teardown")
+	}
+	for _, artifact := range teardown.Artifacts {
+		if _, err := os.Stat(artifact.Path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("artifact survived the teardown: %s", artifact.Path)
+		}
+	}
+}
+
+// Convergence is scoped to the teardown flag and nothing else: an ordinary
+// rollback whose artifact vanished is still drift, and still refused.
+func TestOrdinaryRollbackStillRefusesAMissingArtifact(t *testing.T) {
+	system := new(fakeNodeSystem)
+	operator, site := testHostOperator(t, system)
+	plan, err := operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(plan.Artifacts[0].Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Rollback(context.Background(), plan); err == nil {
+		t.Fatal("an ordinary rollback accepted a missing managed artifact")
+	}
+}
+
+// A teardown still refuses to delete an artifact whose content drifted: the
+// operator converges on absence, not on "remove whatever is there now".
+func TestTeardownRollbackStillRefusesADriftedArtifact(t *testing.T) {
+	system := new(fakeNodeSystem)
+	operator, site := testHostOperator(t, system)
+	plan, err := operator.Plan(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Apply(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	teardown, err := operator.PlanTeardown(context.Background(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(teardown.Artifacts[0].Path, []byte("hand edited"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operator.Rollback(context.Background(), teardown); err == nil {
+		t.Fatal("a teardown deleted a managed file somebody had edited by hand")
 	}
 }

@@ -8,6 +8,11 @@ export interface Job {
   state: JobState
   progress: number
   actorUserId?: string
+  /**
+   * Handler-specific payloads. The API redacts credential-shaped fields on the
+   * response path, so a value here may be the literal string "[redacted]"
+   * wherever the stored job carried a password, token, or key.
+   */
   request: Record<string, unknown>
   result?: Record<string, unknown>
   failure?: string
@@ -46,13 +51,25 @@ export function submitDiagnostics(delayMilliseconds = 150): Promise<Job> {
   })
 }
 
-export function subscribeToJob(jobId: number, onEvent: (event: JobEvent) => void, onError?: () => void): () => void {
+export function subscribeToJob(
+  jobId: number,
+  onEvent: (event: JobEvent) => void,
+  onError?: () => void,
+  onReconnecting?: () => void,
+): () => void {
   const source = new EventSource(`/api/v1/jobs/${jobId}/events`)
   source.addEventListener('progress', (rawEvent) => {
     const event = rawEvent as MessageEvent<string>
     onEvent(JSON.parse(event.data) as JobEvent)
   })
   source.onerror = () => {
+    // Native EventSource owns retry/backoff while it is CONNECTING. Closing on
+    // every error turns a recoverable proxy restart into a permanently stalled
+    // operation view.
+    if (source.readyState !== EventSource.CLOSED) {
+      onReconnecting?.()
+      return
+    }
     source.close()
     onError?.()
   }
