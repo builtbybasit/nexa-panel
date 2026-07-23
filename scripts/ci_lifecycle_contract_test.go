@@ -171,6 +171,31 @@ func TestVMOnlyScenariosAreImplementedAndNotFakedInCI(t *testing.T) {
 	}
 }
 
+// The transaction journal records a bare semantic version ("0.3.0"); `nexa
+// version` prints that version followed by the commit and build stamp. An
+// assertion that compares one against the other can never hold, so the scenario
+// fails on a node that rolled back perfectly — which is exactly what happened on
+// the first live run of this matrix. Only the whole-line comparisons between two
+// readings of the same source are safe.
+func TestVersionAssertionsCompareLikeWithLike(t *testing.T) {
+	script := readRepoFile(t, "scripts/test-vm-lifecycle.sh")
+	if !strings.Contains(script, "installed_version_number()") {
+		t.Fatal("no helper extracts the bare version, so a journal version cannot be compared with the installed one")
+	}
+	// The two sites that read a version out of the transaction journal.
+	for _, comparison := range []string{
+		`[[ "$(installed_version_number)" == "$rollback_target" ]]`,
+	} {
+		if !strings.Contains(script, comparison) {
+			t.Fatalf("a journal version is not compared against the bare installed version: missing %q", comparison)
+		}
+	}
+	// The stamped line is still what a human should read in the failure message.
+	if !strings.Contains(script, `fail "the node reports $(installed_version) after rollback, not $rollback_target"`) {
+		t.Fatal("the rollback failure message no longer reports the full stamped version it actually found")
+	}
+}
+
 func TestLifecycleCoverageIsDocumented(t *testing.T) {
 	doc := readRepoFile(t, "docs/ci-lifecycle.md")
 	for _, uncovered := range []string{

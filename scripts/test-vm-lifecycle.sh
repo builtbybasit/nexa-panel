@@ -154,6 +154,11 @@ assert_services_healthy() {
 }
 
 installed_version() { /usr/bin/nexa version | head -n 1; }
+
+# `nexa version` prints "0.3.0 (commit abc123, built ...)" while the update
+# transaction journal records a bare "0.3.0". Comparing the two directly can
+# never hold, so anything read out of the journal is compared against this.
+installed_version_number() { installed_version | awk '{print $1}'; }
 binary_digest()     { sha256sum /usr/bin/nexa | cut -d' ' -f1; }
 
 # The managed-packaging fingerprint. A "complete" rollback means the unit graph
@@ -449,7 +454,7 @@ scenario_offline_rollback() {
   nexa self-update rollback || fail "the offline rollback failed"
 
   log "Asserting the node came back on the previous version"
-  [[ "$(installed_version)" == "$rollback_target" ]] ||
+  [[ "$(installed_version_number)" == "$rollback_target" ]] ||
     fail "the node reports $(installed_version) after rollback, not $rollback_target"
   [[ "$(installed_version)" != "$current_version" ]] ||
     fail "the rollback did not change the installed version"
