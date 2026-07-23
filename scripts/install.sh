@@ -220,7 +220,12 @@ exec 8>&1
 emit() {
   printf '%s\n' "$*" >&8
   # When no transcript is open, stdout still IS fd 8 and this would double the line.
-  [[ -n "$LOG_FILE" ]] && printf '%s\n' "$*" || true
+  # Spelled as an if rather than A && B || C: the latter runs C when B fails,
+  # not only when A does, and shellcheck 0.9 (what Ubuntu 24.04 ships, and what
+  # CI therefore runs) rejects it as SC2015.
+  if [[ -n "$LOG_FILE" ]]; then
+    printf '%s\n' "$*"
+  fi
 }
 
 log()  { emit "==> $*"; }
