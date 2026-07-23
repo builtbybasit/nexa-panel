@@ -2,9 +2,15 @@
 
 > Status: **release blocked**
 >
-> Updated: 2026-07-22
+> Updated: 2026-07-23
 >
 > Target: the first production release for Ubuntu 24.04 LTS on AMD64 and ARM64
+>
+> First live-node qualification ran on 2026-07-23 against a real Ubuntu 24.04
+> AMD64 server with a real DNS name and a real Let's Encrypt certificate. It
+> found **seven release-blocking defects in one session**, none of which the
+> container node, the Go suite, or the shell contract tests could reach. Six are
+> fixed; one is open. See section 10.
 
 This document replaces the original implementation roadmap. Most of the product
 surface now exists; the remaining work is release hardening. A version must not
@@ -540,3 +546,92 @@ Version 1 is releasable only when all of the following are true:
 
 Until then, `nexa-node` and plaintext port 8888 remain disposable test paths,
 not supported production deployment methods.
+
+## 10. Live-node qualification, 2026-07-23
+
+First execution of the lifecycle on real hardware: Linode Ubuntu 24.04.4 AMD64,
+2 GiB / 1 vCPU, hostname `panjnadvetclinic.com` with a real Let's Encrypt
+certificate. AMD64 had never been exercised anywhere, and no TLS-published node
+had ever existed.
+
+### 10.1 Defects found
+
+Seven release blockers in one session. Every one was invisible to the container
+node, the Go suite, and the shell contract tests, because each needs a condition
+the disposable node cannot produce: real TLS publishing, a real interrupt, a real
+prior install, a real reboot, or a real bad artifact.
+
+| # | Defect | Consequence | Status |
+| --- | --- | --- | --- |
+| 1 | The API refused its own Unix socket as insecure transport (426). `RemoteAddr` is `@` on a socket, so `requireSecureTransport` judged the local seed helper a public cleartext client. | **No TLS install could ever complete.** Certbot issued, HTTPS answered 200, then seeding failed and the installer rolled back a working panel. | Fixed — `httpapi.IsLocalSocketCaller`; a forwarded client is still refused. |
+| 2 | `install.sh` trapped only `EXIT`; bash does not run it on an untrapped `SIGTERM`. | An interrupted install skipped rollback and left a running but **unseeded** panel with no administrator and no way in. | Fixed — `trap … INT TERM HUP`. |
+| 3 | A validated ownership marker proves the run upgrades our own install, but preflight was still invoked without `--allow-existing`. | **Every re-run on a live host failed**, the opposite of the idempotent re-run the installer promises. | Fixed — a validated marker implies `--allow-existing`. |
+| 4 | The SPA fallback served `index.html` with HTTP 200 for unmatched `/api/*` paths. | A typo, a removed endpoint, and a version mismatch were **indistinguishable from success** to any JSON client. | Fixed — JSON 404 for unrouted API paths. |
+| 5 | `nexa-agent` listed `/run/containers` in `ReadWritePaths`, which Podman creates lazily, so the first boot died with `226/NAMESPACE`. The agent recovered on its own restart, but `nexa-api` used `Requires=`, and systemd never retries a job cancelled by a failed `Requires=` dependency. | **The panel was dead after every reboot** — with zero failed units, so nothing looked wrong — until an operator logged in and started it by hand. | Fixed — `-` prefix on lazily-created `/run` trees; `Wants=` with `After=`. |
+| 6 | `validateBinary` accepted any candidate whose `version` exited zero, and the activation helper *is* the newly installed binary, so a candidate that runs without being nexa never advances the journal; `waitForActivation` then expired and returned, leaving the bad binary live. | **Bricked the node.** A 22-byte shell script was installed as `/usr/bin/nexa`; the panel survived only because the running processes held the deleted inode. | Fixed — version-shape validation, and a stalled activation now restores itself. |
+| 7 | Uninstall removes the panel vhost, which is the only source of publishing truth. A reinstall over retained state therefore cannot recover the publishing mode. | **Reinstall silently downgraded a public HTTPS node to loopback-only `127.0.0.1:8888`.** The certificate was retained but unused; the panel became unreachable from the internet with no error. | **OPEN** — see 10.3. |
+
+### 10.2 Proven working on real hardware
+
+- Bundle checksum, extraction, and layout.
+- `--dry-run` prints the complete plan — packages, repositories, files, units,
+  services, publishing — and makes **zero** host mutations (verified by diffing
+  the host before and after).
+- Preflight blocks below the 2 GiB minimum and passes above it; a refused
+  preflight mutates nothing.
+- Real Let's Encrypt issuance and deployment for a real DNS name.
+- Public-ingress verification through the published listener before success.
+- Administrator seeding, and login over public HTTPS returning
+  `next: authenticated` — the optional-MFA policy behaves as intended.
+- Complete ordered installer rollback that correctly **retains** the TLS
+  certificate, so a retry does not burn Let's Encrypt rate limits.
+- Operator-lockout protection end to end: an unacknowledged stop of a
+  panel-critical service is refused `409 lockout_risk`; an acknowledged stop took
+  nginx down and the backend **restored it automatically at ~117 s**, with public
+  HTTPS returning to 200. The revert is backend-enforced and survives the client
+  disconnecting.
+- Reboot recovery: panel healthy and serving immediately after boot, zero failed
+  units (after defect 5 was fixed).
+- Self-update 0.1.0-dev → 0.2.0 → rollback → 0.3.0, with readiness reporting the
+  expected version at each step.
+- **Offline rollback with both services stopped**, which also restarted them.
+- Site provisioning: dedicated `nexa_testsite` system user, `0750
+  nexa_testsite:www-data` document root, per-site FPM socket, serving PHP 8.3.32.
+- Retain-data uninstall: panel binaries and units removed, services stopped,
+  site data byte-identical, `control.db` retained, nginx still valid.
+
+Resource use at idle: `nexa-api` 73 MB, `nexa-agent` 6 MB, against caps of 512 MB
+and 1.5 GB.
+
+### 10.3 Open: publishing state is still inferred, not recorded
+
+Defect 7 is the concrete failure of the LIF-002 item "TLS publishing state is
+represented as managed data, not reverse-engineered from a Certbot-mutated file."
+
+An `internal/platform/publishing` package and a `nexa publishing
+show|set|migrate` CLI now exist, but **nothing wires them into the install
+path**: `install.sh` still decides TLS by grepping the vhost for `managed by
+Certbot`, and `nexa publishing show` reports `Source: inferred from
+/etc/nginx/sites-available/nexa-panel.conf`. Because uninstall removes that
+vhost, the publishing mode cannot survive an uninstall/reinstall cycle.
+
+Done means:
+
+- The installer writes the publishing record (hostname, TLS, port, external-TLS)
+  as managed state, and reads it back in preference to inspecting the vhost.
+- The record survives a retain-data uninstall, so a reinstall restores HTTPS on
+  the original hostname instead of silently falling back to loopback.
+- Vhost inspection remains only as a one-time migration for a pre-record node.
+- A live scenario covers uninstall → reinstall → still published over HTTPS.
+
+### 10.4 What this says about the acceptance strategy
+
+The container node proved none of these. Seven defects surfaced within a few
+hours of real-hardware testing, three of which (1, 5, 6) would each have made the
+product unusable for its first customer. OPS-001 remains the highest-value open
+gate: until the lifecycle runs on real or virtualised hosts in CI, this class of
+defect is found by users.
+
+Re-run the full sequence on a clean box now that six fixes have landed. The
+procedure is `docs/live-test-plan.md`; the session handoff is
+`docs/live-test-handoff.md`.
