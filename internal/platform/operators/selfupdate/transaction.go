@@ -55,6 +55,57 @@ const (
 	phaseFailed     transactionPhase = "failed"
 )
 
+// PhaseSucceeded and PhaseFailed are the two terminal phases, named for callers
+// outside this package that read a TransactionStatus over the agent socket.
+const (
+	PhaseSucceeded = string(phaseSucceeded)
+	PhaseFailed    = string(phaseFailed)
+)
+
+// TransactionStatus is the caller-readable projection of the durable update
+// journal: which transaction the node last ran, and whether it has committed an
+// outcome. A client whose apply response was severed by the agent's own restart
+// reads this to learn what actually happened, instead of reporting the severed
+// connection as a failed update.
+type TransactionStatus struct {
+	// Present is false when the node has never run an update transaction.
+	Present         bool   `json:"present"`
+	ID              string `json:"id,omitempty"`
+	TargetVersion   string `json:"targetVersion,omitempty"`
+	PreviousVersion string `json:"previousVersion,omitempty"`
+	Phase           string `json:"phase,omitempty"`
+	// Terminal reports that the phase is one this transaction will not leave;
+	// only then are Result and Failure the final word.
+	Terminal bool   `json:"terminal"`
+	Failure  string `json:"failure,omitempty"`
+	Result   Result `json:"result"`
+}
+
+// Transaction reports the durable journal. It takes no lock: the journal is
+// published by atomic rename, so a concurrent activation is either wholly
+// visible or not visible at all, and a reader that blocked on the host lock
+// could not observe an update while it was running — which is exactly when this
+// is asked.
+func (o *HostOperator) Transaction(context.Context) (TransactionStatus, error) {
+	state, err := readTransaction(o.transactionPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return TransactionStatus{}, nil
+	}
+	if err != nil {
+		return TransactionStatus{}, err
+	}
+	return TransactionStatus{
+		Present:         true,
+		ID:              state.ID,
+		TargetVersion:   state.TargetVersion,
+		PreviousVersion: state.PreviousVersion,
+		Phase:           string(state.Phase),
+		Terminal:        state.Phase == phaseSucceeded || state.Phase == phaseFailed,
+		Failure:         state.Failure,
+		Result:          state.Result,
+	}, nil
+}
+
 type updateTransaction struct {
 	ID                        string                   `json:"id"`
 	TargetVersion             string                   `json:"targetVersion"`

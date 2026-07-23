@@ -54,6 +54,9 @@ type Server struct {
 	deploy       deployoperator.Operator
 	selfUpdate   selfupdateoperator.Operator
 	logger       *slog.Logger
+	// shutdownGrace is how long a stop signal waits for in-flight requests
+	// before the listener is forced closed. Tests shorten it.
+	shutdownGrace time.Duration
 
 	startedAt     time.Time
 	requests      atomic.Uint64
@@ -68,7 +71,7 @@ func New(socketPath, version, token string, logger *slog.Logger, options ...Opti
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	server := &Server{socketPath: socketPath, version: version, token: token, logger: logger, startedAt: time.Now().UTC()}
+	server := &Server{socketPath: socketPath, version: version, token: token, logger: logger, shutdownGrace: 5 * time.Second, startedAt: time.Now().UTC()}
 	for _, option := range options {
 		option(server)
 	}
@@ -197,6 +200,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	if s.selfUpdate != nil {
 		mux.HandleFunc("GET /v1/self-update/latest", s.selfUpdateLatestHTTP)
+		mux.HandleFunc("GET /v1/self-update/transaction", s.selfUpdateTransactionHTTP)
 		mux.HandleFunc("POST /v1/self-update/apply", s.selfUpdateApplyHTTP)
 	}
 	httpServer := &http.Server{
@@ -226,9 +230,19 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		return err
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownGrace)
 		defer cancel()
-		return httpServer.Shutdown(shutdownCtx)
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			// A stop signal is an instruction, not a failure, and a request that
+			// outlives the grace period is not one either. Self-update makes that
+			// routine: activation restarts this unit while the apply request it is
+			// serving is still open, so the drain can never complete and returning
+			// the deadline error marked nexa-agent failed on every update that
+			// worked. Force the remaining connections closed and exit zero.
+			s.logger.Warn("agent shutdown grace expired with requests in flight", "error", err, "grace", s.shutdownGrace)
+			_ = httpServer.Close()
+		}
+		return nil
 	}
 }
 

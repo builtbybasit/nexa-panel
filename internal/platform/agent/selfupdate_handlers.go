@@ -24,6 +24,20 @@ func (s *Server) selfUpdateLatestHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, availability)
 }
 
+// selfUpdateTransactionHTTP reports the node's most recent update transaction.
+// It is the route that makes a severed apply recoverable: activation restarts
+// this very agent, so the apply response never arrives, and the client comes
+// back here once the new agent is listening to read the committed outcome. It
+// mutates nothing, so the bearer token is the whole authorization story.
+func (s *Server) selfUpdateTransactionHTTP(w http.ResponseWriter, r *http.Request) {
+	status, err := s.selfUpdate.Transaction(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "self_update_transaction_unavailable", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
 // selfUpdateApplyHTTP downloads, verifies, and transactionally activates the
 // target release. Authorization is the bearer token plus the
 // control plane's own system.update permission gate on the route that reaches

@@ -162,6 +162,11 @@ type Operator interface {
 	// Apply verifies and prepares the target, then waits for its detached
 	// activation journal to reach readiness-verified success or rollback.
 	Apply(context.Context, Change) (Result, error)
+	// Transaction reports the node's most recent update transaction. It is what
+	// makes an apply's outcome knowable after the fact: activation restarts the
+	// agent that is serving the apply, so the response is severed by the very
+	// act it reports on and the journal is the only surviving record.
+	Transaction(context.Context) (TransactionStatus, error)
 }
 
 // ReleaseSource resolves releases from the trusted repository. It is an

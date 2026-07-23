@@ -33,6 +33,10 @@ func (f *fakeUpdateOperator) Apply(_ context.Context, change selfupdateoperator.
 	return f.result, f.applyErr
 }
 
+func (f *fakeUpdateOperator) Transaction(context.Context) (selfupdateoperator.TransactionStatus, error) {
+	return selfupdateoperator.TransactionStatus{}, nil
+}
+
 func (f *fakeUpdateOperator) Rollback(context.Context) (selfupdateoperator.Result, error) {
 	return f.result, f.applyErr
 }

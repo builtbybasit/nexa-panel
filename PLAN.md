@@ -571,6 +571,7 @@ prior install, a real reboot, or a real bad artifact.
 | 6 | `validateBinary` accepted any candidate whose `version` exited zero, and the activation helper *is* the newly installed binary, so a candidate that runs without being nexa never advances the journal; `waitForActivation` then expired and returned, leaving the bad binary live. | **Bricked the node.** A 22-byte shell script was installed as `/usr/bin/nexa`; the panel survived only because the running processes held the deleted inode. | Fixed — version-shape validation, and a stalled activation now restores itself. |
 | 7 | Uninstall removes the panel vhost, which is the only source of publishing truth. A reinstall over retained state therefore cannot recover the publishing mode. | **Reinstall silently downgraded a public HTTPS node to loopback-only `127.0.0.1:8888`.** The certificate was retained but unused; the panel became unreachable from the internet with no error. | Fixed — the installer writes and reads `/etc/nexa-panel/publishing.json`; see 10.3. |
 | 8 | `nexa-agent.service` named `User=root` alongside `NoNewPrivileges=true`. Naming the user explicitly makes systemd withhold `CAP_SETUID`, and `NoNewPrivileges` makes it unregainable; apt's http/https methods `seteuid` to `_apt` (uid 42) before fetching. | **No application, PHP extension or database engine could ever be installed from the panel**, on any node. Every apt download died with `E: seteuid 42 failed`. Hidden because `install.sh` does its own apt work as a plain root script, never under the unit, and catalog enumeration uses `apt-cache`, which needs no privilege drop — so the UI listed versions correctly right up to the moment of install. | Fixed — the redundant `User=root` is gone; see 10.5. |
+| 9 | Activation restarts `nexa-agent`, which severs the apply request the agent is still serving, so `nexa self-update` reported `Post "http://unix/v1/self-update/apply": EOF` — a failure — on an update that had already committed. The same restart also expired the agent's 5 s shutdown drain, so it exited 1 and systemd marked the unit failed on every successful update. | **Every successful update was reported as a failed one.** The two obvious operator reactions to that report, retrying and starting recovery, are both wrong on a node that updated correctly. | Fixed — the client resumes from the durable journal over a new `GET /v1/self-update/transaction` route; the agent exits 0 when its drain is outlived. See 10.6. |
 
 ### 10.2 Proven working on real hardware
 
@@ -701,3 +702,55 @@ Also worth fixing: `docs/live-test-plan.md` tells the operator to run
 `test-vm-lifecycle.sh` from an unpacked release tree at `/opt/nexa-src`, but
 `build-linux-release.sh` does not ship the harness in the bundle — it stages only
 the files `install.sh` reads. The harness has to be copied to the box separately.
+
+### 10.6 Defect 9: an update that succeeds must not report failure
+
+Found at the end of the release session, on the first release the node ever
+self-updated from. The update worked — `swapped=true activated=true
+packagingSynced=true`, `nexa version` reporting the new release, public HTTPS
+200 — and `nexa self-update` still exited non-zero with
+`apply update: call self-update agent: Post "http://unix/v1/self-update/apply": EOF`.
+
+The cause is structural rather than accidental. `waitForActivation` runs *inside
+nexa-agent*, and the activation helper's job is to restart nexa-agent. The
+process that owes the operator an answer is killed by the act it is reporting
+on, so the response can never arrive. Nothing was wrong with the update; the only
+thing broken was the report of it.
+
+This is the same family as defects 4, 6 and 7: the stated outcome did not match
+what happened. It is arguably the worst of them, because the two obvious
+reactions to "your update failed" — retry it, or start recovering the node — are
+both wrong and both destructive on a node that is already correctly updated.
+
+The fix makes the durable journal, not the HTTP response, the thing that reports
+the outcome:
+
+- The agent gains `GET /v1/self-update/transaction`, a read-only projection of
+  the journal: transaction id, phase, whether that phase is terminal, and the
+  committed `Result`.
+- `UnixClient.Apply` reads that journal before applying and, when the response is
+  severed mid-exchange, polls it until a transaction with a *different* id
+  reaches a terminal phase, then reports what that transaction committed.
+  Requiring a new id is what stops a stale success from being reported as this
+  apply's; a severed response with no new committed transaction is still a
+  failure, as is one from a node whose journal cannot be read at all.
+- Only a connection that dies mid-exchange resumes. A request the agent answered
+  with an error, and one that never reached it, stay ordinary failures.
+
+The second half was in the same journal: the agent exited 1 on `SIGTERM` with
+`context deadline exceeded`, so systemd marked the unit failed during every
+update. Its 5 s shutdown drain cannot complete while an apply is in flight —
+that request is waiting on the restart doing the draining. A stop signal is an
+instruction, not a failure, so the drain expiring now forces the remaining
+connections closed and exits 0.
+
+Both halves landed with the assertion first, each confirmed red against the exact
+live symptom: `TestApplyReportsTheCommittedOutcomeWhenActivationRestartsTheAgent`
+reproduced the `EOF`, and `TestServeExitsCleanlyWhenAStopSignalArrivesDuringAnApply`
+reproduced the `context deadline exceeded`.
+
+**Not yet verified on hardware.** Proving it needs a published release the node
+can update to, and the box's installed agent predates the journal route — the
+same bootstrap trap as the extractor fix. A node updating *from* an agent without
+that route degrades to the old reported failure; the resume takes effect from the
+first update that starts on a build carrying it.

@@ -153,6 +153,14 @@ yet gone start to finish on unmodified code.
    made every apt install on every node impossible, and all six scenarios passed
    on a box where the Applications page could not install a thing. No scenario
    covers this yet.
+2b. **Confirm an update reports itself truthfully** (defect 9, `PLAN.md` 10.6).
+   The fix is in the tree but has never run on hardware: `nexa self-update` used
+   to exit non-zero on updates that fully succeeded, because activation restarts
+   the agent serving the apply. Both the CLI resume and the agent's clean SIGTERM
+   exit need a real update to prove. Note the bootstrap trap — the resume only
+   applies to a node whose *installed* agent already serves
+   `GET /v1/self-update/transaction`, so the first update onto such a build will
+   still report the old EOF failure.
 3. **Injected update failure mid-activation** — kill the activation helper, pull
    power (hard reset via the provider console), and confirm the node returns to
    the old healthy version. Only the *validation* failure path was proven; the
