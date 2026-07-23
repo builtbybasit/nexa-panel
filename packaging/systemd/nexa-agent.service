@@ -42,7 +42,12 @@ PrivateTmp=true
 # remains read-only inside the agent's mount namespace.
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/boot /etc /opt /srv /usr /var /run/containers /run/nexa-panel /run/php /run/postgresql
+# The /run paths a package creates only once its service has run are prefixed
+# with '-' so a missing one is skipped instead of failing the mount namespace.
+# Without that, the first boot after a reboot died with 226/NAMESPACE because
+# /run/containers does not exist until Podman has started, and nexa-api then
+# failed permanently with 'dependency' while the agent recovered on its own.
+ReadWritePaths=/boot /etc /opt /srv /usr /var -/run/containers /run/nexa-panel -/run/php -/run/postgresql
 ProtectClock=true
 ProtectControlGroups=true
 ProtectHostname=true

@@ -3,7 +3,12 @@ Description=Nexa Panel control plane
 Documentation=https://github.com/nexa-panel/nexa-panel
 After=network-online.target nexa-agent.service
 Wants=network-online.target
-Requires=nexa-agent.service
+# Wants=, not Requires=: a Requires= dependency whose start job fails cancels
+# this unit's job outright, and systemd never retries a job cancelled that way,
+# so one transient agent failure at boot left the panel down until an operator
+# logged in and started it by hand. Wants= still pulls the agent in and After=
+# still orders behind it; the restart budget below is what absorbs the flap.
+Wants=nexa-agent.service
 # Ten restarts at RestartSec=3s absorb roughly half a minute of boot-order flap
 # while the agent socket appears; anything still failing after that is a real
 # crash loop and must land in failed state instead of spinning forever.

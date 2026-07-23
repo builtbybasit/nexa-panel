@@ -132,7 +132,11 @@ func TestPrivilegedAgentRetainsPackageWritesInsideReadOnlyHostSandbox(t *testing
 	if len(writeRoots) != 1 {
 		t.Fatalf("agent must declare one auditable ReadWritePaths boundary, got %q", writeRoots)
 	}
-	requireWordSet(t, writeRoots[0], "/boot", "/etc", "/opt", "/srv", "/usr", "/var", "/run/containers", "/run/nexa-panel", "/run/php", "/run/postgresql")
+	// The '-' prefixes mark the /run trees a package only creates once its own
+	// service has run; a missing one must be skipped rather than fail the mount
+	// namespace and take the whole panel down for the boot. The set of writable
+	// roots is unchanged — this asserts the prefix, not a wider boundary.
+	requireWordSet(t, writeRoots[0], "/boot", "/etc", "/opt", "/srv", "/usr", "/var", "-/run/containers", "/run/nexa-panel", "-/run/php", "-/run/postgresql")
 
 	for _, key := range []string{
 		"KeyringMode", "LockPersonality", "ProtectClock", "ProtectControlGroups",
@@ -453,5 +457,24 @@ func TestMetricsProxyIdentifiesTheLoopbackScraperToTheLocalOnlyGate(t *testing.T
 	metrics := configuration[start : start+end]
 	if !strings.Contains(metrics, "proxy_set_header X-Forwarded-For $remote_addr;") {
 		t.Fatalf("/metrics does not forward the loopback scraper address to the application local-only gate:\n%s", metrics)
+	}
+}
+
+// systemd cancels a unit's start job outright when a Requires= dependency fails
+// to start, and never retries a job cancelled that way. The agent's first boot
+// attempt can legitimately fail while a /run tree its sandbox references is
+// still being created, so a Requires= edge here left the panel down for the
+// whole boot even though the agent recovered seconds later on its own restart.
+func TestControlPlaneDoesNotHardRequireTheAgentStartJob(t *testing.T) {
+	unitSection := readUnitDirectives(t, "systemd/nexa-api.service")
+	for _, requires := range unitSection["Requires"] {
+		if strings.Contains(requires, "nexa-agent.service") {
+			t.Fatalf("nexa-api must pull the agent in with Wants=, not Requires=, or one transient agent failure at boot leaves the panel down until an operator intervenes; got Requires=%q", requires)
+		}
+	}
+	requireDirectiveValue(t, unitSection, "Wants", "nexa-agent.service")
+	after := strings.Join(unitSection["After"], " ")
+	if !strings.Contains(after, "nexa-agent.service") {
+		t.Fatalf("nexa-api must still start after the agent, got After=%q", after)
 	}
 }
