@@ -26,7 +26,7 @@ func (noOpSiteOwnership) Chown(string, string) error { return nil }
 func startFilesAgent(t *testing.T) (*filesoperator.UnixClient, sitefs.Scope, string, string) {
 	t.Helper()
 	directory := t.TempDir()
-	socketDirectory, err := os.MkdirTemp("/private/tmp", "nexa-agent-")
+	socketDirectory, err := os.MkdirTemp(socketTempRoot, "nexa-agent-")
 	if err != nil {
 		t.Fatalf("create socket directory: %v", err)
 	}

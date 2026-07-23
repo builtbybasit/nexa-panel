@@ -54,7 +54,7 @@ func (r *scriptedRunner) Run(_ context.Context, command scheduleoperator.Command
 func startScheduleAgent(t *testing.T) (*scheduleoperator.UnixClient, scheduleoperator.Task, *backdatingOperator) {
 	t.Helper()
 	directory := t.TempDir()
-	socketDirectory, err := os.MkdirTemp("/private/tmp", "nexa-agent-")
+	socketDirectory, err := os.MkdirTemp(socketTempRoot, "nexa-agent-")
 	if err != nil {
 		t.Fatalf("create socket directory: %v", err)
 	}

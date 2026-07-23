@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+// socketTempRoot is a short parent directory for Unix sockets created by tests.
+// A socket path is capped near 104 bytes by sun_path, and on macOS t.TempDir()
+// returns a long /var/folders/... path that overflows it. This used to be
+// /private/tmp, which is short but exists only on macOS: every one of these
+// tests failed on Linux, so CI had never once passed. /tmp is short and present
+// on both.
+const socketTempRoot = "/tmp"
+
 func TestOpenAPIUnixSocketRejectsUnsafeTargets(t *testing.T) {
 	if _, _, err := openAPIUnixSocket("relative.sock"); err == nil {
 		t.Fatal("relative socket path should be rejected")
@@ -26,7 +34,7 @@ func TestOpenAPIUnixSocketRejectsUnsafeTargets(t *testing.T) {
 }
 
 func TestOpenAPIUnixSocketAcceptsConnectionsAndCleansUp(t *testing.T) {
-	directory, err := os.MkdirTemp("/private/tmp", "nexa-api-")
+	directory, err := os.MkdirTemp(socketTempRoot, "nexa-api-")
 	if err != nil {
 		t.Fatal(err)
 	}

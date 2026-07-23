@@ -18,6 +18,14 @@ import (
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
 
+// socketTempRoot is a short parent directory for Unix sockets created by tests.
+// A socket path is capped near 104 bytes by sun_path, and on macOS t.TempDir()
+// returns a long /var/folders/... path that overflows it. This used to be
+// /private/tmp, which is short but exists only on macOS: every one of these
+// tests failed on Linux, so CI had never once passed. /tmp is short and present
+// on both.
+const socketTempRoot = "/tmp"
+
 func TestAgentRejectsMissingCredential(t *testing.T) {
 	server := New("", "test", "expected-token", slog.New(slog.NewTextHandler(io.Discard, nil)))
 	handler := server.authenticate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -112,7 +120,7 @@ func TestAgentMetricsExposeCountersBehindBearerToken(t *testing.T) {
 }
 
 func TestServeRejectsUnsafeConfigurationBeforeOpeningSocket(t *testing.T) {
-	if err := New("/private/tmp/unused-agent.sock", "test", "", nil).Serve(context.Background()); err == nil || !strings.Contains(err.Error(), "credential") {
+	if err := New(socketTempRoot+"/unused-agent.sock", "test", "", nil).Serve(context.Background()); err == nil || !strings.Contains(err.Error(), "credential") {
 		t.Fatalf("empty credential error = %v", err)
 	}
 }
@@ -148,7 +156,7 @@ func TestAgentSignsPostgresPlansAndRejectsTampering(t *testing.T) {
 
 func TestAgentServesHealthOverUnixSocket(t *testing.T) {
 	directory := t.TempDir()
-	socketDirectory, err := os.MkdirTemp("/private/tmp", "nexa-agent-")
+	socketDirectory, err := os.MkdirTemp(socketTempRoot, "nexa-agent-")
 	if err != nil {
 		t.Fatalf("create socket directory: %v", err)
 	}
