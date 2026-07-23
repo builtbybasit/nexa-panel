@@ -62,7 +62,9 @@ describe('direct route authorization', () => {
     const router = createNexaRouter(createMemoryHistory())
     await router.push('/files?site=site-1&path=public')
     const unregister = registerUnsavedChanges(() => true)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    // See unsavedChanges.test.ts: confirm has to be installed, not spied on.
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
 
     await router.push('/services')
 

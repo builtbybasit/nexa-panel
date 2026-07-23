@@ -13,33 +13,33 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tanstack/vue-query": "^5.83.0",
+    "@tanstack/vue-query": "^5.101.4",
     "clsx": "^2.1.1",
     "lucide-vue-next": "^1.0.0",
     "monaco-editor": "^0.56.0",
-    "pinia": "^3.0.3",
+    "pinia": "^4.0.2",
     "qrcode.vue": "^3.10.0",
     "reka-ui": "^2.10.1",
     "tailwind-merge": "^3.6.0",
-    "vue": "^3.5.17",
-    "vue-router": "^4.5.1"
+    "vue": "^3.5.40",
+    "vue-router": "^5.2.0"
   },
   "overrides": {
     "dompurify": "3.4.12"
   },
   "devDependencies": {
-    "@redocly/cli": "2.39.0",
-    "@tailwindcss/vite": "^4.3.2",
-    "@types/node": "^22.15.30",
+    "@redocly/cli": "2.40.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.1.1",
     "@vitejs/plugin-vue": "^6.0.0",
     "@vue/test-utils": "^2.4.11",
-    "happy-dom": "^20.11.0",
-    "knip": "6.25.0",
-    "tailwindcss": "^4.3.2",
+    "happy-dom": "^20.11.1",
+    "knip": "6.29.0",
+    "tailwindcss": "^4.3.3",
     "tailwindcss-animate": "^1.0.7",
-    "typescript": "^5.8.3",
-    "vite": "^7.0.4",
-    "vitest": "^3.2.4",
-    "vue-tsc": "^3.0.1"
+    "typescript": "^5.9.3",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10",
+    "vue-tsc": "^3.3.8"
   }
 }
