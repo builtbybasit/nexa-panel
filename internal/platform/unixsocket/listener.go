@@ -52,7 +52,14 @@ func Listen(path string, directoryMode, socketMode fs.FileMode) (net.Listener, f
 	cleanup := func() {
 		_ = listener.Close()
 		current, statErr := os.Lstat(path)
-		if statErr == nil && os.SameFile(created, current) {
+		// SameFile compares device and inode, and an inode is reused as soon as
+		// it is freed: remove this socket, write an ordinary file in the same
+		// directory, and the replacement can land on the very inode the socket
+		// had. It then satisfies SameFile and gets deleted — exactly the data
+		// loss this cleanup exists to prevent. Requiring it to still be a socket
+		// closes that, and mirrors the check Listen already makes before it
+		// overwrites anything.
+		if statErr == nil && current.Mode()&os.ModeSocket != 0 && os.SameFile(created, current) {
 			_ = os.Remove(path)
 		}
 	}
