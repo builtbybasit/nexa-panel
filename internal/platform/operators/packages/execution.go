@@ -193,8 +193,18 @@ func (o *HostOperator) removeDatabaseRepo(ctx context.Context, entry catalogEntr
 const addRepoScript = `
 set -eu
 key_url="$1"; want_fpr="$2"; keyring="$3"; repo_url="$4"; codename="$5"; component="$6"; list="$7"
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+# gpg insists on a writable home directory even to read a key out of a file,
+# and the agent unit sets ProtectHome=true, so $HOME/.gnupg cannot be created:
+# every gpg call died with "Fatal: can't create directory '/root/.gnupg'". That
+# emptied got_fpr, so the failure surfaced as the misleading "downloaded none"
+# fingerprint mismatch. Give gpg a private home inside the work directory
+# rather than widening the unit's sandbox for it.
+GNUPGHOME="$work/gnupg"
+export GNUPGHOME
+mkdir -m 0700 "$GNUPGHOME"
+tmp="$work/key"
 curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp" "$key_url"
 got_fpr="$(gpg --show-keys --with-colons --with-fingerprint "$tmp" | awk -F: '/^fpr/{print $10; exit}')"
 if [ "$got_fpr" != "$want_fpr" ]; then

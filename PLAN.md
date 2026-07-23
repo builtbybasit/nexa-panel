@@ -572,6 +572,7 @@ prior install, a real reboot, or a real bad artifact.
 | 7 | Uninstall removes the panel vhost, which is the only source of publishing truth. A reinstall over retained state therefore cannot recover the publishing mode. | **Reinstall silently downgraded a public HTTPS node to loopback-only `127.0.0.1:8888`.** The certificate was retained but unused; the panel became unreachable from the internet with no error. | Fixed — the installer writes and reads `/etc/nexa-panel/publishing.json`; see 10.3. |
 | 8 | `nexa-agent.service` named `User=root` alongside `NoNewPrivileges=true`. Naming the user explicitly makes systemd withhold `CAP_SETUID`, and `NoNewPrivileges` makes it unregainable; apt's http/https methods `seteuid` to `_apt` (uid 42) before fetching. | **No application, PHP extension or database engine could ever be installed from the panel**, on any node. Every apt download died with `E: seteuid 42 failed`. Hidden because `install.sh` does its own apt work as a plain root script, never under the unit, and catalog enumeration uses `apt-cache`, which needs no privilege drop — so the UI listed versions correctly right up to the moment of install. | Fixed — the redundant `User=root` is gone; see 10.5. |
 | 9 | Activation restarts `nexa-agent`, which severs the apply request the agent is still serving, so `nexa self-update` reported `Post "http://unix/v1/self-update/apply": EOF` — a failure — on an update that had already committed. The same restart also expired the agent's 5 s shutdown drain, so it exited 1 and systemd marked the unit failed on every successful update. | **Every successful update was reported as a failed one.** The two obvious operator reactions to that report, retrying and starting recovery, are both wrong on a node that updated correctly. | Fixed — the client resumes from the durable journal over a new `GET /v1/self-update/transaction` route; the agent exits 0 when its drain is outlived. See 10.6. |
+| 10 | The vendor-repository setup script runs `gpg`, and `nexa-agent.service` sets `ProtectHome=true`, so `$HOME/.gnupg` cannot be created. Every `gpg` call died with `Fatal: can't create directory '/root/.gnupg'` before reading anything, which emptied the fingerprint variable. | **No MySQL or MariaDB series from a vendor repository could be installed on any node**, and the error blamed the vendor: `signing key fingerprint mismatch: downloaded none, pinned 177F…`. The pin was fine; gpg had never run. | Fixed — the script exports a private `GNUPGHOME` inside its own work directory rather than widening the unit's sandbox. See 10.7. |
 
 ### 10.2 Proven working on real hardware
 
@@ -754,3 +755,41 @@ can update to, and the box's installed agent predates the journal route — the
 same bootstrap trap as the extractor fix. A node updating *from* an agent without
 that route degrades to the old reported failure; the resume takes effect from the
 first update that starts on a build carrying it.
+
+### 10.7 Defect 10: no vendor-repository database engine could be installed
+
+Found by installing MariaDB 13.0 from the Applications page, on a node already
+carrying the defect-8 fix. The job failed in six seconds with:
+
+```
+configure the MariaDB 13.0 repository: exit status 1:
+gpg: Fatal: can't create directory '/root/.gnupg': Read-only file system
+signing key fingerprint mismatch: downloaded none, pinned 177F4010FE56CA…
+```
+
+Two lines, and the second is a lie caused by the first. `addRepoScript` reads the
+downloaded key with `gpg --show-keys`, but `nexa-agent.service` sets
+`ProtectHome=true`, so gpg could not create `$HOME/.gnupg` and exited before
+reading anything. `got_fpr` was therefore empty, and the pin check reported it as
+`downloaded none` — pointing the operator at the vendor's signing key, which was
+never involved. Every MySQL and MariaDB series that needs a vendor repository was
+uninstallable on every node.
+
+This is defect 8's shape exactly: a hardening directive on the unit withholding
+something a child process needs, invisible because nothing exercises that child
+under the unit's sandbox. The fix is the narrow one — the script exports a
+private `GNUPGHOME` inside the work directory it already creates and cleans up,
+rather than widening `ReadWritePaths` or relaxing `ProtectHome`.
+
+The deeper gap is that `addRepoScript` had never been executed by any test. Every
+existing assertion about it stops at the fake runner and inspects the command
+*string*. `addrepo_script_test.go` now runs the real script against a stub `curl`
+and a checked-in throwaway vendor key, under a `HOME` that cannot be created —
+which reproduced the live failure verbatim, `downloaded none` and all — and
+covers both the success path and the pin refusal.
+
+**Still unproven:** the `ppa:ondrej/php` and PGDG repository paths also shell out
+to tools that use gpg. PostgreSQL 18 did install from the panel on the test box,
+so PGDG is fine in practice; `add-apt-repository` under the agent's sandbox has
+not been exercised since defect 8 was fixed and should be, by installing a PHP
+version the node does not already carry.
