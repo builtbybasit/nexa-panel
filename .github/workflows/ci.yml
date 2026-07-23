@@ -86,8 +86,13 @@ jobs:
 
       - name: Build the production binary
         run: |
-          bun install --cwd web --frozen-lockfile
-          bun run --cwd web build
+          # `make web-build`, not a bare `bun run build`: the target installs the
+          # same frozen lockfile and pins Node's heap. Spelled out here instead,
+          # this job kept the default heap, which is sized from the runner's RAM
+          # and is too small for the bundle — it died with "JavaScript heap out
+          # of memory" while the quality job, which goes through the Makefile,
+          # built the very same code.
+          make web-build
           mkdir -p dist
           CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} go build -tags embed -trimpath \
             -o dist/nexa-linux-${{ matrix.arch }} ./cmd/nexa
