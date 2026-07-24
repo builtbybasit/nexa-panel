@@ -39,6 +39,15 @@ once stable releases begin.
 The final release entry must be cut from this section only after the complete
 release matrix in `PLAN.md` passes on AMD64 and ARM64.
 
+## v0.5.11 — 2026-07-24
+
+### Added
+
+- Site creation can set an SFTP password up front. It is stored only as a hash
+  until the site is activated, then applied automatically as the site's SFTP
+  access; a staging failure is reported in the activation log without failing
+  the activation and is retried on the next one.
+
 ## v0.5.10 — 2026-07-24
 
 ### Changed
