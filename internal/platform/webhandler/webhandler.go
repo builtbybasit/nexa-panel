@@ -130,37 +130,17 @@ func OK(w http.ResponseWriter, status int, value any) {
 }
 
 // HandleOp binds handler to the route and permission the OpenAPI contract
-// declares for operationID. The method, path, and required permission all come
-// from the embedded spec, so the 21 hand-maintained route tables collapse to a
-// list of (operationID, handler) pairs and a renamed or deleted operation fails
-// registration at startup instead of drifting silently.
-//
-// An operation carrying an x-permission is registered behind that permission; a
-// secured operation without one is merely authenticated; an operation with no
-// security requirement is registered open.
+// declares for operationID, so the per-module route tables collapse to a list of
+// (operationID, handler) pairs and a renamed or deleted operation fails
+// registration at startup instead of drifting silently. The routing itself lives
+// in apispec (cycle-free); this is the convenience re-export for the modules that
+// already depend on webhandler for Actor/Decode/Fail.
 func HandleOp(registry module.Registry, operationID string, handler http.HandlerFunc) error {
-	op, err := apispec.Lookup(operationID)
-	if err != nil {
-		return err
-	}
-	switch {
-	case op.Permission != "":
-		return registry.HandleAuthorized(op.Pattern(), op.Permission, handler)
-	case op.Secured:
-		return registry.HandleAuthenticated(op.Pattern(), handler)
-	default:
-		return registry.Handle(op.Pattern(), handler)
-	}
+	return apispec.HandleOp(registry, operationID, handler)
 }
 
-// Register binds every operationID to its handler via HandleOp. It replaces the
-// per-module route table and its loop: the map keys are the contract's
-// operationIds, and the method, path, and permission are resolved from the spec.
+// Register binds every operationID to its handler via HandleOp, replacing the
+// per-module route table and its loop.
 func Register(registry module.Registry, handlers map[string]http.HandlerFunc) error {
-	for operationID, handler := range handlers {
-		if err := HandleOp(registry, operationID, handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return apispec.Register(registry, handlers)
 }
