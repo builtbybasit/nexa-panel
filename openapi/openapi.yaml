@@ -168,6 +168,12 @@ paths:
     $ref: ./paths/mysql-family.yaml#/mysql-family_engines
   /mysql-family/accounts:
     $ref: ./paths/mysql-family.yaml#/mysql-family_accounts
+  /mysql-family/accounts/{id}:
+    $ref: ./paths/mysql-family.yaml#/mysql-family_accounts_id
+  /mysql-family/databases/{id}:
+    $ref: ./paths/mysql-family.yaml#/mysql-family_databases_id
+  /mysql-family/grants/{id}:
+    $ref: ./paths/mysql-family.yaml#/mysql-family_grants_id
   /mysql-family/accounts/{id}/rotate:
     $ref: ./paths/mysql-family.yaml#/mysql-family_accounts_id_rotate
   /mysql-family/accounts/{id}/credential:

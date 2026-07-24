@@ -289,3 +289,84 @@ mysql-family_resourceType_id_apply:
 
       '4XX':
         $ref: ../components/responses.yaml#/ClientError
+mysql-family_accounts_id:
+  delete:
+    operationId: dropMySQLFamilyAccount
+    summary: Drop MySQL Family Account
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Account removal planning was queued
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+mysql-family_databases_id:
+  delete:
+    operationId: dropMySQLFamilyDatabase
+    summary: Drop MySQL Family Database
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Database removal planning was queued
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+mysql-family_grants_id:
+  delete:
+    operationId: dropMySQLFamilyGrant
+    summary: Drop MySQL Family Grant
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Grant removal planning was queued
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                job:
+                  $ref: ../components/schemas/jobs.yaml#/Job
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
