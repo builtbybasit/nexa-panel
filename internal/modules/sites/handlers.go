@@ -9,6 +9,7 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
@@ -46,9 +47,9 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) createHTTP(w http.ResponseWriter, r *http.Request) {
-	var request CreateRequest
-	if err := httpapi.DecodeJSON(w, r, &request); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	request, decodeErr := webhandler.Decode[CreateRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	user, ok := identity.UserFromContext(r.Context())
@@ -180,9 +181,9 @@ func (m *Module) updateSettingsHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	var request SettingsRequest
-	if err := httpapi.DecodeJSON(w, r, &request); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	request, decodeErr := webhandler.Decode[SettingsRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	current, err := m.loadSettings(r.Context(), site.ID)

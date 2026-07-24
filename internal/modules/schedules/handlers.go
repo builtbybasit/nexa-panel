@@ -8,6 +8,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 // resolveSite loads the site and hides it from unauthorized users; an
@@ -111,9 +112,9 @@ func (m *Module) getHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) createHTTP(w http.ResponseWriter, r *http.Request) {
-	var request TaskRequest
-	if err := httpapi.DecodeJSON(w, r, &request); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	request, decodeErr := webhandler.Decode[TaskRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	_, scope, user, ok := m.resolveSite(w, r, true)
@@ -138,9 +139,9 @@ func (m *Module) createHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) updateHTTP(w http.ResponseWriter, r *http.Request) {
-	var request TaskRequest
-	if err := httpapi.DecodeJSON(w, r, &request); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	request, decodeErr := webhandler.Decode[TaskRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	site, scope, user, ok := m.resolveSite(w, r, true)

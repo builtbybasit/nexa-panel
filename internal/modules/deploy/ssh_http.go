@@ -66,9 +66,9 @@ func (m *Module) sshAddKeyHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var request keyRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[keyRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	access, err := m.addKey(r.Context(), site, request.Label, request.PublicKey, actor, httpapi.RemoteAddress(r))
@@ -91,9 +91,9 @@ func (m *Module) sshGenerateKeyHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var request keyRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[keyRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	generated, err := m.generateKey(r.Context(), site, request.Label, actor, httpapi.RemoteAddress(r))

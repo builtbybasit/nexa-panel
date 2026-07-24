@@ -30,11 +30,11 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) changeHTTP(w http.ResponseWriter, r *http.Request) {
-	var request struct {
+	request, decodeErr := webhandler.Decode[struct {
 		Action packagesoperator.Action `json:"action"`
-	}
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	}](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	actor, ok := webhandler.ActorID(r)

@@ -46,9 +46,9 @@ type actionRequest struct {
 }
 
 func (m *Module) actionHTTP(w http.ResponseWriter, r *http.Request) {
-	var request actionRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[actionRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	actor, ok := webhandler.ActorID(r)
@@ -97,11 +97,11 @@ func (m *Module) revertsHTTP(w http.ResponseWriter, r *http.Request) {
 // permission-checked, so reaching it proves the operator's session still works —
 // which is the alternative access the guard was waiting to see verified.
 func (m *Module) confirmRevertHTTP(w http.ResponseWriter, r *http.Request) {
-	var request struct {
+	request, decodeErr := webhandler.Decode[struct {
 		ID string `json:"id"`
-	}
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	}](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	revert, err := m.ConfirmRevert(r.Context(), request.ID)

@@ -49,9 +49,9 @@ func (m *Module) instancesHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) createInstanceHTTP(w http.ResponseWriter, r *http.Request) {
-	var request CreateInstanceRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, 400, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[CreateInstanceRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	actor, ok := webhandler.ActorID(r)
@@ -77,9 +77,9 @@ func (m *Module) rolesHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) createRoleHTTP(w http.ResponseWriter, r *http.Request) {
-	var request CreateRoleRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, 400, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[CreateRoleRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	actor, ok := webhandler.ActorID(r)
@@ -172,9 +172,9 @@ func (m *Module) dropGrantHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) createDatabaseHTTP(w http.ResponseWriter, r *http.Request) {
-	var request CreateDatabaseRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, 400, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[CreateDatabaseRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	actor, ok := webhandler.ActorID(r)
@@ -200,9 +200,9 @@ func (m *Module) grantsHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) createGrantHTTP(w http.ResponseWriter, r *http.Request) {
-	var request CreateGrantRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, 400, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[CreateGrantRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	actor, ok := webhandler.ActorID(r)
