@@ -10,6 +10,7 @@ GOVULNCHECK_VERSION ?= v1.6.0
 .PHONY: build release release-linux test test-race test-embed fmt fmt-check mod-check vet \
 	go-staticcheck go-deadcode go-vulncheck \
 	web-install web-dev web-test web-typecheck web-build web-deadcode web-audit openapi-lint \
+	openapi-gen openapi-gen-check \
 	scripts-check check ci \
 	test-db-acceptance test-node-lifecycle
 
@@ -101,6 +102,17 @@ web-audit: web-install
 
 openapi-lint: web-install
 	cd web && $(BUN) run openapi:lint
+
+# Regenerate the embedded OpenAPI contract and its Go models. Depends on the
+# vendored redocly (web-install) for bundling; the generator is pinned via the
+# go.mod tool directive.
+openapi-gen: web-install
+	bash scripts/openapi-generate.sh
+
+# Fail if the committed OpenAPI artifacts drift from the spec under openapi/.
+openapi-gen-check: openapi-gen
+	@git diff --exit-code -- internal/platform/httpapi/apispec/openapi.gen.json internal/platform/httpapi/apispec/models.gen.go \
+		|| { echo "openapi artifacts are stale; run 'make openapi-gen' and commit the result" >&2; exit 1; }
 
 scripts-check:
 	bash -n scripts/*.sh
