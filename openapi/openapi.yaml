@@ -142,56 +142,28 @@ paths:
     $ref: ./paths/certificates.yaml#/certificates_id_plans
   /certificates/{id}/apply:
     $ref: ./paths/certificates.yaml#/certificates_id_apply
-  /postgresql/instances:
-    $ref: ./paths/postgresql.yaml#/postgresql_instances
-  /postgresql/roles:
-    $ref: ./paths/postgresql.yaml#/postgresql_roles
-  /postgresql/roles/{id}/rotate:
-    $ref: ./paths/postgresql.yaml#/postgresql_roles_id_rotate
-  /postgresql/roles/{id}/credential:
-    $ref: ./paths/postgresql.yaml#/postgresql_roles_id_credential
-  /postgresql/databases:
-    $ref: ./paths/postgresql.yaml#/postgresql_databases
-  /postgresql/grants:
-    $ref: ./paths/postgresql.yaml#/postgresql_grants
-  /postgresql/databases/{id}/backups:
-    $ref: ./paths/postgresql.yaml#/postgresql_databases_id_backups
-  /postgresql/restore-points:
-    $ref: ./paths/postgresql.yaml#/postgresql_restore-points
-  /postgresql/restore-points/{id}/restore:
-    $ref: ./paths/postgresql.yaml#/postgresql_restore-points_id_restore
-  /postgresql/{resourceType}/{id}/plan:
-    $ref: ./paths/postgresql.yaml#/postgresql_resourceType_id_plan
-  /postgresql/{resourceType}/{id}/apply:
-    $ref: ./paths/postgresql.yaml#/postgresql_resourceType_id_apply
-  /mysql-family/engines:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_engines
-  /mysql-family/accounts:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_accounts
-  /mysql-family/accounts/{id}:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_accounts_id
-  /mysql-family/databases/{id}:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_databases_id
-  /mysql-family/grants/{id}:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_grants_id
-  /mysql-family/accounts/{id}/rotate:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_accounts_id_rotate
-  /mysql-family/accounts/{id}/credential:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_accounts_id_credential
-  /mysql-family/databases:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_databases
-  /mysql-family/grants:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_grants
-  /mysql-family/databases/{id}/backups:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_databases_id_backups
-  /mysql-family/restore-points:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_restore-points
-  /mysql-family/restore-points/{id}/restore:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_restore-points_id_restore
-  /mysql-family/{resourceType}/{id}/plan:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_resourceType_id_plan
-  /mysql-family/{resourceType}/{id}/apply:
-    $ref: ./paths/mysql-family.yaml#/mysql-family_resourceType_id_apply
+  /databases/servers:
+    $ref: ./paths/databases.yaml#/databases_servers
+  /databases/users:
+    $ref: ./paths/databases.yaml#/databases_users
+  /databases/users/{id}:
+    $ref: ./paths/databases.yaml#/databases_users_id
+  /databases/users/{id}/password:
+    $ref: ./paths/databases.yaml#/databases_users_id_password
+  /databases:
+    $ref: ./paths/databases.yaml#/databases_list
+  /databases/{id}:
+    $ref: ./paths/databases.yaml#/databases_id
+  /databases/grants:
+    $ref: ./paths/databases.yaml#/databases_grants
+  /databases/grants/{id}:
+    $ref: ./paths/databases.yaml#/databases_grants_id
+  /databases/{id}/backups:
+    $ref: ./paths/databases.yaml#/databases_id_backups
+  /databases/restore-points:
+    $ref: ./paths/databases.yaml#/databases_restore-points
+  /databases/restore-points/{id}/restore:
+    $ref: ./paths/databases.yaml#/databases_restore-points_id_restore
   /backups/accounts:
     $ref: ./paths/backups.yaml#/backups_accounts
   /backups/accounts/{id}:
@@ -264,12 +236,6 @@ paths:
     $ref: ./paths/audit.yaml#/audit_verify
   /domains/{id}:
     $ref: ./paths/domains.yaml#/domains_id
-  /postgresql/roles/{id}:
-    $ref: ./paths/postgresql.yaml#/postgresql_roles_id
-  /postgresql/databases/{id}:
-    $ref: ./paths/postgresql.yaml#/postgresql_databases_id
-  /postgresql/grants/{id}:
-    $ref: ./paths/postgresql.yaml#/postgresql_grants_id
   /firewall:
     $ref: ./paths/firewall.yaml#/firewall_root
   /firewall/action:
@@ -383,38 +349,32 @@ components:
       $ref: ./components/schemas/certificates.yaml#/CreateCertificate
     Certificate:
       $ref: ./components/schemas/certificates.yaml#/Certificate
-    PostgreSQLStatus:
-      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLStatus
-    CreatePostgreSQLInstance:
-      $ref: ./components/schemas/postgresql.yaml#/CreatePostgreSQLInstance
-    PostgreSQLInstance:
-      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLInstance
-    CreatePostgreSQLRole:
-      $ref: ./components/schemas/postgresql.yaml#/CreatePostgreSQLRole
-    PostgreSQLRole:
-      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLRole
-    CreateManagedPostgreSQLDatabase:
-      $ref: ./components/schemas/postgresql.yaml#/CreateManagedPostgreSQLDatabase
-    ManagedPostgreSQLDatabase:
-      $ref: ./components/schemas/postgresql.yaml#/ManagedPostgreSQLDatabase
-    CreatePostgreSQLGrant:
-      $ref: ./components/schemas/postgresql.yaml#/CreatePostgreSQLGrant
-    PostgreSQLGrant:
-      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLGrant
-    PostgreSQLRestorePoint:
-      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLRestorePoint
-    PostgreSQLStoredPlan:
-      $ref: ./components/schemas/postgresql.yaml#/PostgreSQLStoredPlan
-    MySQLFamilyEngine:
-      $ref: ./components/schemas/mysql-family.yaml#/MySQLFamilyEngine
-    CreateMySQLFamilyAccount:
-      $ref: ./components/schemas/mysql-family.yaml#/CreateMySQLFamilyAccount
-    CreateMySQLFamilyDatabase:
-      $ref: ./components/schemas/mysql-family.yaml#/CreateMySQLFamilyDatabase
-    MySQLFamilyDatabase:
-      $ref: ./components/schemas/mysql-family.yaml#/MySQLFamilyDatabase
-    CreateMySQLFamilyGrant:
-      $ref: ./components/schemas/mysql-family.yaml#/CreateMySQLFamilyGrant
+    DatabaseEngine:
+      $ref: ./components/schemas/databases.yaml#/DatabaseEngine
+    DatabaseStatus:
+      $ref: ./components/schemas/databases.yaml#/DatabaseStatus
+    DatabaseServer:
+      $ref: ./components/schemas/databases.yaml#/DatabaseServer
+    CreateDatabaseServer:
+      $ref: ./components/schemas/databases.yaml#/CreateDatabaseServer
+    CreateDatabaseUser:
+      $ref: ./components/schemas/databases.yaml#/CreateDatabaseUser
+    SetDatabaseUserPassword:
+      $ref: ./components/schemas/databases.yaml#/SetDatabaseUserPassword
+    DatabaseUser:
+      $ref: ./components/schemas/databases.yaml#/DatabaseUser
+    CreateManagedDatabase:
+      $ref: ./components/schemas/databases.yaml#/CreateManagedDatabase
+    ManagedDatabase:
+      $ref: ./components/schemas/databases.yaml#/ManagedDatabase
+    DatabaseAccess:
+      $ref: ./components/schemas/databases.yaml#/DatabaseAccess
+    CreateDatabaseGrant:
+      $ref: ./components/schemas/databases.yaml#/CreateDatabaseGrant
+    DatabaseGrant:
+      $ref: ./components/schemas/databases.yaml#/DatabaseGrant
+    DatabaseRestorePoint:
+      $ref: ./components/schemas/databases.yaml#/DatabaseRestorePoint
     PhpExtension:
       $ref: ./components/schemas/php.yaml#/PhpExtension
     PhpDirective:

@@ -6,8 +6,7 @@ import { formatBytes, formatDateTime } from '@/shared/formatters'
 import { AppAlert, AppButton, AppDialog, AppInput, FormField } from '@/shared/ui'
 import { Combobox, ComboboxAnchor, ComboboxEmpty, ComboboxGroup, ComboboxInput, ComboboxItem, ComboboxItemIndicator, ComboboxList, ComboboxTrigger } from '@/shared/ui/combobox'
 
-import { listDatabases as listPostgresDatabases } from '../../databases/api'
-import { listDatabases as listMysqlDatabases } from '../../mysql/api'
+import { listDatabases } from '../../databases/api'
 import { listSites } from '../../sites/api'
 import {
   previewBackupRestore,
@@ -21,17 +20,20 @@ const props = defineProps<{ copy: BackupCopy; busy: boolean; failure?: string }>
 const emit = defineEmits<{ close: []; restore: [body: BackupRestoreRequest] }>()
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
-const pgQuery = useQuery({ queryKey: ['postgres-databases'], queryFn: listPostgresDatabases, retry: false })
-const myQuery = useQuery({ queryKey: ['mysql-databases'], queryFn: listMysqlDatabases, retry: false })
+const databasesQuery = useQuery({ queryKey: ['databases'], queryFn: listDatabases, retry: false })
 
 const siteOptions = computed(() =>
   (sitesQuery.data.value ?? []).map((site) => ({ value: site.id, slug: site.slug, label: `${site.displayName} — ${site.primaryDomain}` })),
 )
 const postgresOptions = computed(() =>
-  (pgQuery.data.value ?? []).map((db) => ({ value: `postgres:${db.id}`, name: db.name, label: `${db.name} · PostgreSQL` })),
+  (databasesQuery.data.value ?? [])
+    .filter((db) => db.engine === 'postgresql')
+    .map((db) => ({ value: `postgres:${db.id}`, name: db.name, label: `${db.name} · PostgreSQL` })),
 )
 const mysqlOptions = computed(() =>
-  (myQuery.data.value ?? []).map((db) => ({ value: `mysql:${db.id}`, name: db.name, label: `${db.name} · MySQL` })),
+  (databasesQuery.data.value ?? [])
+    .filter((db) => db.engine === 'mysql')
+    .map((db) => ({ value: `mysql:${db.id}`, name: db.name, label: `${db.name} · MySQL` })),
 )
 const unverifiedAcknowledged = ref(false)
 const confirmation = ref('')

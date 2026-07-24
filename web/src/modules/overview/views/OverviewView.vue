@@ -48,7 +48,7 @@ const quickActions = computed(() => [
   { label: 'Create site', icon: 'layers', to: '/sites/new', permission: 'sites.write' as const },
   { label: 'Add domain', icon: 'globe', to: '/domains?create=1', permission: 'domains.write' as const },
   { label: 'Enable HTTPS', icon: 'lock', to: '/certificates?create=1', permission: 'certificates.write' as const },
-  { label: 'New database', icon: 'database', to: '/databases?create=1', permission: 'databases.write' as const },
+  { label: 'New database', icon: 'database', to: '/databases/new', permission: 'databases.write' as const },
   { label: 'Schedule a task', icon: 'clock', to: '/schedules?create=1', permission: 'schedules.write' as const },
   { label: 'Browse files', icon: 'folder', to: '/files', permission: 'files.read' as const },
 ].filter((action) => identity.can(action.permission)))

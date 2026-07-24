@@ -1,0 +1,342 @@
+databases_servers:
+  get:
+    operationId: listDatabaseServers
+    summary: List Database Servers
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Database servers across every engine on the node
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/databases.yaml#/DatabaseServer
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+  post:
+    operationId: createDatabaseServer
+    summary: Provision Database Server
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/databases.yaml#/CreateDatabaseServer
+    responses:
+      '202':
+        description: Server provisioning plan was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+databases_users:
+  get:
+    operationId: listDatabaseUsers
+    summary: List Database Users
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: serverId
+      in: query
+      required: false
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Managed database users across every engine
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/databases.yaml#/DatabaseUser
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+  post:
+    operationId: createDatabaseUser
+    summary: Create Database User
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/databases.yaml#/CreateDatabaseUser
+    responses:
+      '202':
+        description: User creation plan was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+databases_users_id:
+  delete:
+    operationId: dropDatabaseUser
+    summary: Drop Database User
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: User removal plan was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+databases_users_id_password:
+  post:
+    operationId: setDatabaseUserPassword
+    summary: Set Database User Password
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/databases.yaml#/SetDatabaseUserPassword
+    responses:
+      '202':
+        description: Password change was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+databases_list:
+  get:
+    operationId: listManagedDatabases
+    summary: List Managed Databases
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: serverId
+      in: query
+      required: false
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Managed databases across every engine, sizes refreshed
+          opportunistically
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/databases.yaml#/ManagedDatabase
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+  post:
+    operationId: createManagedDatabase
+    summary: Create Managed Database
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/databases.yaml#/CreateManagedDatabase
+    responses:
+      '202':
+        description: Database creation plan was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+databases_id:
+  delete:
+    operationId: dropManagedDatabase
+    summary: Drop Managed Database
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Database removal plan was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+databases_grants:
+  get:
+    operationId: listDatabaseGrants
+    summary: List Database Grants
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: databaseId
+      in: query
+      required: false
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Managed scoped grants
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/databases.yaml#/DatabaseGrant
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+  post:
+    operationId: createDatabaseGrant
+    summary: Create Database Grant
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas/databases.yaml#/CreateDatabaseGrant
+    responses:
+      '202':
+        description: Grant plan was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+databases_grants_id:
+  delete:
+    operationId: dropDatabaseGrant
+    summary: Revoke Database Grant
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Grant revocation plan was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+databases_id_backups:
+  post:
+    operationId: createDatabaseRestorePoint
+    summary: Create Database Restore Point
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Verified logical backup plan was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+databases_restore-points:
+  get:
+    operationId: listDatabaseRestorePoints
+    summary: List Database Restore Points
+    tags:
+    - Databases
+    x-permission: databases.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: databaseId
+      in: query
+      required: false
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Verified logical restore points
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: ../components/schemas/databases.yaml#/DatabaseRestorePoint
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+databases_restore-points_id_restore:
+  post:
+    operationId: restoreDatabaseBackup
+    summary: Restore Database Backup
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Failure-safe staged restore was queued
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

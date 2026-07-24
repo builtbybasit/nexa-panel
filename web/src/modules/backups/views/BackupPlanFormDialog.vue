@@ -5,8 +5,7 @@ import { computed, ref } from 'vue'
 import { AppAlert, AppButton, AppDialog, AppInput, EmptyState, FormField, Switch } from '@/shared/ui'
 import { Combobox, ComboboxAnchor, ComboboxEmpty, ComboboxGroup, ComboboxInput, ComboboxItem, ComboboxItemIndicator, ComboboxList, ComboboxTrigger } from '@/shared/ui/combobox'
 
-import { listDatabases as listPostgresDatabases } from '../../databases/api'
-import { listDatabases as listMysqlDatabases } from '../../mysql/api'
+import { listDatabases } from '../../databases/api'
 import CronBuilder from '../../schedules/CronBuilder.vue'
 import { normalize } from '../../schedules/cron'
 import { listSites } from '../../sites/api'
@@ -33,16 +32,18 @@ const busy = ref(false)
 const error = ref('')
 
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
-const pgQuery = useQuery({ queryKey: ['postgres-databases'], queryFn: listPostgresDatabases, retry: false })
-const myQuery = useQuery({ queryKey: ['mysql-databases'], queryFn: listMysqlDatabases, retry: false })
+const databasesQuery = useQuery({ queryKey: ['databases'], queryFn: listDatabases, retry: false })
 
 const siteOptions = computed(() =>
   (sitesQuery.data.value ?? []).map((site) => ({ value: site.id, label: `${site.displayName} — ${site.primaryDomain}` })),
 )
-const databaseOptions = computed(() => [
-  ...(pgQuery.data.value ?? []).map((db) => ({ value: `postgres:${db.id}`, label: `${db.name} · PostgreSQL` })),
-  ...(myQuery.data.value ?? []).map((db) => ({ value: `mysql:${db.id}`, label: `${db.name} · MySQL` })),
-])
+const databaseOptions = computed(() =>
+  (databasesQuery.data.value ?? []).map((db) =>
+    db.engine === 'postgresql'
+      ? { value: `postgres:${db.id}`, label: `${db.name} · PostgreSQL` }
+      : { value: `mysql:${db.id}`, label: `${db.name} · MySQL` },
+  ),
+)
 
 function toggle(target: 'site' | 'database', value: string) {
   const model = target === 'site' ? selectedSites : selectedDatabases

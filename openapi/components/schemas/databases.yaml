@@ -1,0 +1,277 @@
+DatabaseEngine:
+  type: string
+  description: Engine family a server or resource belongs to.
+  enum:
+  - mysql
+  - postgresql
+DatabaseStatus:
+  type: string
+  enum:
+  - planning
+  - plan_ready
+  - applying
+  - active
+  - online
+  - down
+  - backing_up
+  - verified
+  - restoring
+  - failed
+DatabaseServer:
+  type: object
+  description: One database server on the node — the discovered MySQL-family
+    engine or a PostgreSQL instance.
+  required:
+  - id
+  - engine
+  - kind
+  - version
+  - port
+  - status
+  - socketPath
+  - systemdUnit
+  properties:
+    id:
+      type: string
+    engine:
+      $ref: '#/DatabaseEngine'
+    kind:
+      type: string
+      description: Concrete flavor of the server.
+      enum:
+      - mysql
+      - mariadb
+      - postgresql
+    version:
+      type: string
+    versionText:
+      type: string
+    cluster:
+      type: string
+    port:
+      type: integer
+    status:
+      $ref: '#/DatabaseStatus'
+    socketPath:
+      type: string
+    systemdUnit:
+      type: string
+    managedByNexa:
+      type: boolean
+    lastJobId:
+      type: integer
+      format: int64
+    failure:
+      type: string
+CreateDatabaseServer:
+  type: object
+  additionalProperties: false
+  description: Provision a new server instance on an engine that supports it
+    (PostgreSQL today; the MySQL-family engine is discovered, not provisioned).
+  required:
+  - engine
+  - version
+  properties:
+    engine:
+      $ref: '#/DatabaseEngine'
+    version:
+      type: string
+    cluster:
+      type: string
+      pattern: ^[a-z][a-z0-9_]{1,30}$
+    port:
+      type: integer
+      minimum: 1024
+      maximum: 65535
+CreateDatabaseUser:
+  type: object
+  additionalProperties: false
+  required:
+  - serverId
+  - name
+  - password
+  properties:
+    serverId:
+      type: string
+    name:
+      type: string
+      pattern: ^[a-z][a-z0-9_]{1,62}$
+    host:
+      type: string
+      description: Client host scope; MySQL-family servers only.
+    password:
+      type: string
+      minLength: 8
+      maxLength: 128
+      description: Chosen or generated in the client and applied to the engine
+        as-is; the panel stores only its ciphertext and digest.
+SetDatabaseUserPassword:
+  type: object
+  additionalProperties: false
+  required:
+  - password
+  properties:
+    password:
+      type: string
+      minLength: 8
+      maxLength: 128
+DatabaseUser:
+  type: object
+  required:
+  - id
+  - serverId
+  - engine
+  - name
+  - status
+  - credentialVersion
+  properties:
+    id:
+      type: string
+    serverId:
+      type: string
+    engine:
+      $ref: '#/DatabaseEngine'
+    name:
+      type: string
+    host:
+      type: string
+    status:
+      $ref: '#/DatabaseStatus'
+    credentialVersion:
+      type: integer
+      minimum: 0
+    lastJobId:
+      type: integer
+      format: int64
+    failure:
+      type: string
+CreateManagedDatabase:
+  type: object
+  additionalProperties: false
+  required:
+  - serverId
+  - name
+  - ownerUserId
+  properties:
+    serverId:
+      type: string
+    name:
+      type: string
+      pattern: ^[a-z][a-z0-9_]{1,62}$
+    ownerUserId:
+      type: string
+    siteId:
+      type: string
+      description: Optional site this database belongs to; site teardown blocks
+        on the relation.
+ManagedDatabase:
+  type: object
+  required:
+  - id
+  - serverId
+  - engine
+  - name
+  - ownerUserId
+  - status
+  properties:
+    id:
+      type: string
+    serverId:
+      type: string
+    engine:
+      $ref: '#/DatabaseEngine'
+    name:
+      type: string
+    ownerUserId:
+      type: string
+    siteId:
+      type: string
+    status:
+      $ref: '#/DatabaseStatus'
+    sizeBytes:
+      type: integer
+      format: int64
+    sizeObservedAt:
+      type: string
+      format: date-time
+    lastJobId:
+      type: integer
+      format: int64
+    failure:
+      type: string
+DatabaseAccess:
+  type: string
+  enum:
+  - connect
+  - read_only
+  - read_write
+CreateDatabaseGrant:
+  type: object
+  additionalProperties: false
+  required:
+  - databaseId
+  - userId
+  - access
+  properties:
+    databaseId:
+      type: string
+    userId:
+      type: string
+    access:
+      $ref: '#/DatabaseAccess'
+DatabaseGrant:
+  type: object
+  required:
+  - id
+  - databaseId
+  - userId
+  - engine
+  - access
+  - status
+  properties:
+    id:
+      type: string
+    databaseId:
+      type: string
+    userId:
+      type: string
+    engine:
+      $ref: '#/DatabaseEngine'
+    access:
+      $ref: '#/DatabaseAccess'
+    status:
+      $ref: '#/DatabaseStatus'
+    lastJobId:
+      type: integer
+      format: int64
+    failure:
+      type: string
+DatabaseRestorePoint:
+  type: object
+  required:
+  - id
+  - databaseId
+  - engine
+  - status
+  properties:
+    id:
+      type: string
+    databaseId:
+      type: string
+    engine:
+      $ref: '#/DatabaseEngine'
+    status:
+      $ref: '#/DatabaseStatus'
+    sha256:
+      type: string
+    sizeBytes:
+      type: integer
+      format: int64
+    verifiedAt:
+      type: string
+      format: date-time
+    lastJobId:
+      type: integer
+      format: int64
+    failure:
+      type: string

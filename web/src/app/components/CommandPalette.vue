@@ -13,10 +13,9 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { listCertificates } from '@/modules/certificates/api'
-import { listDatabases as listPostgresDatabases } from '@/modules/databases/api'
+import { listDatabases } from '@/modules/databases/api'
 import { listDomains } from '@/modules/domains/api'
 import { useIdentityStore } from '@/modules/identity/store'
-import { listDatabases as listMysqlDatabases } from '@/modules/mysql/api'
 import { featureModules } from '@/modules/registry'
 import { listSites } from '@/modules/sites/api'
 import { AppIcon, EmptyState } from '@/shared/ui'
@@ -69,15 +68,9 @@ const certificatesQuery = useQuery({
   enabled: computed(() => hasOpened.value && identity.can('certificates.read')),
   ...lazy,
 })
-const postgresQuery = useQuery({
-  queryKey: ['palette', 'postgres-databases'],
-  queryFn: listPostgresDatabases,
-  enabled: computed(() => hasOpened.value && identity.can('databases.read')),
-  ...lazy,
-})
-const mysqlQuery = useQuery({
-  queryKey: ['palette', 'mysql-databases'],
-  queryFn: listMysqlDatabases,
+const databasesQuery = useQuery({
+  queryKey: ['palette', 'databases'],
+  queryFn: listDatabases,
   enabled: computed(() => hasOpened.value && identity.can('databases.read')),
   ...lazy,
 })
@@ -144,22 +137,14 @@ const resourceItems = computed<PaletteItem[]>(() => {
       searchText: `${certificate.primaryDomain} ${certificate.domains.join(' ')}`,
     })
   }
-  for (const database of postgresQuery.data.value ?? []) {
+  for (const database of databasesQuery.data.value ?? []) {
     items.push({
-      id: `postgres-${database.id}`,
-      group: 'PostgreSQL',
+      id: `database-${database.id}`,
+      group: 'Databases',
       label: database.name,
+      hint: database.engine === 'postgresql' ? 'PostgreSQL' : 'MySQL / MariaDB',
       icon: 'database',
       to: `/databases/${encodeURIComponent(database.id)}`,
-    })
-  }
-  for (const database of mysqlQuery.data.value ?? []) {
-    items.push({
-      id: `mysql-${database.id}`,
-      group: 'MySQL / MariaDB',
-      label: database.name,
-      icon: 'server',
-      to: `/mysql/${encodeURIComponent(database.id)}`,
     })
   }
   return items

@@ -2,7 +2,7 @@ import { apiRequest } from '@/shared/api/request'
 
 import type { Job } from '../jobs/api'
 
-type DatabaseStatus =
+export type DatabaseStatus =
   | 'planning'
   | 'plan_ready'
   | 'applying'
@@ -14,34 +14,39 @@ type DatabaseStatus =
   | 'failed'
   | 'online'
   | 'down'
+/** Engine family key — how the backend routes a resource to its adapter. */
+export type DatabaseEngine = 'mysql' | 'postgresql'
+/** Concrete server flavor, shown to people. */
+export type ServerKind = 'mysql' | 'mariadb' | 'postgresql'
 export type AccessLevel = 'connect' | 'read_only' | 'read_write'
-export type ResourceType = 'instances' | 'roles' | 'databases' | 'grants' | 'restore-points'
 
-export interface PostgresInstance {
+export interface DatabaseServer {
   id: string
+  engine: DatabaseEngine
+  kind: ServerKind
   version: string
-  cluster: string
+  versionText?: string
+  cluster?: string
   port: number
   status: DatabaseStatus
-  owner: string
-  dataPath: string
   socketPath: string
-  logPath: string
-  configPath: string
   systemdUnit: string
-  managedByNexa: boolean
+  managedByNexa?: boolean
   lastJobId?: number
   failure?: string
   createdAt: string
   updatedAt: string
 }
 
-export interface DatabaseRole {
+export interface DatabaseUser {
   id: string
-  instanceId: string
+  serverId: string
+  engine: DatabaseEngine
   name: string
+  /** Client host scope; present on MySQL-family users only. */
+  host?: string
   status: DatabaseStatus
-  credentialAvailable: boolean
+  /** Counts applied password changes; the passwords live with whoever set them. */
   credentialVersion: number
   lastJobId?: number
   failure?: string
@@ -51,9 +56,11 @@ export interface DatabaseRole {
 
 export interface ManagedDatabase {
   id: string
-  instanceId: string
+  serverId: string
+  engine: DatabaseEngine
   name: string
-  ownerRoleId: string
+  ownerUserId: string
+  siteId?: string
   status: DatabaseStatus
   /**
    * Measured on read and absent until first measured; zero means an empty
@@ -70,7 +77,8 @@ export interface ManagedDatabase {
 export interface DatabaseGrant {
   id: string
   databaseId: string
-  roleId: string
+  userId: string
+  engine: DatabaseEngine
   access: AccessLevel
   status: DatabaseStatus
   lastJobId?: number
@@ -82,6 +90,7 @@ export interface DatabaseGrant {
 export interface RestorePoint {
   id: string
   databaseId: string
+  engine: DatabaseEngine
   status: DatabaseStatus
   sha256?: string
   sizeBytes?: number
@@ -92,143 +101,99 @@ export interface RestorePoint {
   updatedAt: string
 }
 
-export interface PostgresPlan {
-  id: string
-  resourceType: string
-  resourceId: string
-  operation: string
-  agentPlan: {
-    id: string
-    steps: string[]
-    warnings: string[]
-    interruption: boolean
-    expiresAt: string
-    change: Record<string, unknown>
-  }
-  createdAt: string
-  expiresAt: string
-}
-
 function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return apiRequest<T>(path, init, 'PostgreSQL request')
+  return apiRequest<T>(path, init, 'Databases request')
 }
 
-async function list<T>(resource: string): Promise<T[]> {
-  return (await request<{ items: T[] }>(`/api/v1/postgresql/${resource}`)).items
+async function list<T>(path: string): Promise<T[]> {
+  return (await request<{ items: T[] }>(path)).items
 }
 
-export function listInstances(): Promise<PostgresInstance[]> {
-  return list<PostgresInstance>('instances')
+export function listServers(): Promise<DatabaseServer[]> {
+  return list<DatabaseServer>('/api/v1/databases/servers')
 }
 
-export function listRoles(): Promise<DatabaseRole[]> {
-  return list<DatabaseRole>('roles')
+export function listUsers(): Promise<DatabaseUser[]> {
+  return list<DatabaseUser>('/api/v1/databases/users')
 }
 
 export function listDatabases(): Promise<ManagedDatabase[]> {
-  return list<ManagedDatabase>('databases')
+  return list<ManagedDatabase>('/api/v1/databases')
 }
 
 export function listGrants(): Promise<DatabaseGrant[]> {
-  return list<DatabaseGrant>('grants')
+  return list<DatabaseGrant>('/api/v1/databases/grants')
 }
 
 export function listRestorePoints(): Promise<RestorePoint[]> {
-  return list<RestorePoint>('restore-points')
+  return list<RestorePoint>('/api/v1/databases/restore-points')
 }
 
-export function createInstance(input: {
-  version: '16' | '17' | '18'
+export function createServer(input: {
+  engine: DatabaseEngine
+  version: string
   cluster: string
   port?: number
-}): Promise<{ instance: PostgresInstance; job: Job }> {
-  return request('/api/v1/postgresql/instances', {
+}): Promise<{ server: DatabaseServer; job: Job }> {
+  return request('/api/v1/databases/servers', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export function createUser(input: {
+  serverId: string
+  name: string
+  host?: string
+  password: string
+}): Promise<{ user: DatabaseUser; job: Job }> {
+  return request('/api/v1/databases/users', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export function setUserPassword(
+  id: string,
+  password: string,
+): Promise<{ user: DatabaseUser; job: Job }> {
+  return request(`/api/v1/databases/users/${encodeURIComponent(id)}/password`, {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify({ password }),
   })
-}
-
-export function createRole(
-  instanceId: string,
-  name: string,
-): Promise<{ role: DatabaseRole; job: Job }> {
-  return request('/api/v1/postgresql/roles', {
-    method: 'POST',
-    body: JSON.stringify({ instanceId, name }),
-  })
-}
-
-export function rotateRole(id: string): Promise<{ role: DatabaseRole; job: Job }> {
-  return request(`/api/v1/postgresql/roles/${encodeURIComponent(id)}/rotate`, { method: 'POST' })
-}
-
-export async function revealCredential(id: string): Promise<string> {
-  return (
-    await request<{ credential: string }>(
-      `/api/v1/postgresql/roles/${encodeURIComponent(id)}/credential`,
-      { method: 'POST' },
-    )
-  ).credential
 }
 
 export function createDatabase(input: {
-  instanceId: string
+  serverId: string
   name: string
-  ownerRoleId: string
+  ownerUserId: string
+  siteId?: string
 }): Promise<{ database: ManagedDatabase; job: Job }> {
-  return request('/api/v1/postgresql/databases', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  })
+  return request('/api/v1/databases', { method: 'POST', body: JSON.stringify(input) })
 }
 
 export function createGrant(input: {
   databaseId: string
-  roleId: string
+  userId: string
   access: AccessLevel
 }): Promise<{ grant: DatabaseGrant; job: Job }> {
-  return request('/api/v1/postgresql/grants', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  })
+  return request('/api/v1/databases/grants', { method: 'POST', body: JSON.stringify(input) })
 }
 
-export function dropRole(id: string): Promise<{ job: Job }> {
-  return request(`/api/v1/postgresql/roles/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export function dropUser(id: string): Promise<{ job: Job }> {
+  return request(`/api/v1/databases/users/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function dropDatabase(id: string): Promise<{ job: Job }> {
-  return request(`/api/v1/postgresql/databases/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return request(`/api/v1/databases/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function dropGrant(id: string): Promise<{ job: Job }> {
-  return request(`/api/v1/postgresql/grants/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return request(`/api/v1/databases/grants/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function createBackup(databaseId: string): Promise<{ restorePoint: RestorePoint; job: Job }> {
-  return request(`/api/v1/postgresql/databases/${encodeURIComponent(databaseId)}/backups`, {
-    method: 'POST',
-  })
+  return request(`/api/v1/databases/${encodeURIComponent(databaseId)}/backups`, { method: 'POST' })
 }
 
-export function prepareRestore(
+export function restoreBackup(
   restorePointId: string,
 ): Promise<{ restorePoint: RestorePoint; job: Job }> {
-  return request(
-    `/api/v1/postgresql/restore-points/${encodeURIComponent(restorePointId)}/restore`,
-    { method: 'POST' },
-  )
-}
-
-export function getPlan(
-  resourceType: ResourceType,
-  id: string,
-): Promise<{ plan: PostgresPlan; expiresAt: string }> {
-  return request(`/api/v1/postgresql/${resourceType}/${encodeURIComponent(id)}/plan`)
-}
-
-export function applyPlan(resourceType: ResourceType, id: string): Promise<Job> {
-  return request(`/api/v1/postgresql/${resourceType}/${encodeURIComponent(id)}/apply`, {
+  return request(`/api/v1/databases/restore-points/${encodeURIComponent(restorePointId)}/restore`, {
     method: 'POST',
   })
 }

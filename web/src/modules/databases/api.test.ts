@@ -1,22 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { applyPlan, createBackup, createInstance, listInstances, revealCredential } from './api'
+import { createDatabase, createUser, listServers, restoreBackup, setUserPassword } from './api'
 
 afterEach(() => vi.unstubAllGlobals())
 
-describe('PostgreSQL API', () => {
-  it('discovers, provisions, backs up, applies reviewed plans, and reveals credentials explicitly', async () => {
+describe('Databases API', () => {
+  it('lists servers and creates users and databases with one-click direct requests', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(Response.json({ items: [] }))
-      .mockResolvedValueOnce(Response.json({ instance: { id: 'postgresql_18_nexa_main' }, job: { id: 1, state: 'queued' } }, { status: 202 }))
-      .mockResolvedValueOnce(Response.json({ restorePoint: { id: 'restore_1' }, job: { id: 2, state: 'queued' } }, { status: 202 }))
-      .mockResolvedValueOnce(Response.json({ id: 3, state: 'queued' }, { status: 202 }))
-      .mockResolvedValueOnce(Response.json({ credential: 'one-time-secret' }))
+      .mockResolvedValueOnce(Response.json({ user: { id: 'user_1' }, job: { id: 1, state: 'queued' } }, { status: 202 }))
+      .mockResolvedValueOnce(Response.json({ database: { id: 'database_1' }, job: { id: 2, state: 'queued' } }, { status: 202 }))
+      .mockResolvedValueOnce(Response.json({ user: { id: 'user_1' }, job: { id: 3, state: 'queued' } }, { status: 202 }))
+      .mockResolvedValueOnce(Response.json({ restorePoint: { id: 'restore_1' }, job: { id: 4, state: 'queued' } }, { status: 202 }))
     vi.stubGlobal('fetch', fetchMock)
-    await expect(listInstances()).resolves.toEqual([])
-    await createInstance({ version: '18', cluster: 'nexa_main' })
-    await createBackup('database_1')
-    await applyPlan('restore-points', 'restore_1')
-    await expect(revealCredential('role_1')).resolves.toBe('one-time-secret')
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/postgresql/roles/role_1/credential', expect.objectContaining({ method: 'POST', credentials: 'same-origin' }))
+    await expect(listServers()).resolves.toEqual([])
+    await createUser({ serverId: 'mysql', name: 'app_user', host: 'localhost', password: 'generated-secret-1' })
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/databases/users', expect.objectContaining({ method: 'POST' }))
+    await createDatabase({ serverId: 'mysql', name: 'app_db', ownerUserId: 'user_1' })
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/databases', expect.objectContaining({ method: 'POST' }))
+    await setUserPassword('user_1', 'generated-secret-2')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/databases/users/user_1/password', expect.objectContaining({ method: 'POST', credentials: 'same-origin' }))
+    await restoreBackup('restore_1')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/databases/restore-points/restore_1/restore', expect.objectContaining({ method: 'POST' }))
   })
 })

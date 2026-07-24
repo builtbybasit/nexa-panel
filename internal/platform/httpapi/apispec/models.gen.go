@@ -86,99 +86,102 @@ func (e CreateDomainKind) Valid() bool {
 	}
 }
 
-// Defines values for CreateMySQLFamilyAccountEngineId.
+// Defines values for DatabaseAccess.
 const (
-	CreateMySQLFamilyAccountEngineIdMariadb CreateMySQLFamilyAccountEngineId = "mariadb"
-	CreateMySQLFamilyAccountEngineIdMysql   CreateMySQLFamilyAccountEngineId = "mysql"
+	Connect   DatabaseAccess = "connect"
+	ReadOnly  DatabaseAccess = "read_only"
+	ReadWrite DatabaseAccess = "read_write"
 )
 
-// Valid indicates whether the value is a known member of the CreateMySQLFamilyAccountEngineId enum.
-func (e CreateMySQLFamilyAccountEngineId) Valid() bool {
+// Valid indicates whether the value is a known member of the DatabaseAccess enum.
+func (e DatabaseAccess) Valid() bool {
 	switch e {
-	case CreateMySQLFamilyAccountEngineIdMariadb:
+	case Connect:
 		return true
-	case CreateMySQLFamilyAccountEngineIdMysql:
+	case ReadOnly:
+		return true
+	case ReadWrite:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for CreateMySQLFamilyDatabaseEngineId.
+// Defines values for DatabaseEngine.
 const (
-	CreateMySQLFamilyDatabaseEngineIdMariadb CreateMySQLFamilyDatabaseEngineId = "mariadb"
-	CreateMySQLFamilyDatabaseEngineIdMysql   CreateMySQLFamilyDatabaseEngineId = "mysql"
+	DatabaseEngineMysql      DatabaseEngine = "mysql"
+	DatabaseEnginePostgresql DatabaseEngine = "postgresql"
 )
 
-// Valid indicates whether the value is a known member of the CreateMySQLFamilyDatabaseEngineId enum.
-func (e CreateMySQLFamilyDatabaseEngineId) Valid() bool {
+// Valid indicates whether the value is a known member of the DatabaseEngine enum.
+func (e DatabaseEngine) Valid() bool {
 	switch e {
-	case CreateMySQLFamilyDatabaseEngineIdMariadb:
+	case DatabaseEngineMysql:
 		return true
-	case CreateMySQLFamilyDatabaseEngineIdMysql:
+	case DatabaseEnginePostgresql:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for CreateMySQLFamilyGrantAccess.
+// Defines values for DatabaseServerKind.
 const (
-	CreateMySQLFamilyGrantAccessConnect   CreateMySQLFamilyGrantAccess = "connect"
-	CreateMySQLFamilyGrantAccessReadOnly  CreateMySQLFamilyGrantAccess = "read_only"
-	CreateMySQLFamilyGrantAccessReadWrite CreateMySQLFamilyGrantAccess = "read_write"
+	DatabaseServerKindMariadb    DatabaseServerKind = "mariadb"
+	DatabaseServerKindMysql      DatabaseServerKind = "mysql"
+	DatabaseServerKindPostgresql DatabaseServerKind = "postgresql"
 )
 
-// Valid indicates whether the value is a known member of the CreateMySQLFamilyGrantAccess enum.
-func (e CreateMySQLFamilyGrantAccess) Valid() bool {
+// Valid indicates whether the value is a known member of the DatabaseServerKind enum.
+func (e DatabaseServerKind) Valid() bool {
 	switch e {
-	case CreateMySQLFamilyGrantAccessConnect:
+	case DatabaseServerKindMariadb:
 		return true
-	case CreateMySQLFamilyGrantAccessReadOnly:
+	case DatabaseServerKindMysql:
 		return true
-	case CreateMySQLFamilyGrantAccessReadWrite:
+	case DatabaseServerKindPostgresql:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for CreatePostgreSQLGrantAccess.
+// Defines values for DatabaseStatus.
 const (
-	CreatePostgreSQLGrantAccessConnect   CreatePostgreSQLGrantAccess = "connect"
-	CreatePostgreSQLGrantAccessReadOnly  CreatePostgreSQLGrantAccess = "read_only"
-	CreatePostgreSQLGrantAccessReadWrite CreatePostgreSQLGrantAccess = "read_write"
+	DatabaseStatusActive    DatabaseStatus = "active"
+	DatabaseStatusApplying  DatabaseStatus = "applying"
+	DatabaseStatusBackingUp DatabaseStatus = "backing_up"
+	DatabaseStatusDown      DatabaseStatus = "down"
+	DatabaseStatusFailed    DatabaseStatus = "failed"
+	DatabaseStatusOnline    DatabaseStatus = "online"
+	DatabaseStatusPlanReady DatabaseStatus = "plan_ready"
+	DatabaseStatusPlanning  DatabaseStatus = "planning"
+	DatabaseStatusRestoring DatabaseStatus = "restoring"
+	DatabaseStatusVerified  DatabaseStatus = "verified"
 )
 
-// Valid indicates whether the value is a known member of the CreatePostgreSQLGrantAccess enum.
-func (e CreatePostgreSQLGrantAccess) Valid() bool {
+// Valid indicates whether the value is a known member of the DatabaseStatus enum.
+func (e DatabaseStatus) Valid() bool {
 	switch e {
-	case CreatePostgreSQLGrantAccessConnect:
+	case DatabaseStatusActive:
 		return true
-	case CreatePostgreSQLGrantAccessReadOnly:
+	case DatabaseStatusApplying:
 		return true
-	case CreatePostgreSQLGrantAccessReadWrite:
+	case DatabaseStatusBackingUp:
 		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for CreatePostgreSQLInstanceVersion.
-const (
-	CreatePostgreSQLInstanceVersionN16 CreatePostgreSQLInstanceVersion = "16"
-	CreatePostgreSQLInstanceVersionN17 CreatePostgreSQLInstanceVersion = "17"
-	CreatePostgreSQLInstanceVersionN18 CreatePostgreSQLInstanceVersion = "18"
-)
-
-// Valid indicates whether the value is a known member of the CreatePostgreSQLInstanceVersion enum.
-func (e CreatePostgreSQLInstanceVersion) Valid() bool {
-	switch e {
-	case CreatePostgreSQLInstanceVersionN16:
+	case DatabaseStatusDown:
 		return true
-	case CreatePostgreSQLInstanceVersionN17:
+	case DatabaseStatusFailed:
 		return true
-	case CreatePostgreSQLInstanceVersionN18:
+	case DatabaseStatusOnline:
+		return true
+	case DatabaseStatusPlanReady:
+		return true
+	case DatabaseStatusPlanning:
+		return true
+	case DatabaseStatusRestoring:
+		return true
+	case DatabaseStatusVerified:
 		return true
 	default:
 		return false
@@ -380,111 +383,6 @@ func (e MemorySnapshotProfile) Valid() bool {
 	}
 }
 
-// Defines values for MySQLFamilyDatabaseEngineId.
-const (
-	MySQLFamilyDatabaseEngineIdMariadb MySQLFamilyDatabaseEngineId = "mariadb"
-	MySQLFamilyDatabaseEngineIdMysql   MySQLFamilyDatabaseEngineId = "mysql"
-)
-
-// Valid indicates whether the value is a known member of the MySQLFamilyDatabaseEngineId enum.
-func (e MySQLFamilyDatabaseEngineId) Valid() bool {
-	switch e {
-	case MySQLFamilyDatabaseEngineIdMariadb:
-		return true
-	case MySQLFamilyDatabaseEngineIdMysql:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for MySQLFamilyDatabaseStatus.
-const (
-	MySQLFamilyDatabaseStatusActive    MySQLFamilyDatabaseStatus = "active"
-	MySQLFamilyDatabaseStatusApplying  MySQLFamilyDatabaseStatus = "applying"
-	MySQLFamilyDatabaseStatusBackingUp MySQLFamilyDatabaseStatus = "backing_up"
-	MySQLFamilyDatabaseStatusFailed    MySQLFamilyDatabaseStatus = "failed"
-	MySQLFamilyDatabaseStatusPlanReady MySQLFamilyDatabaseStatus = "plan_ready"
-	MySQLFamilyDatabaseStatusPlanning  MySQLFamilyDatabaseStatus = "planning"
-	MySQLFamilyDatabaseStatusRestoring MySQLFamilyDatabaseStatus = "restoring"
-	MySQLFamilyDatabaseStatusVerified  MySQLFamilyDatabaseStatus = "verified"
-)
-
-// Valid indicates whether the value is a known member of the MySQLFamilyDatabaseStatus enum.
-func (e MySQLFamilyDatabaseStatus) Valid() bool {
-	switch e {
-	case MySQLFamilyDatabaseStatusActive:
-		return true
-	case MySQLFamilyDatabaseStatusApplying:
-		return true
-	case MySQLFamilyDatabaseStatusBackingUp:
-		return true
-	case MySQLFamilyDatabaseStatusFailed:
-		return true
-	case MySQLFamilyDatabaseStatusPlanReady:
-		return true
-	case MySQLFamilyDatabaseStatusPlanning:
-		return true
-	case MySQLFamilyDatabaseStatusRestoring:
-		return true
-	case MySQLFamilyDatabaseStatusVerified:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for MySQLFamilyEngineId.
-const (
-	MySQLFamilyEngineIdMariadb MySQLFamilyEngineId = "mariadb"
-	MySQLFamilyEngineIdMysql   MySQLFamilyEngineId = "mysql"
-)
-
-// Valid indicates whether the value is a known member of the MySQLFamilyEngineId enum.
-func (e MySQLFamilyEngineId) Valid() bool {
-	switch e {
-	case MySQLFamilyEngineIdMariadb:
-		return true
-	case MySQLFamilyEngineIdMysql:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for MySQLFamilyEngineKind.
-const (
-	MySQLFamilyEngineKindMariadb MySQLFamilyEngineKind = "mariadb"
-	MySQLFamilyEngineKindMysql   MySQLFamilyEngineKind = "mysql"
-)
-
-// Valid indicates whether the value is a known member of the MySQLFamilyEngineKind enum.
-func (e MySQLFamilyEngineKind) Valid() bool {
-	switch e {
-	case MySQLFamilyEngineKindMariadb:
-		return true
-	case MySQLFamilyEngineKindMysql:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for MySQLFamilyEngineStatus.
-const (
-	MySQLFamilyEngineStatusOnline MySQLFamilyEngineStatus = "online"
-)
-
-// Valid indicates whether the value is a known member of the MySQLFamilyEngineStatus enum.
-func (e MySQLFamilyEngineStatus) Valid() bool {
-	switch e {
-	case MySQLFamilyEngineStatusOnline:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for NodePlanAction.
 const (
 	NodePlanActionCreate NodePlanAction = "create"
@@ -566,165 +464,6 @@ func (e PhpDirectiveAccess) Valid() bool {
 	case PHPINISYSTEM:
 		return true
 	case PHPINIUSER:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PostgreSQLGrantAccess.
-const (
-	PostgreSQLGrantAccessConnect   PostgreSQLGrantAccess = "connect"
-	PostgreSQLGrantAccessReadOnly  PostgreSQLGrantAccess = "read_only"
-	PostgreSQLGrantAccessReadWrite PostgreSQLGrantAccess = "read_write"
-)
-
-// Valid indicates whether the value is a known member of the PostgreSQLGrantAccess enum.
-func (e PostgreSQLGrantAccess) Valid() bool {
-	switch e {
-	case PostgreSQLGrantAccessConnect:
-		return true
-	case PostgreSQLGrantAccessReadOnly:
-		return true
-	case PostgreSQLGrantAccessReadWrite:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PostgreSQLInstanceVersion.
-const (
-	PostgreSQLInstanceVersionN16 PostgreSQLInstanceVersion = "16"
-	PostgreSQLInstanceVersionN17 PostgreSQLInstanceVersion = "17"
-	PostgreSQLInstanceVersionN18 PostgreSQLInstanceVersion = "18"
-)
-
-// Valid indicates whether the value is a known member of the PostgreSQLInstanceVersion enum.
-func (e PostgreSQLInstanceVersion) Valid() bool {
-	switch e {
-	case PostgreSQLInstanceVersionN16:
-		return true
-	case PostgreSQLInstanceVersionN17:
-		return true
-	case PostgreSQLInstanceVersionN18:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PostgreSQLStatus.
-const (
-	PostgreSQLStatusActive    PostgreSQLStatus = "active"
-	PostgreSQLStatusApplying  PostgreSQLStatus = "applying"
-	PostgreSQLStatusBackingUp PostgreSQLStatus = "backing_up"
-	PostgreSQLStatusDown      PostgreSQLStatus = "down"
-	PostgreSQLStatusFailed    PostgreSQLStatus = "failed"
-	PostgreSQLStatusOnline    PostgreSQLStatus = "online"
-	PostgreSQLStatusPlanReady PostgreSQLStatus = "plan_ready"
-	PostgreSQLStatusPlanning  PostgreSQLStatus = "planning"
-	PostgreSQLStatusRestoring PostgreSQLStatus = "restoring"
-	PostgreSQLStatusVerified  PostgreSQLStatus = "verified"
-)
-
-// Valid indicates whether the value is a known member of the PostgreSQLStatus enum.
-func (e PostgreSQLStatus) Valid() bool {
-	switch e {
-	case PostgreSQLStatusActive:
-		return true
-	case PostgreSQLStatusApplying:
-		return true
-	case PostgreSQLStatusBackingUp:
-		return true
-	case PostgreSQLStatusDown:
-		return true
-	case PostgreSQLStatusFailed:
-		return true
-	case PostgreSQLStatusOnline:
-		return true
-	case PostgreSQLStatusPlanReady:
-		return true
-	case PostgreSQLStatusPlanning:
-		return true
-	case PostgreSQLStatusRestoring:
-		return true
-	case PostgreSQLStatusVerified:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PostgreSQLStoredPlanAgentPlanKind.
-const (
-	NexaPostgresqlV1 PostgreSQLStoredPlanAgentPlanKind = "nexa.postgresql.v1"
-)
-
-// Valid indicates whether the value is a known member of the PostgreSQLStoredPlanAgentPlanKind enum.
-func (e PostgreSQLStoredPlanAgentPlanKind) Valid() bool {
-	switch e {
-	case NexaPostgresqlV1:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PostgreSQLStoredPlanOperation.
-const (
-	BackupCreate      PostgreSQLStoredPlanOperation = "backup.create"
-	BackupRestore     PostgreSQLStoredPlanOperation = "backup.restore"
-	DatabaseCreate    PostgreSQLStoredPlanOperation = "database.create"
-	GrantApply        PostgreSQLStoredPlanOperation = "grant.apply"
-	InstanceProvision PostgreSQLStoredPlanOperation = "instance.provision"
-	RoleCreate        PostgreSQLStoredPlanOperation = "role.create"
-	RoleRotate        PostgreSQLStoredPlanOperation = "role.rotate"
-)
-
-// Valid indicates whether the value is a known member of the PostgreSQLStoredPlanOperation enum.
-func (e PostgreSQLStoredPlanOperation) Valid() bool {
-	switch e {
-	case BackupCreate:
-		return true
-	case BackupRestore:
-		return true
-	case DatabaseCreate:
-		return true
-	case GrantApply:
-		return true
-	case InstanceProvision:
-		return true
-	case RoleCreate:
-		return true
-	case RoleRotate:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PostgreSQLStoredPlanResourceType.
-const (
-	PostgreSQLStoredPlanResourceTypeDatabase     PostgreSQLStoredPlanResourceType = "database"
-	PostgreSQLStoredPlanResourceTypeGrant        PostgreSQLStoredPlanResourceType = "grant"
-	PostgreSQLStoredPlanResourceTypeInstance     PostgreSQLStoredPlanResourceType = "instance"
-	PostgreSQLStoredPlanResourceTypeRestorePoint PostgreSQLStoredPlanResourceType = "restore_point"
-	PostgreSQLStoredPlanResourceTypeRole         PostgreSQLStoredPlanResourceType = "role"
-)
-
-// Valid indicates whether the value is a known member of the PostgreSQLStoredPlanResourceType enum.
-func (e PostgreSQLStoredPlanResourceType) Valid() bool {
-	switch e {
-	case PostgreSQLStoredPlanResourceTypeDatabase:
-		return true
-	case PostgreSQLStoredPlanResourceTypeGrant:
-		return true
-	case PostgreSQLStoredPlanResourceTypeInstance:
-		return true
-	case PostgreSQLStoredPlanResourceTypeRestorePoint:
-		return true
-	case PostgreSQLStoredPlanResourceTypeRole:
 		return true
 	default:
 		return false
@@ -1265,108 +1004,6 @@ func (e PrepareCertificateOperationJSONBodyOperation) Valid() bool {
 	}
 }
 
-// Defines values for ApplyMySQLFamilyPlanParamsResourceType.
-const (
-	ApplyMySQLFamilyPlanParamsResourceTypeAccounts      ApplyMySQLFamilyPlanParamsResourceType = "accounts"
-	ApplyMySQLFamilyPlanParamsResourceTypeDatabases     ApplyMySQLFamilyPlanParamsResourceType = "databases"
-	ApplyMySQLFamilyPlanParamsResourceTypeGrants        ApplyMySQLFamilyPlanParamsResourceType = "grants"
-	ApplyMySQLFamilyPlanParamsResourceTypeRestorePoints ApplyMySQLFamilyPlanParamsResourceType = "restore-points"
-)
-
-// Valid indicates whether the value is a known member of the ApplyMySQLFamilyPlanParamsResourceType enum.
-func (e ApplyMySQLFamilyPlanParamsResourceType) Valid() bool {
-	switch e {
-	case ApplyMySQLFamilyPlanParamsResourceTypeAccounts:
-		return true
-	case ApplyMySQLFamilyPlanParamsResourceTypeDatabases:
-		return true
-	case ApplyMySQLFamilyPlanParamsResourceTypeGrants:
-		return true
-	case ApplyMySQLFamilyPlanParamsResourceTypeRestorePoints:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for GetMySQLFamilyPlanParamsResourceType.
-const (
-	GetMySQLFamilyPlanParamsResourceTypeAccounts      GetMySQLFamilyPlanParamsResourceType = "accounts"
-	GetMySQLFamilyPlanParamsResourceTypeDatabases     GetMySQLFamilyPlanParamsResourceType = "databases"
-	GetMySQLFamilyPlanParamsResourceTypeGrants        GetMySQLFamilyPlanParamsResourceType = "grants"
-	GetMySQLFamilyPlanParamsResourceTypeRestorePoints GetMySQLFamilyPlanParamsResourceType = "restore-points"
-)
-
-// Valid indicates whether the value is a known member of the GetMySQLFamilyPlanParamsResourceType enum.
-func (e GetMySQLFamilyPlanParamsResourceType) Valid() bool {
-	switch e {
-	case GetMySQLFamilyPlanParamsResourceTypeAccounts:
-		return true
-	case GetMySQLFamilyPlanParamsResourceTypeDatabases:
-		return true
-	case GetMySQLFamilyPlanParamsResourceTypeGrants:
-		return true
-	case GetMySQLFamilyPlanParamsResourceTypeRestorePoints:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for ApplyPostgreSQLPlanParamsResourceType.
-const (
-	ApplyPostgreSQLPlanParamsResourceTypeDatabases     ApplyPostgreSQLPlanParamsResourceType = "databases"
-	ApplyPostgreSQLPlanParamsResourceTypeGrants        ApplyPostgreSQLPlanParamsResourceType = "grants"
-	ApplyPostgreSQLPlanParamsResourceTypeInstances     ApplyPostgreSQLPlanParamsResourceType = "instances"
-	ApplyPostgreSQLPlanParamsResourceTypeRestorePoints ApplyPostgreSQLPlanParamsResourceType = "restore-points"
-	ApplyPostgreSQLPlanParamsResourceTypeRoles         ApplyPostgreSQLPlanParamsResourceType = "roles"
-)
-
-// Valid indicates whether the value is a known member of the ApplyPostgreSQLPlanParamsResourceType enum.
-func (e ApplyPostgreSQLPlanParamsResourceType) Valid() bool {
-	switch e {
-	case ApplyPostgreSQLPlanParamsResourceTypeDatabases:
-		return true
-	case ApplyPostgreSQLPlanParamsResourceTypeGrants:
-		return true
-	case ApplyPostgreSQLPlanParamsResourceTypeInstances:
-		return true
-	case ApplyPostgreSQLPlanParamsResourceTypeRestorePoints:
-		return true
-	case ApplyPostgreSQLPlanParamsResourceTypeRoles:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for GetPostgreSQLPlanParamsResourceType.
-const (
-	GetPostgreSQLPlanParamsResourceTypeDatabases     GetPostgreSQLPlanParamsResourceType = "databases"
-	GetPostgreSQLPlanParamsResourceTypeGrants        GetPostgreSQLPlanParamsResourceType = "grants"
-	GetPostgreSQLPlanParamsResourceTypeInstances     GetPostgreSQLPlanParamsResourceType = "instances"
-	GetPostgreSQLPlanParamsResourceTypeRestorePoints GetPostgreSQLPlanParamsResourceType = "restore-points"
-	GetPostgreSQLPlanParamsResourceTypeRoles         GetPostgreSQLPlanParamsResourceType = "roles"
-)
-
-// Valid indicates whether the value is a known member of the GetPostgreSQLPlanParamsResourceType enum.
-func (e GetPostgreSQLPlanParamsResourceType) Valid() bool {
-	switch e {
-	case GetPostgreSQLPlanParamsResourceTypeDatabases:
-		return true
-	case GetPostgreSQLPlanParamsResourceTypeGrants:
-		return true
-	case GetPostgreSQLPlanParamsResourceTypeInstances:
-		return true
-	case GetPostgreSQLPlanParamsResourceTypeRestorePoints:
-		return true
-	case GetPostgreSQLPlanParamsResourceTypeRoles:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for DeleteSiteFile200JSONResponseBodyStatus.
 const (
 	Deleted DeleteSiteFile200JSONResponseBodyStatus = "deleted"
@@ -1487,6 +1124,34 @@ type CreateCertificate struct {
 	SiteId string              `json:"siteId"`
 }
 
+// CreateDatabaseGrant defines model for CreateDatabaseGrant.
+type CreateDatabaseGrant struct {
+	Access     DatabaseAccess `json:"access"`
+	DatabaseId string         `json:"databaseId"`
+	UserId     string         `json:"userId"`
+}
+
+// CreateDatabaseServer Provision a new server instance on an engine that supports it (PostgreSQL today; the MySQL-family engine is discovered, not provisioned).
+type CreateDatabaseServer struct {
+	Cluster *string `json:"cluster,omitempty"`
+
+	// Engine Engine family a server or resource belongs to.
+	Engine  DatabaseEngine `json:"engine"`
+	Port    *int           `json:"port,omitempty"`
+	Version string         `json:"version"`
+}
+
+// CreateDatabaseUser defines model for CreateDatabaseUser.
+type CreateDatabaseUser struct {
+	// Host Client host scope; MySQL-family servers only.
+	Host *string `json:"host,omitempty"`
+	Name string  `json:"name"`
+
+	// Password Chosen or generated in the client and applied to the engine as-is; the panel stores only its ciphertext and digest.
+	Password string `json:"password"`
+	ServerId string `json:"serverId"`
+}
+
 // CreateDomain defines model for CreateDomain.
 type CreateDomain struct {
 	Hostname       string           `json:"hostname"`
@@ -1498,67 +1163,14 @@ type CreateDomain struct {
 // CreateDomainKind defines model for CreateDomain.Kind.
 type CreateDomainKind string
 
-// CreateManagedPostgreSQLDatabase defines model for CreateManagedPostgreSQLDatabase.
-type CreateManagedPostgreSQLDatabase struct {
-	InstanceId  string `json:"instanceId"`
+// CreateManagedDatabase defines model for CreateManagedDatabase.
+type CreateManagedDatabase struct {
 	Name        string `json:"name"`
-	OwnerRoleId string `json:"ownerRoleId"`
-}
+	OwnerUserId string `json:"ownerUserId"`
+	ServerId    string `json:"serverId"`
 
-// CreateMySQLFamilyAccount defines model for CreateMySQLFamilyAccount.
-type CreateMySQLFamilyAccount struct {
-	EngineId CreateMySQLFamilyAccountEngineId `json:"engineId"`
-	Host     *string                          `json:"host,omitempty"`
-	Name     string                           `json:"name"`
-}
-
-// CreateMySQLFamilyAccountEngineId defines model for CreateMySQLFamilyAccount.EngineId.
-type CreateMySQLFamilyAccountEngineId string
-
-// CreateMySQLFamilyDatabase defines model for CreateMySQLFamilyDatabase.
-type CreateMySQLFamilyDatabase struct {
-	EngineId       CreateMySQLFamilyDatabaseEngineId `json:"engineId"`
-	Name           string                            `json:"name"`
-	OwnerAccountId string                            `json:"ownerAccountId"`
-}
-
-// CreateMySQLFamilyDatabaseEngineId defines model for CreateMySQLFamilyDatabase.EngineId.
-type CreateMySQLFamilyDatabaseEngineId string
-
-// CreateMySQLFamilyGrant defines model for CreateMySQLFamilyGrant.
-type CreateMySQLFamilyGrant struct {
-	Access     CreateMySQLFamilyGrantAccess `json:"access"`
-	AccountId  string                       `json:"accountId"`
-	DatabaseId string                       `json:"databaseId"`
-}
-
-// CreateMySQLFamilyGrantAccess defines model for CreateMySQLFamilyGrant.Access.
-type CreateMySQLFamilyGrantAccess string
-
-// CreatePostgreSQLGrant defines model for CreatePostgreSQLGrant.
-type CreatePostgreSQLGrant struct {
-	Access     CreatePostgreSQLGrantAccess `json:"access"`
-	DatabaseId string                      `json:"databaseId"`
-	RoleId     string                      `json:"roleId"`
-}
-
-// CreatePostgreSQLGrantAccess defines model for CreatePostgreSQLGrant.Access.
-type CreatePostgreSQLGrantAccess string
-
-// CreatePostgreSQLInstance defines model for CreatePostgreSQLInstance.
-type CreatePostgreSQLInstance struct {
-	Cluster string                          `json:"cluster"`
-	Port    *int                            `json:"port,omitempty"`
-	Version CreatePostgreSQLInstanceVersion `json:"version"`
-}
-
-// CreatePostgreSQLInstanceVersion defines model for CreatePostgreSQLInstance.Version.
-type CreatePostgreSQLInstanceVersion string
-
-// CreatePostgreSQLRole defines model for CreatePostgreSQLRole.
-type CreatePostgreSQLRole struct {
-	InstanceId string `json:"instanceId"`
-	Name       string `json:"name"`
+	// SiteId Optional site this database belongs to; site teardown blocks on the relation.
+	SiteId *string `json:"siteId,omitempty"`
 }
 
 // CreateSite defines model for CreateSite.
@@ -1580,6 +1192,83 @@ type CreateUser struct {
 type Credentials struct {
 	Password string `json:"password"`
 	Username string `json:"username"`
+}
+
+// DatabaseAccess defines model for DatabaseAccess.
+type DatabaseAccess string
+
+// DatabaseEngine Engine family a server or resource belongs to.
+type DatabaseEngine string
+
+// DatabaseGrant defines model for DatabaseGrant.
+type DatabaseGrant struct {
+	Access     DatabaseAccess `json:"access"`
+	DatabaseId string         `json:"databaseId"`
+
+	// Engine Engine family a server or resource belongs to.
+	Engine    DatabaseEngine `json:"engine"`
+	Failure   *string        `json:"failure,omitempty"`
+	Id        string         `json:"id"`
+	LastJobId *int64         `json:"lastJobId,omitempty"`
+	Status    DatabaseStatus `json:"status"`
+	UserId    string         `json:"userId"`
+}
+
+// DatabaseRestorePoint defines model for DatabaseRestorePoint.
+type DatabaseRestorePoint struct {
+	DatabaseId string `json:"databaseId"`
+
+	// Engine Engine family a server or resource belongs to.
+	Engine     DatabaseEngine `json:"engine"`
+	Failure    *string        `json:"failure,omitempty"`
+	Id         string         `json:"id"`
+	LastJobId  *int64         `json:"lastJobId,omitempty"`
+	Sha256     *string        `json:"sha256,omitempty"`
+	SizeBytes  *int64         `json:"sizeBytes,omitempty"`
+	Status     DatabaseStatus `json:"status"`
+	VerifiedAt *time.Time     `json:"verifiedAt,omitempty"`
+}
+
+// DatabaseServer One database server on the node — the discovered MySQL-family engine or a PostgreSQL instance.
+type DatabaseServer struct {
+	Cluster *string `json:"cluster,omitempty"`
+
+	// Engine Engine family a server or resource belongs to.
+	Engine  DatabaseEngine `json:"engine"`
+	Failure *string        `json:"failure,omitempty"`
+	Id      string         `json:"id"`
+
+	// Kind Concrete flavor of the server.
+	Kind          DatabaseServerKind `json:"kind"`
+	LastJobId     *int64             `json:"lastJobId,omitempty"`
+	ManagedByNexa *bool              `json:"managedByNexa,omitempty"`
+	Port          int                `json:"port"`
+	SocketPath    string             `json:"socketPath"`
+	Status        DatabaseStatus     `json:"status"`
+	SystemdUnit   string             `json:"systemdUnit"`
+	Version       string             `json:"version"`
+	VersionText   *string            `json:"versionText,omitempty"`
+}
+
+// DatabaseServerKind Concrete flavor of the server.
+type DatabaseServerKind string
+
+// DatabaseStatus defines model for DatabaseStatus.
+type DatabaseStatus string
+
+// DatabaseUser defines model for DatabaseUser.
+type DatabaseUser struct {
+	CredentialVersion int `json:"credentialVersion"`
+
+	// Engine Engine family a server or resource belongs to.
+	Engine    DatabaseEngine `json:"engine"`
+	Failure   *string        `json:"failure,omitempty"`
+	Host      *string        `json:"host,omitempty"`
+	Id        string         `json:"id"`
+	LastJobId *int64         `json:"lastJobId,omitempty"`
+	Name      string         `json:"name"`
+	ServerId  string         `json:"serverId"`
+	Status    DatabaseStatus `json:"status"`
 }
 
 // DeployKey The site's Git deploy key. The pair is minted on the node and only the public half ever reaches the control plane, so `present` rather than a non-empty publicKey is what says a key exists.
@@ -1813,23 +1502,20 @@ type MFAEnrollment struct {
 	Secret          string `json:"secret"`
 }
 
-// ManagedPostgreSQLDatabase defines model for ManagedPostgreSQLDatabase.
-type ManagedPostgreSQLDatabase struct {
-	CreatedAt   time.Time `json:"createdAt"`
-	Failure     *string   `json:"failure,omitempty"`
-	Id          string    `json:"id"`
-	InstanceId  string    `json:"instanceId"`
-	LastJobId   *int64    `json:"lastJobId,omitempty"`
-	Name        string    `json:"name"`
-	OwnerRoleId string    `json:"ownerRoleId"`
-
-	// SizeBytes On-disk size measured while serving a read and refreshed at most once a minute, so it may lag reality; absent until the database has been measured for the first time.
-	SizeBytes *int64 `json:"sizeBytes,omitempty"`
-
-	// SizeObservedAt When sizeBytes was last measured; absent while sizeBytes is.
-	SizeObservedAt *time.Time       `json:"sizeObservedAt,omitempty"`
-	Status         PostgreSQLStatus `json:"status"`
-	UpdatedAt      time.Time        `json:"updatedAt"`
+// ManagedDatabase defines model for ManagedDatabase.
+type ManagedDatabase struct {
+	// Engine Engine family a server or resource belongs to.
+	Engine         DatabaseEngine `json:"engine"`
+	Failure        *string        `json:"failure,omitempty"`
+	Id             string         `json:"id"`
+	LastJobId      *int64         `json:"lastJobId,omitempty"`
+	Name           string         `json:"name"`
+	OwnerUserId    string         `json:"ownerUserId"`
+	ServerId       string         `json:"serverId"`
+	SiteId         *string        `json:"siteId,omitempty"`
+	SizeBytes      *int64         `json:"sizeBytes,omitempty"`
+	SizeObservedAt *time.Time     `json:"sizeObservedAt,omitempty"`
+	Status         DatabaseStatus `json:"status"`
 }
 
 // ManagedRole defines model for ManagedRole.
@@ -1872,52 +1558,6 @@ type ModuleDescriptor struct {
 	RequiredCapabilities []string `json:"requiredCapabilities"`
 	Version              string   `json:"version"`
 }
-
-// MySQLFamilyDatabase defines model for MySQLFamilyDatabase.
-type MySQLFamilyDatabase struct {
-	CreatedAt      time.Time                   `json:"createdAt"`
-	EngineId       MySQLFamilyDatabaseEngineId `json:"engineId"`
-	Failure        *string                     `json:"failure,omitempty"`
-	Id             string                      `json:"id"`
-	LastJobId      *int64                      `json:"lastJobId,omitempty"`
-	Name           string                      `json:"name"`
-	OwnerAccountId string                      `json:"ownerAccountId"`
-
-	// SizeBytes On-disk size measured while serving a read and refreshed at most once a minute, so it may lag reality; absent until the database has been measured for the first time.
-	SizeBytes *int64 `json:"sizeBytes,omitempty"`
-
-	// SizeObservedAt When sizeBytes was last measured; absent while sizeBytes is.
-	SizeObservedAt *time.Time                `json:"sizeObservedAt,omitempty"`
-	Status         MySQLFamilyDatabaseStatus `json:"status"`
-	UpdatedAt      time.Time                 `json:"updatedAt"`
-}
-
-// MySQLFamilyDatabaseEngineId defines model for MySQLFamilyDatabase.EngineId.
-type MySQLFamilyDatabaseEngineId string
-
-// MySQLFamilyDatabaseStatus defines model for MySQLFamilyDatabase.Status.
-type MySQLFamilyDatabaseStatus string
-
-// MySQLFamilyEngine defines model for MySQLFamilyEngine.
-type MySQLFamilyEngine struct {
-	Id          MySQLFamilyEngineId     `json:"id"`
-	Kind        MySQLFamilyEngineKind   `json:"kind"`
-	Port        int                     `json:"port"`
-	SocketPath  string                  `json:"socketPath"`
-	Status      MySQLFamilyEngineStatus `json:"status"`
-	SystemdUnit string                  `json:"systemdUnit"`
-	Version     string                  `json:"version"`
-	VersionText string                  `json:"versionText"`
-}
-
-// MySQLFamilyEngineId defines model for MySQLFamilyEngine.Id.
-type MySQLFamilyEngineId string
-
-// MySQLFamilyEngineKind defines model for MySQLFamilyEngine.Kind.
-type MySQLFamilyEngineKind string
-
-// MySQLFamilyEngineStatus defines model for MySQLFamilyEngine.Status.
-type MySQLFamilyEngineStatus string
 
 // NodePlan defines model for NodePlan.
 type NodePlan struct {
@@ -2011,99 +1651,6 @@ type PodmanStatus struct {
 	Path      *string `json:"path,omitempty"`
 	Version   *string `json:"version,omitempty"`
 }
-
-// PostgreSQLGrant defines model for PostgreSQLGrant.
-type PostgreSQLGrant struct {
-	Access     PostgreSQLGrantAccess `json:"access"`
-	DatabaseId string                `json:"databaseId"`
-	Failure    *string               `json:"failure,omitempty"`
-	Id         string                `json:"id"`
-	LastJobId  *int64                `json:"lastJobId,omitempty"`
-	RoleId     string                `json:"roleId"`
-	Status     PostgreSQLStatus      `json:"status"`
-}
-
-// PostgreSQLGrantAccess defines model for PostgreSQLGrant.Access.
-type PostgreSQLGrantAccess string
-
-// PostgreSQLInstance defines model for PostgreSQLInstance.
-type PostgreSQLInstance struct {
-	Cluster       string                    `json:"cluster"`
-	ConfigPath    string                    `json:"configPath"`
-	DataPath      string                    `json:"dataPath"`
-	Failure       *string                   `json:"failure,omitempty"`
-	Id            string                    `json:"id"`
-	LastJobId     *int64                    `json:"lastJobId,omitempty"`
-	LogPath       string                    `json:"logPath"`
-	ManagedByNexa bool                      `json:"managedByNexa"`
-	Owner         string                    `json:"owner"`
-	Port          int                       `json:"port"`
-	SocketPath    string                    `json:"socketPath"`
-	Status        PostgreSQLStatus          `json:"status"`
-	SystemdUnit   string                    `json:"systemdUnit"`
-	Version       PostgreSQLInstanceVersion `json:"version"`
-}
-
-// PostgreSQLInstanceVersion defines model for PostgreSQLInstance.Version.
-type PostgreSQLInstanceVersion string
-
-// PostgreSQLRestorePoint defines model for PostgreSQLRestorePoint.
-type PostgreSQLRestorePoint struct {
-	DatabaseId string           `json:"databaseId"`
-	Failure    *string          `json:"failure,omitempty"`
-	Id         string           `json:"id"`
-	LastJobId  *int64           `json:"lastJobId,omitempty"`
-	Sha256     *string          `json:"sha256,omitempty"`
-	SizeBytes  *int64           `json:"sizeBytes,omitempty"`
-	Status     PostgreSQLStatus `json:"status"`
-	VerifiedAt *time.Time       `json:"verifiedAt,omitempty"`
-}
-
-// PostgreSQLRole defines model for PostgreSQLRole.
-type PostgreSQLRole struct {
-	CredentialAvailable bool             `json:"credentialAvailable"`
-	CredentialVersion   int              `json:"credentialVersion"`
-	Failure             *string          `json:"failure,omitempty"`
-	Id                  string           `json:"id"`
-	InstanceId          string           `json:"instanceId"`
-	LastJobId           *int64           `json:"lastJobId,omitempty"`
-	Name                string           `json:"name"`
-	Status              PostgreSQLStatus `json:"status"`
-}
-
-// PostgreSQLStatus defines model for PostgreSQLStatus.
-type PostgreSQLStatus string
-
-// PostgreSQLStoredPlan defines model for PostgreSQLStoredPlan.
-type PostgreSQLStoredPlan struct {
-	AgentPlan struct {
-		Change              map[string]interface{}            `json:"change"`
-		ExpiresAt           time.Time                         `json:"expiresAt"`
-		Id                  string                            `json:"id"`
-		Interruption        bool                              `json:"interruption"`
-		Kind                PostgreSQLStoredPlanAgentPlanKind `json:"kind"`
-		ObservedFingerprint string                            `json:"observedFingerprint"`
-		PlannedAt           time.Time                         `json:"plannedAt"`
-		Signature           string                            `json:"signature"`
-		Steps               []string                          `json:"steps"`
-		Warnings            []string                          `json:"warnings"`
-	} `json:"agentPlan"`
-	CreatedAt    time.Time                        `json:"createdAt"`
-	ExpiresAt    time.Time                        `json:"expiresAt"`
-	Id           string                           `json:"id"`
-	Operation    PostgreSQLStoredPlanOperation    `json:"operation"`
-	ResourceId   string                           `json:"resourceId"`
-	ResourceType PostgreSQLStoredPlanResourceType `json:"resourceType"`
-}
-
-// PostgreSQLStoredPlanAgentPlanKind defines model for PostgreSQLStoredPlan.AgentPlan.Kind.
-type PostgreSQLStoredPlanAgentPlanKind string
-
-// PostgreSQLStoredPlanOperation defines model for PostgreSQLStoredPlan.Operation.
-type PostgreSQLStoredPlanOperation string
-
-// PostgreSQLStoredPlanResourceType defines model for PostgreSQLStoredPlan.ResourceType.
-type PostgreSQLStoredPlanResourceType string
 
 // ProbeChange defines model for ProbeChange.
 type ProbeChange struct {
@@ -2229,6 +1776,11 @@ type ScheduledTaskRequest struct {
 	Enabled        *bool  `json:"enabled,omitempty"`
 	Name           string `json:"name"`
 	TimeoutSeconds int    `json:"timeoutSeconds"`
+}
+
+// SetDatabaseUserPassword defines model for SetDatabaseUserPassword.
+type SetDatabaseUserPassword struct {
+	Password string `json:"password"`
 }
 
 // SetDeploymentMode defines model for SetDeploymentMode.
@@ -2722,6 +2274,26 @@ type PrepareCertificateOperationJSONBody struct {
 // PrepareCertificateOperationJSONBodyOperation defines parameters for PrepareCertificateOperation.
 type PrepareCertificateOperationJSONBodyOperation string
 
+// ListManagedDatabasesParams defines parameters for ListManagedDatabases.
+type ListManagedDatabasesParams struct {
+	ServerId *string `form:"serverId,omitempty" json:"serverId,omitempty"`
+}
+
+// ListDatabaseGrantsParams defines parameters for ListDatabaseGrants.
+type ListDatabaseGrantsParams struct {
+	DatabaseId *string `form:"databaseId,omitempty" json:"databaseId,omitempty"`
+}
+
+// ListDatabaseRestorePointsParams defines parameters for ListDatabaseRestorePoints.
+type ListDatabaseRestorePointsParams struct {
+	DatabaseId *string `form:"databaseId,omitempty" json:"databaseId,omitempty"`
+}
+
+// ListDatabaseUsersParams defines parameters for ListDatabaseUsers.
+type ListDatabaseUsersParams struct {
+	ServerId *string `form:"serverId,omitempty" json:"serverId,omitempty"`
+}
+
 // ListDomainsParams defines parameters for ListDomains.
 type ListDomainsParams struct {
 	SiteId *string `form:"siteId,omitempty" json:"siteId,omitempty"`
@@ -2742,12 +2314,6 @@ type StreamJobEventsParams struct {
 	LastEventID *int `json:"Last-Event-ID,omitempty"`
 }
 
-// ApplyMySQLFamilyPlanParamsResourceType defines parameters for ApplyMySQLFamilyPlan.
-type ApplyMySQLFamilyPlanParamsResourceType string
-
-// GetMySQLFamilyPlanParamsResourceType defines parameters for GetMySQLFamilyPlan.
-type GetMySQLFamilyPlanParamsResourceType string
-
 // ListPhpExtensionsParams defines parameters for ListPhpExtensions.
 type ListPhpExtensionsParams struct {
 	Version string `form:"version" json:"version"`
@@ -2757,12 +2323,6 @@ type ListPhpExtensionsParams struct {
 type ListPhpSettingsParams struct {
 	Version string `form:"version" json:"version"`
 }
-
-// ApplyPostgreSQLPlanParamsResourceType defines parameters for ApplyPostgreSQLPlan.
-type ApplyPostgreSQLPlanParamsResourceType string
-
-// GetPostgreSQLPlanParamsResourceType defines parameters for GetPostgreSQLPlan.
-type GetPostgreSQLPlanParamsResourceType string
 
 // ListSiteFilesParams defines parameters for ListSiteFiles.
 type ListSiteFilesParams struct {
@@ -2932,20 +2492,26 @@ type CreateCertificateJSONRequestBody = CreateCertificate
 // PrepareCertificateOperationJSONRequestBody defines body for PrepareCertificateOperation for application/json ContentType.
 type PrepareCertificateOperationJSONRequestBody PrepareCertificateOperationJSONBody
 
+// CreateManagedDatabaseJSONRequestBody defines body for CreateManagedDatabase for application/json ContentType.
+type CreateManagedDatabaseJSONRequestBody = CreateManagedDatabase
+
+// CreateDatabaseGrantJSONRequestBody defines body for CreateDatabaseGrant for application/json ContentType.
+type CreateDatabaseGrantJSONRequestBody = CreateDatabaseGrant
+
+// CreateDatabaseServerJSONRequestBody defines body for CreateDatabaseServer for application/json ContentType.
+type CreateDatabaseServerJSONRequestBody = CreateDatabaseServer
+
+// CreateDatabaseUserJSONRequestBody defines body for CreateDatabaseUser for application/json ContentType.
+type CreateDatabaseUserJSONRequestBody = CreateDatabaseUser
+
+// SetDatabaseUserPasswordJSONRequestBody defines body for SetDatabaseUserPassword for application/json ContentType.
+type SetDatabaseUserPasswordJSONRequestBody = SetDatabaseUserPassword
+
 // CreateDomainJSONRequestBody defines body for CreateDomain for application/json ContentType.
 type CreateDomainJSONRequestBody = CreateDomain
 
 // SubmitDiagnosticsJSONRequestBody defines body for SubmitDiagnostics for application/json ContentType.
 type SubmitDiagnosticsJSONRequestBody SubmitDiagnosticsJSONBody
-
-// CreateMySQLFamilyAccountJSONRequestBody defines body for CreateMySQLFamilyAccount for application/json ContentType.
-type CreateMySQLFamilyAccountJSONRequestBody = CreateMySQLFamilyAccount
-
-// CreateMySQLFamilyDatabaseJSONRequestBody defines body for CreateMySQLFamilyDatabase for application/json ContentType.
-type CreateMySQLFamilyDatabaseJSONRequestBody = CreateMySQLFamilyDatabase
-
-// CreateMySQLFamilyGrantJSONRequestBody defines body for CreateMySQLFamilyGrant for application/json ContentType.
-type CreateMySQLFamilyGrantJSONRequestBody = CreateMySQLFamilyGrant
 
 // ApplyManagedProbePlanJSONRequestBody defines body for ApplyManagedProbePlan for application/json ContentType.
 type ApplyManagedProbePlanJSONRequestBody = NodePlan
@@ -2964,18 +2530,6 @@ type SavePhpSettingsJSONRequestBody = SavePhpSettings
 
 // SaveSitePhpSettingsJSONRequestBody defines body for SaveSitePhpSettings for application/json ContentType.
 type SaveSitePhpSettingsJSONRequestBody = SavePhpSettings
-
-// CreateManagedPostgreSQLDatabaseJSONRequestBody defines body for CreateManagedPostgreSQLDatabase for application/json ContentType.
-type CreateManagedPostgreSQLDatabaseJSONRequestBody = CreateManagedPostgreSQLDatabase
-
-// CreatePostgreSQLGrantJSONRequestBody defines body for CreatePostgreSQLGrant for application/json ContentType.
-type CreatePostgreSQLGrantJSONRequestBody = CreatePostgreSQLGrant
-
-// CreatePostgreSQLInstanceJSONRequestBody defines body for CreatePostgreSQLInstance for application/json ContentType.
-type CreatePostgreSQLInstanceJSONRequestBody = CreatePostgreSQLInstance
-
-// CreatePostgreSQLRoleJSONRequestBody defines body for CreatePostgreSQLRole for application/json ContentType.
-type CreatePostgreSQLRoleJSONRequestBody = CreatePostgreSQLRole
 
 // CreateSiteJSONRequestBody defines body for CreateSite for application/json ContentType.
 type CreateSiteJSONRequestBody = CreateSite

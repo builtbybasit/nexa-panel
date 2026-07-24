@@ -1,27 +1,22 @@
 <script setup lang="ts">
 import { useQuery } from '@tanstack/vue-query'
 import { computed, ref, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
-import { useJobRunner, type JobMessage } from '@/shared/composables/useJobRunner'
-import { usePlanReview } from '@/shared/composables/usePlanReview'
-import { useIdentityStore } from '@/modules/identity/store'
+import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { formatBytes, formatDateTime, formatMeasuredBytes } from '@/shared/formatters'
 import {
   AppAlert,
   AppButton,
   AppCard,
   AppConfirmDialog,
-  AppDialog,
   ConnectionDetails,
-  CredentialReveal,
   EmptyState,
   FactList,
   FormField,
   JobFailureNotice,
   JobProgress,
   PageHeader,
-  PlanReviewDialog,
   SkeletonRow,
   StatusPill,
   type Fact,
@@ -39,26 +34,24 @@ import {
   ComboboxTrigger,
 } from '@/shared/ui/combobox'
 
+import { useToolLaunch } from '@/modules/admintools/composables/useToolLaunch'
+import { useIdentityStore } from '@/modules/identity/store'
+
 import {
-  applyPlan,
   createBackup,
   createGrant,
+  dropDatabase,
   dropGrant,
-  getPlan,
-  listDatabases,
   listGrants,
-  listInstances,
   listRestorePoints,
-  listRoles,
-  prepareRestore,
-  revealCredential,
-  rotateRole,
+  restoreBackup,
   type AccessLevel,
-  type DatabaseRole,
-  type PostgresPlan,
-  type ResourceType,
+  type DatabaseUser,
   type RestorePoint,
 } from '../api'
+import { failureProps, progressProps } from '../composables/runnerProps'
+import { useDatabasesData } from '../composables/useDatabasesData'
+import { connectionEngine, ENGINES, serverLabel, userLabel } from '../lib/engines'
 
 const ACCESS_LABELS: Record<AccessLevel, string> = {
   connect: 'Connect only',
@@ -67,21 +60,17 @@ const ACCESS_LABELS: Record<AccessLevel, string> = {
 }
 
 const route = useRoute()
+const router = useRouter()
 const identity = useIdentityStore()
 const canWrite = computed(() => identity.can('databases.write'))
-const canApply = computed(() => identity.can('operations.apply'))
+const canLaunch = computed(() => identity.can('operations.apply'))
 const databaseId = computed(() => String(route.params.databaseId ?? ''))
 
-const instancesQuery = useQuery({ queryKey: ['postgresql-instances'], queryFn: listInstances, retry: false })
-const rolesQuery = useQuery({ queryKey: ['postgresql-roles'], queryFn: listRoles, retry: false })
-const databasesQuery = useQuery({ queryKey: ['postgresql-databases'], queryFn: listDatabases, retry: false })
-const grantsQuery = useQuery({ queryKey: ['postgresql-grants'], queryFn: listGrants, retry: false })
-const restorePointsQuery = useQuery({ queryKey: ['postgresql-restore-points'], queryFn: listRestorePoints, retry: false })
+const data = useDatabasesData()
+const grantsQuery = useQuery({ queryKey: ['database-grants'], queryFn: listGrants, retry: false })
+const restorePointsQuery = useQuery({ queryKey: ['database-restore-points'], queryFn: listRestorePoints, retry: false })
 
-const instances = computed(() => instancesQuery.data.value ?? [])
-const roles = computed(() => rolesQuery.data.value ?? [])
-const database = computed(() => (databasesQuery.data.value ?? []).find((item) => item.id === databaseId.value))
-const activeRoles = computed(() => roles.value.filter((item) => item.status === 'active'))
+const database = computed(() => data.databases.value.find((item) => item.id === databaseId.value))
 
 /** Everything on this page is scoped to one database; the API lists globally. */
 const grants = computed(() => (grantsQuery.data.value ?? []).filter((item) => item.databaseId === databaseId.value))
@@ -89,101 +78,56 @@ const restorePoints = computed(() =>
   (restorePointsQuery.data.value ?? []).filter((item) => item.databaseId === databaseId.value),
 )
 
-const loading = computed(() => databasesQuery.isPending.value)
-const missing = computed(() => !loading.value && !databasesQuery.isError.value && !database.value)
+const loading = computed(() => data.databasesQuery.isPending.value)
+const missing = computed(() => !loading.value && !data.databasesQuery.isError.value && !database.value)
 
-const ownerRole = computed(() => roles.value.find((item) => item.id === database.value?.ownerRoleId))
-const instance = computed(() => instances.value.find((item) => item.id === database.value?.instanceId))
+const owner = computed(() => (database.value ? data.user(database.value.ownerUserId) : undefined))
+const server = computed(() => (database.value ? data.server(database.value.serverId) : undefined))
 
-/** The owner plus every granted role — FastPanel's "users of this database". */
+/** The owner plus every granted user — FastPanel's "users of this database". */
 const accessRows = computed(() => {
-  const rows: { role: DatabaseRole; access: string; grantId?: string; grantStatus?: string }[] = []
-  if (ownerRole.value) rows.push({ role: ownerRole.value, access: 'Owner' })
+  const rows: { user: DatabaseUser; access: string; grantId?: string; grantStatus?: string }[] = []
+  if (owner.value) rows.push({ user: owner.value, access: 'Owner' })
   for (const grant of grants.value) {
-    const role = roles.value.find((item) => item.id === grant.roleId)
-    if (!role || role.id === ownerRole.value?.id) continue
-    rows.push({ role, access: ACCESS_LABELS[grant.access], grantId: grant.id, grantStatus: grant.status })
+    const user = data.user(grant.userId)
+    if (!user || user.id === owner.value?.id) continue
+    rows.push({ user, access: ACCESS_LABELS[grant.access], grantId: grant.id, grantStatus: grant.status })
   }
   return rows
 })
 
-/** Roles a desktop client could sign in as: the owner first, then the grantees. */
-const connectionUsers = computed(() =>
-  accessRows.value.map((row) => ({ value: row.role.name, label: row.role.name })),
-)
+/** Users a desktop client could sign in as: the owner first, then the grantees. */
+const connectionUsers = computed(() => accessRows.value.map((row) => ({ value: row.user.name, label: userLabel(row.user) })))
 
-const showConnectDialog = ref(false)
-/** Nothing to connect to until the database exists and someone can sign in. */
+const showConnection = ref(false)
 const canConnect = computed(
-  () => database.value?.status === 'active' && !!instance.value && connectionUsers.value.length > 0,
+  () => database.value?.status === 'active' && !!server.value && connectionUsers.value.length > 0,
 )
 
 const grantRunner = useJobRunner()
-const rotateRunner = useJobRunner()
 const backupRunner = useJobRunner()
 const restoreRunner = useJobRunner()
-
-type Runner = ReturnType<typeof useJobRunner>
-
-function failureProps(runner: Runner): { message: string; jobId?: number } {
-  const props: { message: string; jobId?: number } = { message: runner.error.value }
-  if (runner.progress.value && runner.jobId.value !== undefined) props.jobId = runner.jobId.value
-  return props
-}
-
-function progressProps(runner: Runner): { messages: JobMessage[]; startedAtMs?: number } {
-  const props: { messages: JobMessage[]; startedAtMs?: number } = { messages: runner.messages.value }
-  if (runner.startedAtMs.value !== undefined) props.startedAtMs = runner.startedAtMs.value
-  return props
-}
+const dropRunner = useJobRunner()
 
 async function refreshAll() {
-  await Promise.all([
-    rolesQuery.refetch(),
-    databasesQuery.refetch(),
-    grantsQuery.refetch(),
-    restorePointsQuery.refetch(),
-  ])
+  await Promise.all([data.refreshAll(), grantsQuery.refetch(), restorePointsQuery.refetch()])
 }
 
-const plans = usePlanReview<ResourceType, PostgresPlan>({
-  loadPlan: getPlan,
-  applyPlan,
-  refresh: refreshAll,
-  canApply: () => identity.can('operations.apply'),
-  isDestructive: (target, plan) =>
-    plan.operation.toLowerCase().includes('drop') ||
-    plan.operation.toLowerCase().includes('revoke') ||
-    (target.type === 'restore-points' && (plan.operation.toLowerCase().includes('restore') || plan.agentPlan.interruption)),
-})
+// One-click phpMyAdmin/pgAdmin launch, logged in as the owner.
+const toolLaunch = useToolLaunch()
 
-const dropRunner = useJobRunner()
-const dropGrantTarget = ref<{ id: string; label: string }>()
-
-function confirmDropGrant() {
-  const grant = dropGrantTarget.value
-  if (!grant || !canWrite.value) return
-  dropGrantTarget.value = undefined
-  void dropRunner.run(async () => (await dropGrant(grant.id)).job.id, {
-    onSettled: refreshAll,
-    onSuccess: () => plans.open({ type: 'grants', id: grant.id, label: `Revoke ${grant.label}` }),
-    failureMessage: 'Revoking access failed',
-  })
-}
-
-function roleLabel(id: string) {
-  return roles.value.find((role) => role.id === id)?.name ?? id
+function openWebClient() {
+  const item = database.value
+  if (!item || !canLaunch.value) return
+  void toolLaunch.launch(ENGINES[item.engine].tool, item.engine, item.id)
 }
 
 const overviewFacts = computed<Fact[]>(() => {
   const item = database.value
   if (!item) return []
-  const facts: Fact[] = [
-    { label: 'Owner role', value: roleLabel(item.ownerRoleId), mono: true },
-    {
-      label: 'Instance',
-      value: instance.value ? `PostgreSQL ${instance.value.version} · ${instance.value.cluster}` : item.instanceId,
-    },
+  return [
+    { label: 'Owner', value: owner.value ? userLabel(owner.value) : item.ownerUserId, mono: true },
+    { label: 'Server', value: server.value ? serverLabel(server.value) : item.serverId },
     {
       label: 'Size',
       value: item.sizeObservedAt
@@ -192,103 +136,66 @@ const overviewFacts = computed<Fact[]>(() => {
     },
     { label: 'Created', value: formatDateTime(item.createdAt) },
   ]
-  return facts
 })
 
-const planFacts = computed<Fact[]>(() => {
-  const resource = plans.target.value
-  if (!resource) return []
-  if (resource.type === 'grants') {
-    const grant = grants.value.find((item) => item.id === resource.id)
-    if (!grant) return []
-    return [
-      { label: 'Role', value: roleLabel(grant.roleId), mono: true },
-      { label: 'Database', value: database.value?.name ?? '', mono: true },
-      { label: 'Access', value: ACCESS_LABELS[grant.access] },
-    ]
-  }
-  if (resource.type === 'restore-points') {
-    const point = restorePoints.value.find((item) => item.id === resource.id)
-    if (!point) return []
-    return [
-      { label: 'Database', value: database.value?.name ?? '', mono: true },
-      { label: 'Size', value: formatBytes(point.sizeBytes) },
-      { label: 'Verified', value: point.verifiedAt ? formatDateTime(point.verifiedAt) : 'Not verified yet' },
-    ]
-  }
-  if (resource.type === 'roles') {
-    const role = roles.value.find((item) => item.id === resource.id)
-    if (!role) return []
-    return [
-      { label: 'Role', value: role.name, mono: true },
-      { label: 'Credential version', value: `v${role.credentialVersion}` },
-    ]
-  }
-  return []
-})
+// --- Grant access (inline form, FastPanel's per-database user management) ---
 
-// --- Grant access ---
-
-const showGrantDialog = ref(false)
-const grantRoleId = ref('')
+const grantUserId = ref('')
 const access = ref<AccessLevel>('read_write')
 const grantAttempted = ref(false)
 
-const grantRoleError = computed(() => (grantAttempted.value && !grantRoleId.value ? 'Select a role.' : ''))
+const grantUserError = computed(() => (grantAttempted.value && !grantUserId.value ? 'Select a user.' : ''))
 
-/** Roles on this instance that do not already own or hold a grant on it. */
-const grantableRoles = computed(() =>
-  activeRoles.value.filter(
-    (role) =>
-      role.instanceId === database.value?.instanceId &&
-      role.id !== database.value?.ownerRoleId &&
-      !grants.value.some((grant) => grant.roleId === role.id),
+/** Users on this server that do not already own or hold a grant on it. */
+const grantableUsers = computed(() =>
+  data.activeUsers.value.filter(
+    (user) =>
+      user.serverId === database.value?.serverId &&
+      user.id !== database.value?.ownerUserId &&
+      !grants.value.some((grant) => grant.userId === user.id),
   ),
 )
 
-function openGrantDialog() {
-  if (!canWrite.value) return
-  grantAttempted.value = false
-  grantRunner.progress.value = undefined
-  grantRunner.error.value = ''
-  showGrantDialog.value = true
-}
-
 async function submitGrant() {
-  if (!canWrite.value) return
+  if (!canWrite.value || grantRunner.busy.value) return
   grantAttempted.value = true
-  if (grantRoleError.value) return
-  let created: { id: string; label: string } | undefined
+  if (grantUserError.value) return
+  const label = data.userName(grantUserId.value)
   await grantRunner.run(
-    async () => {
-      const result = await createGrant({ databaseId: databaseId.value, roleId: grantRoleId.value, access: access.value })
-      created = { id: result.grant.id, label: `${roleLabel(result.grant.roleId)} → ${database.value?.name ?? ''}` }
-      return result.job.id
-    },
+    async () =>
+      (await createGrant({ databaseId: databaseId.value, userId: grantUserId.value, access: access.value })).job.id,
     {
       onSettled: refreshAll,
-      onSuccess: async () => {
-        showGrantDialog.value = false
-        grantRoleId.value = ''
-        access.value = 'read_write'
-        grantAttempted.value = false
-        if (created) await plans.open({ type: 'grants', id: created.id, label: created.label })
-      },
-      failureMessage: 'Creating the grant failed',
+      successToast: `Granted ${label} access`,
+      failureMessage: 'Granting access failed',
     },
   )
+  if (!grantRunner.error.value) {
+    grantUserId.value = ''
+    access.value = 'read_write'
+    grantAttempted.value = false
+  }
+}
+
+const dropGrantTarget = ref<{ id: string; label: string }>()
+
+function confirmDropGrant() {
+  const grant = dropGrantTarget.value
+  if (!grant || !canWrite.value) return
+  dropGrantTarget.value = undefined
+  void dropRunner.run(async () => (await dropGrant(grant.id)).job.id, {
+    onSettled: refreshAll,
+    successToast: `Revoked ${grant.label}`,
+    failureMessage: 'Revoking access failed',
+  })
 }
 
 // --- Backups and restore ---
 
 const restorePendingId = ref<string>()
-const rotatePendingId = ref<string>()
 
 watch(restoreRunner.busy, (busy) => {
   if (!busy) restorePendingId.value = undefined
-})
-watch(rotateRunner.busy, (busy) => {
-  if (!busy) rotatePendingId.value = undefined
 })
 
 function backupNow() {
@@ -301,87 +208,39 @@ function backupNow() {
   })
 }
 
-function prepareRestorePlan(point: RestorePoint) {
-  if (!canWrite.value) return
+const restoreTarget = ref<RestorePoint>()
+
+function confirmRestore() {
+  const point = restoreTarget.value
+  if (!point || !canWrite.value) return
+  restoreTarget.value = undefined
   restorePendingId.value = point.id
-  void restoreRunner.run(async () => (await prepareRestore(point.id)).job.id, {
+  void restoreRunner.run(async () => (await restoreBackup(point.id)).job.id, {
     onSettled: refreshAll,
-    onSuccess: () => plans.open({ type: 'restore-points', id: point.id, label: `Restore ${database.value?.name ?? ''}` }),
-    failureMessage: 'Preparing the restore failed',
+    successToast: `Restored ${database.value?.name ?? 'database'}`,
+    failureMessage: 'The restore failed',
   })
 }
 
-const restoreConfirmOpen = ref(false)
+// --- Delete database ---
 
-function onApprove() {
-  if (!canApply.value) return
-  // Restoring destroys the current data, so it gets a typed confirmation on top
-  // of the plan review that every operation already has.
-  if (plans.isDestructive.value) {
-    restoreConfirmOpen.value = true
-    return
-  }
-  void plans.apply()
-}
+const dropDatabaseOpen = ref(false)
 
-async function applyAfterConfirm() {
-  if (!canApply.value) return
-  restoreConfirmOpen.value = false
-  await plans.apply()
-}
-
-// --- Credential rotation and reveal ---
-
-const rotateTarget = ref<DatabaseRole>()
-const revealTarget = ref<DatabaseRole>()
-const revealBusy = ref(false)
-const revealError = ref('')
-const credential = ref('')
-const revealedRole = ref<DatabaseRole>()
-
-function clearCredential() {
-  credential.value = ''
-  revealedRole.value = undefined
-}
-
-function confirmRotate() {
-  const role = rotateTarget.value
-  if (!role || !canWrite.value) return
-  rotateTarget.value = undefined
-  rotatePendingId.value = role.id
-  clearCredential()
-  void rotateRunner.run(async () => (await rotateRole(role.id)).job.id, {
+function confirmDropDatabase() {
+  const item = database.value
+  if (!item || !canWrite.value) return
+  dropDatabaseOpen.value = false
+  void dropRunner.run(async () => (await dropDatabase(item.id)).job.id, {
     onSettled: refreshAll,
-    onSuccess: () => plans.open({ type: 'roles', id: role.id, label: `Rotate ${role.name}` }),
-    failureMessage: 'Rotating the credential failed',
+    successToast: `Deleted ${item.name}`,
+    failureMessage: 'Deleting the database failed',
   })
 }
 
-async function confirmReveal() {
-  const role = revealTarget.value
-  if (!role || !canApply.value) return
-  revealBusy.value = true
-  revealError.value = ''
-  try {
-    credential.value = await revealCredential(role.id)
-    revealedRole.value = role
-    revealTarget.value = undefined
-    await rolesQuery.refetch()
-  } catch (caught) {
-    revealError.value = caught instanceof Error ? caught.message : 'The credential could not be revealed.'
-  } finally {
-    revealBusy.value = false
-  }
-}
-
-const revealFacts = computed<Fact[]>(() => {
-  const role = revealedRole.value
-  if (!role || !instance.value) return []
-  const facts: Fact[] = [{ label: 'Instance', value: `PostgreSQL ${instance.value.version} · ${instance.value.cluster}` }]
-  if (instance.value.port) facts.push({ label: 'Port', value: String(instance.value.port), mono: true })
-  else facts.push({ label: 'Socket', value: instance.value.socketPath, mono: true })
-  if (database.value) facts.push({ label: 'Database', value: database.value.name, mono: true })
-  return facts
+// After a successful delete the database disappears from the list; leave the
+// orphaned detail page for the table it came from.
+watch(missing, (gone) => {
+  if (gone && dropRunner.progress.value) void router.replace('/databases')
 })
 </script>
 
@@ -391,10 +250,10 @@ const revealFacts = computed<Fact[]>(() => {
       <SkeletonRow v-for="index in 4" :key="index" />
     </div>
 
-    <AppAlert v-else-if="databasesQuery.isError.value" tone="danger">
+    <AppAlert v-else-if="data.databasesQuery.isError.value" tone="danger">
       <div class="flex flex-wrap items-center gap-3">
         <span class="min-w-0 flex-1">This database could not be loaded.</span>
-        <AppButton size="sm" @click="databasesQuery.refetch()">Retry</AppButton>
+        <AppButton size="sm" @click="data.databasesQuery.refetch()">Retry</AppButton>
       </div>
     </AppAlert>
 
@@ -406,18 +265,27 @@ const revealFacts = computed<Fact[]>(() => {
     >
       <template #action>
         <RouterLink to="/databases">
-          <AppButton icon="arrow-left">Back to PostgreSQL</AppButton>
+          <AppButton icon="arrow-left">Back to databases</AppButton>
         </RouterLink>
       </template>
     </EmptyState>
 
     <template v-else-if="database">
       <PageHeader
-        :breadcrumbs="[{ label: 'PostgreSQL', to: '/databases' }, { label: database.name }]"
+        :breadcrumbs="[{ label: 'Databases', to: '/databases' }, { label: database.name }]"
         :title="database.name"
       >
         <StatusPill :status="database.status" />
-        <AppButton v-if="canConnect" icon="plug" @click="showConnectDialog = true">Connect</AppButton>
+        <AppButton
+          v-if="database.status === 'active' && canLaunch"
+          icon="external-link"
+          :loading="toolLaunch.launchingId.value === database.id"
+          :disabled="toolLaunch.availability(ENGINES[database.engine].tool) !== 'ready'"
+          @click="openWebClient"
+        >
+          Open {{ ENGINES[database.engine].toolLabel }}
+        </AppButton>
+        <AppButton v-if="canConnect" icon="plug" @click="showConnection = !showConnection">Connect</AppButton>
         <AppButton
           v-if="canWrite && database.status === 'active'"
           icon="copy"
@@ -430,78 +298,49 @@ const revealFacts = computed<Fact[]>(() => {
 
       <AppAlert v-if="!canWrite" tone="info">Your account has read-only access to this database.</AppAlert>
 
-      <JobFailureNotice v-if="plans.applyRunner.error.value" v-bind="failureProps(plans.applyRunner)" />
-      <JobProgress
-        v-if="plans.applyRunner.progress.value"
-        :event="plans.applyRunner.progress.value"
-        v-bind="progressProps(plans.applyRunner)"
-      />
-
-      <CredentialReveal
-        v-if="credential"
-        :credential="credential"
-        :account-label="revealedRole?.name ?? ''"
-        :facts="revealFacts"
-        @clear="clearCredential"
-      />
+      <div v-if="dropRunner.error.value || dropRunner.progress.value" class="space-y-2">
+        <JobFailureNotice v-if="dropRunner.error.value" v-bind="failureProps(dropRunner)" />
+        <JobProgress
+          v-if="dropRunner.progress.value"
+          :event="dropRunner.progress.value"
+          v-bind="progressProps(dropRunner)"
+        />
+      </div>
+      <AppAlert v-if="toolLaunch.error.value" tone="danger">{{ toolLaunch.error.value }}</AppAlert>
 
       <AppCard eyebrow="Overview" :title="database.name">
         <FactList :facts="overviewFacts" />
         <AppAlert v-if="database.failure" tone="danger" class="mt-4">{{ database.failure }}</AppAlert>
       </AppCard>
 
-      <AppDialog
-        :open="canConnect && showConnectDialog"
-        size="lg"
-        title="Remote connection"
-        description="Point pgAdmin, Beekeeper Studio or psql at this database."
-        @close="showConnectDialog = false"
-      >
+      <!-- Remote connection: an expandable section, not a floating dialog. -->
+      <AppCard v-if="canConnect && showConnection" eyebrow="Remote connection" title="Connect">
         <ConnectionDetails
-          v-if="instance"
-          engine="postgres"
-          :engine-label="`PostgreSQL ${instance.version} · ${instance.cluster}`"
-          :port="instance.port"
+          v-if="server"
+          :engine="connectionEngine(server)"
+          :engine-label="serverLabel(server)"
+          :port="server.port"
           :database="database.name"
           :users="connectionUsers"
-          :socket-path="instance.socketPath"
+          :socket-path="server.socketPath"
         />
-      </AppDialog>
+      </AppCard>
 
-      <!-- Access: the owner plus every granted role, which is what FastPanel
+      <!-- Access: the owner plus every granted user, which is what FastPanel
            calls the database's users. -->
       <AppCard flush eyebrow="Who can reach this database" title="Access">
-        <template #actions>
-          <AppButton
-            v-if="canWrite"
-            size="sm"
-            icon="plus"
-            :disabled="database.status !== 'active'"
-            @click="openGrantDialog"
-          >
-            Grant access
-          </AppButton>
-        </template>
-        <div class="space-y-3 px-3 pb-3 sm:px-4 sm:pb-4">
-          <div v-if="rotateRunner.error.value || rotateRunner.progress.value" class="space-y-2">
-            <JobFailureNotice v-if="rotateRunner.error.value" v-bind="failureProps(rotateRunner)" />
-            <JobProgress
-              v-if="rotateRunner.progress.value"
-              :event="rotateRunner.progress.value"
-              v-bind="progressProps(rotateRunner)"
-            />
-          </div>
+        <div class="space-y-4 px-3 pb-3 sm:px-4 sm:pb-4">
           <EmptyState
             v-if="!accessRows.length"
             icon="users"
             title="No access yet"
-            description="Grant a role connect, read-only, or read-and-write access to this database."
+            description="Grant a user connect, read-only, or read-and-write access to this database."
           />
           <div v-else class="overflow-x-auto">
             <table class="w-full border-collapse text-left">
               <thead>
                 <tr class="border-b border-outline">
-                  <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Role</th>
+                  <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">User</th>
                   <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Access</th>
                   <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Created</th>
                   <th class="px-3 py-2.5 text-[11px] font-bold tracking-[0.1em] text-ink-muted uppercase">Status</th>
@@ -509,59 +348,31 @@ const revealFacts = computed<Fact[]>(() => {
                 </tr>
               </thead>
               <tbody class="divide-y divide-outline">
-                <tr v-for="row in accessRows" :key="row.role.id">
+                <tr v-for="row in accessRows" :key="row.user.id">
                   <td class="px-3 py-2.5 font-mono text-[13px] font-medium whitespace-nowrap text-ink">
-                    {{ row.role.name }}
+                    {{ userLabel(row.user) }}
                   </td>
                   <td class="px-3 py-2.5 text-[13px] whitespace-nowrap text-ink-secondary">{{ row.access }}</td>
                   <td class="px-3 py-2.5 text-[13px] whitespace-nowrap text-ink-secondary">
-                    {{ formatDateTime(row.role.createdAt) }}
+                    {{ formatDateTime(row.user.createdAt) }}
                   </td>
-                  <td class="px-3 py-2.5"><StatusPill :status="row.grantStatus ?? row.role.status" /></td>
+                  <td class="px-3 py-2.5"><StatusPill :status="row.grantStatus ?? row.user.status" /></td>
                   <td class="px-3 py-2.5 text-right">
                     <span class="flex items-center justify-end gap-1">
-                      <AppButton
-                        v-if="row.grantId && row.grantStatus === 'plan_ready'"
-                        size="sm"
-                        :loading="plans.loadingId.value === row.grantId"
-                        @click="plans.open({ type: 'grants', id: row.grantId, label: `${row.role.name} → ${database.name}` })"
+                      <RouterLink
+                        v-if="canWrite && row.user.status === 'active'"
+                        :to="`/databases/users/${encodeURIComponent(row.user.id)}/password`"
                       >
-                        Review
-                      </AppButton>
-                      <AppButton
-                        v-if="row.role.status === 'plan_ready'"
-                        size="sm"
-                        :loading="plans.loadingId.value === row.role.id"
-                        @click="plans.open({ type: 'roles', id: row.role.id, label: row.role.name })"
-                      >
-                        Review
-                      </AppButton>
-                      <AppButton
-                        v-if="row.role.credentialAvailable && canApply"
-                        size="sm"
-                        icon="key"
-                        @click="revealTarget = row.role"
-                      >
-                        Reveal once
-                      </AppButton>
-                      <AppButton
-                        v-if="canWrite && row.role.status === 'active'"
-                        size="sm"
-                        variant="ghost"
-                        icon="refresh-cw"
-                        :aria-label="`Rotate ${row.role.name}`"
-                        :loading="rotateRunner.busy.value && rotatePendingId === row.role.id"
-                        :disabled="rotateRunner.busy.value"
-                        @click="rotateTarget = row.role"
-                      />
+                        <AppButton size="sm" icon="key">Change password</AppButton>
+                      </RouterLink>
                       <AppButton
                         v-if="canWrite && row.grantId && (row.grantStatus === 'active' || row.grantStatus === 'failed')"
                         size="sm"
                         variant="ghost"
                         icon="trash"
-                        :aria-label="`Revoke ${row.role.name}`"
+                        :aria-label="`Revoke ${userLabel(row.user)}`"
                         :disabled="dropRunner.busy.value"
-                        @click="dropGrantTarget = { id: row.grantId, label: `${row.role.name} → ${database.name}` }"
+                        @click="dropGrantTarget = { id: row.grantId, label: `${userLabel(row.user)} → ${database.name}` }"
                       />
                     </span>
                   </td>
@@ -569,6 +380,62 @@ const revealFacts = computed<Fact[]>(() => {
               </tbody>
             </table>
           </div>
+
+          <!-- Inline grant form: pick a user, pick a level, done. -->
+          <form
+            v-if="canWrite && database.status === 'active'"
+            class="flex flex-wrap items-end gap-3 rounded-xl border border-outline bg-surface/60 p-3"
+            novalidate
+            @submit.prevent="submitGrant"
+          >
+            <FormField label="Grant access to" class="min-w-56 flex-1" :error="grantUserError">
+              <Combobox v-model="grantUserId" :disabled="grantRunner.busy.value">
+                <ComboboxAnchor as-child>
+                  <ComboboxTrigger
+                    :invalid="!!grantUserError"
+                    placeholder="Select user"
+                    :label="((id) => {
+                      const user = grantableUsers.find((item) => item.id === id)
+                      return user ? userLabel(user) : ''
+                    })(grantUserId)"
+                  />
+                </ComboboxAnchor>
+                <ComboboxList>
+                  <ComboboxInput placeholder="Search users…" />
+                  <ComboboxEmpty>Every active user on this server already has access</ComboboxEmpty>
+                  <ComboboxGroup>
+                    <ComboboxItem
+                      v-for="user in grantableUsers"
+                      :key="user.id"
+                      :value="user.id"
+                      :text-value="userLabel(user)"
+                    >
+                      {{ userLabel(user) }}<ComboboxItemIndicator />
+                    </ComboboxItem>
+                  </ComboboxGroup>
+                </ComboboxList>
+              </Combobox>
+            </FormField>
+            <FormField label="Access" class="w-44">
+              <Select v-model="access" :disabled="grantRunner.busy.value">
+                <SelectTrigger placeholder="Select access" />
+                <SelectContent>
+                  <SelectItem value="connect">Connect only</SelectItem>
+                  <SelectItem value="read_only">Read only</SelectItem>
+                  <SelectItem value="read_write">Read and write</SelectItem>
+                </SelectContent>
+              </Select>
+            </FormField>
+            <AppButton variant="primary" type="submit" icon="plus" :loading="grantRunner.busy.value">
+              Grant access
+            </AppButton>
+          </form>
+          <JobFailureNotice v-if="grantRunner.error.value" v-bind="failureProps(grantRunner)" />
+          <JobProgress
+            v-if="grantRunner.progress.value"
+            :event="grantRunner.progress.value"
+            v-bind="progressProps(grantRunner)"
+          />
         </div>
       </AppCard>
 
@@ -629,26 +496,16 @@ const revealFacts = computed<Fact[]>(() => {
                   </td>
                   <td class="px-3 py-2.5"><StatusPill :status="point.status" /></td>
                   <td class="px-3 py-2.5 text-right">
-                    <span class="flex items-center justify-end gap-1">
-                      <AppButton
-                        v-if="point.status === 'plan_ready'"
-                        size="sm"
-                        :loading="plans.loadingId.value === point.id"
-                        @click="plans.open({ type: 'restore-points', id: point.id, label: `Restore ${database.name}` })"
-                      >
-                        Review
-                      </AppButton>
-                      <AppButton
-                        v-if="canWrite && point.status === 'verified'"
-                        size="sm"
-                        variant="danger"
-                        :loading="restoreRunner.busy.value && restorePendingId === point.id"
-                        :disabled="restoreRunner.busy.value"
-                        @click="prepareRestorePlan(point)"
-                      >
-                        Prepare restore
-                      </AppButton>
-                    </span>
+                    <AppButton
+                      v-if="canWrite && point.status === 'verified'"
+                      size="sm"
+                      variant="danger"
+                      :loading="restoreRunner.busy.value && restorePendingId === point.id"
+                      :disabled="restoreRunner.busy.value"
+                      @click="restoreTarget = point"
+                    >
+                      Restore
+                    </AppButton>
                   </td>
                 </tr>
               </tbody>
@@ -657,90 +514,47 @@ const revealFacts = computed<Fact[]>(() => {
         </div>
       </AppCard>
 
-      <AppDialog :open="canWrite && showGrantDialog" title="Grant access" @close="showGrantDialog = false">
-        <form class="space-y-4" novalidate @submit.prevent="submitGrant">
-          <FormField label="Role" :error="grantRoleError">
-            <Combobox v-model="grantRoleId">
-              <ComboboxAnchor as-child>
-                <ComboboxTrigger
-                  :invalid="!!grantRoleError"
-                  placeholder="Select role"
-                  :label="((id) => grantableRoles.find((role) => role.id === id)?.name ?? '')(grantRoleId)"
-                />
-              </ComboboxAnchor>
-              <ComboboxList>
-                <ComboboxInput placeholder="Search roles…" />
-                <ComboboxEmpty>Every active role on this instance already has access</ComboboxEmpty>
-                <ComboboxGroup>
-                  <ComboboxItem
-                    v-for="role in grantableRoles"
-                    :key="role.id"
-                    :value="role.id"
-                    :text-value="role.name"
-                  >
-                    {{ role.name }}<ComboboxItemIndicator />
-                  </ComboboxItem>
-                </ComboboxGroup>
-              </ComboboxList>
-            </Combobox>
-          </FormField>
-          <FormField label="Access">
-            <Select v-model="access">
-              <SelectTrigger placeholder="Select access" />
-              <SelectContent>
-                <SelectItem value="connect">Connect only</SelectItem>
-                <SelectItem value="read_only">Read only</SelectItem>
-                <SelectItem value="read_write">Read and write</SelectItem>
-              </SelectContent>
-            </Select>
-          </FormField>
-          <JobFailureNotice v-if="grantRunner.error.value" v-bind="failureProps(grantRunner)" />
-          <JobProgress
-            v-if="grantRunner.progress.value"
-            :event="grantRunner.progress.value"
-            v-bind="progressProps(grantRunner)"
-          />
-          <div class="flex flex-wrap justify-end gap-2 pt-1">
-            <AppButton :disabled="grantRunner.busy.value" @click="showGrantDialog = false">Cancel</AppButton>
-            <AppButton variant="primary" type="submit" :loading="grantRunner.busy.value">Grant access</AppButton>
-          </div>
-        </form>
-      </AppDialog>
-
-      <PlanReviewDialog
-        :open="plans.dialogOpen.value"
-        :title="plans.target.value?.label ?? 'Review plan'"
-        :facts="planFacts"
-        :warnings="plans.warnings.value"
-        :busy="plans.busy.value || plans.applyRunner.busy.value"
-        :can-approve="canApply"
-        approve-label="Approve and execute"
-        v-bind="plans.dialogProps.value"
-        @approve="onApprove"
-        @regenerate="plans.regenerate()"
-        @close="plans.dialogOpen.value = false"
-      />
+      <!-- Danger zone -->
+      <AppCard v-if="canWrite" eyebrow="Danger zone" title="Delete this database">
+        <div class="flex flex-wrap items-center gap-3">
+          <p class="min-w-0 flex-1 text-[13px] text-ink-secondary">
+            Permanently removes the database and everything in it. Back it up first if you might need the data.
+          </p>
+          <AppButton
+            variant="danger"
+            icon="trash"
+            :disabled="dropRunner.busy.value || (database.status !== 'active' && database.status !== 'failed')"
+            @click="dropDatabaseOpen = true"
+          >
+            Delete database
+          </AppButton>
+        </div>
+      </AppCard>
 
       <AppConfirmDialog
-        :open="canApply && restoreConfirmOpen"
+        :open="canWrite && !!restoreTarget"
         :title="`Restore ${database.name}?`"
         confirm-label="Restore database"
+        tone="danger"
         :type-to-confirm="database.name"
-        @confirm="applyAfterConfirm"
-        @close="restoreConfirmOpen = false"
+        @confirm="confirmRestore"
+        @close="restoreTarget = undefined"
       >
-        Restoring replaces the current data and terminates active connections. Anything written since this backup is lost.
+        Restoring replaces the current data and terminates active connections. Anything written since this backup is
+        lost.
       </AppConfirmDialog>
 
       <AppConfirmDialog
-        :open="canWrite && !!rotateTarget"
-        :title="rotateTarget ? `Rotate credential for ${rotateTarget.name}?` : 'Rotate credential?'"
-        confirm-label="Rotate credential"
-        @confirm="confirmRotate"
-        @close="rotateTarget = undefined"
+        :open="canWrite && dropDatabaseOpen"
+        :title="`Delete database ${database.name}?`"
+        confirm-label="Delete database"
+        tone="danger"
+        :type-to-confirm="database.name"
+        @confirm="confirmDropDatabase"
+        @close="dropDatabaseOpen = false"
       >
-        Connected applications will fail until the new password is deployed. You review a plan before anything changes,
-        and the new password is shown exactly once.
+        This permanently deletes the database and everything in it. There is no undo — back it up first if you might
+        need the data.
       </AppConfirmDialog>
 
       <AppConfirmDialog
@@ -751,23 +565,7 @@ const revealFacts = computed<Fact[]>(() => {
         @confirm="confirmDropGrant"
         @close="dropGrantTarget = undefined"
       >
-        The role keeps its login but loses all access to this database. You review a final plan before it takes effect.
-      </AppConfirmDialog>
-
-      <AppConfirmDialog
-        :open="canApply && !!revealTarget"
-        :title="revealTarget ? `Reveal credential for ${revealTarget.name}?` : 'Reveal credential?'"
-        confirm-label="Reveal now"
-        tone="accent"
-        :busy="revealBusy"
-        @confirm="confirmReveal"
-        @close="revealTarget = undefined"
-      >
-        <p>
-          This credential is shown exactly once. Copy or download it before leaving the page — it cannot be revealed
-          again.
-        </p>
-        <AppAlert v-if="revealError" tone="danger" class="mt-3">{{ revealError }}</AppAlert>
+        The user keeps its login but loses all access to this database.
       </AppConfirmDialog>
     </template>
   </section>

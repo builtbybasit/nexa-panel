@@ -20,14 +20,13 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/modules/applications"
 	"github.com/nexa-panel/nexa-panel/internal/modules/backups"
 	"github.com/nexa-panel/nexa-panel/internal/modules/certificates"
+	databasesmodule "github.com/nexa-panel/nexa-panel/internal/modules/databases"
 	deploymodule "github.com/nexa-panel/nexa-panel/internal/modules/deploy"
 	"github.com/nexa-panel/nexa-panel/internal/modules/domains"
 	"github.com/nexa-panel/nexa-panel/internal/modules/files"
 	"github.com/nexa-panel/nexa-panel/internal/modules/firewall"
 	"github.com/nexa-panel/nexa-panel/internal/modules/logs"
-	"github.com/nexa-panel/nexa-panel/internal/modules/mysql"
 	"github.com/nexa-panel/nexa-panel/internal/modules/php"
-	"github.com/nexa-panel/nexa-panel/internal/modules/postgres"
 	"github.com/nexa-panel/nexa-panel/internal/modules/runtimes"
 	"github.com/nexa-panel/nexa-panel/internal/modules/safeguard"
 	"github.com/nexa-panel/nexa-panel/internal/modules/schedules"
@@ -154,25 +153,13 @@ func runAPI(args []string, logger *slog.Logger) error {
 	// site's routes and certificate so the re-render never drops them.
 	sitesModule.SetRouteSource(domainsModule)
 	sitesModule.SetTLSProvider(certificatesModule)
-	postgresDatabasesModule, err := postgres.New(setupCtx, database, jobsModule, secretBox, postgresoperator.NewUnixClient(*agentSocket, *agentToken))
+	databasesModule, err := databasesmodule.New(setupCtx, database, jobsModule, secretBox, mysqloperator.NewUnixClient(*agentSocket, *agentToken), postgresoperator.NewUnixClient(*agentSocket, *agentToken))
 	if err != nil {
-		return fmt.Errorf("initialize PostgreSQL databases module: %w", err)
-	}
-	mysqlDatabasesModule, err := mysql.New(setupCtx, database, jobsModule, secretBox, mysqloperator.NewUnixClient(*agentSocket, *agentToken))
-	if err != nil {
-		return fmt.Errorf("initialize MySQL-family databases module: %w", err)
+		return fmt.Errorf("initialize databases module: %w", err)
 	}
 	credentialResolver := func(ctx context.Context, engine, databaseID, accountID string) (admintools.Credential, error) {
-		switch engine {
-		case "postgresql":
-			credential, resolveErr := postgresDatabasesModule.ResolveAdminToolCredential(ctx, databaseID, accountID)
-			return admintools.Credential{Host: credential.Host, Port: credential.Port, Database: credential.Database, Username: credential.Username, Secret: credential.Secret}, resolveErr
-		case "mysql":
-			credential, resolveErr := mysqlDatabasesModule.ResolveAdminToolCredential(ctx, databaseID, accountID)
-			return admintools.Credential{Host: credential.Host, Port: credential.Port, Database: credential.Database, Username: credential.Username, Secret: credential.Secret}, resolveErr
-		default:
-			return admintools.Credential{}, errors.New("database engine is unsupported for admin tool launch")
-		}
+		credential, resolveErr := databasesModule.ResolveAdminToolCredential(ctx, engine, databaseID, accountID)
+		return admintools.Credential{Host: credential.Host, Port: credential.Port, Database: credential.Database, Username: credential.Username, Secret: credential.Secret}, resolveErr
 	}
 	adminToolsModule, err := admintools.New(setupCtx, database, jobsModule, admintooloperator.NewUnixClient(*agentSocket, *agentToken), admintools.WithLaunchGateway(secretBox, credentialResolver, auditModule))
 	if err != nil {
@@ -243,8 +230,8 @@ func runAPI(args []string, logger *slog.Logger) error {
 		Database: database, Jobs: jobsModule, Cipher: secretBox,
 		Operator:     backupoperator.NewUnixClient(*agentSocket, *agentToken),
 		Sites:        siteBackupResolver{sites: sitesModule},
-		Postgres:     postgresBackupResolver{postgres: postgresDatabasesModule},
-		Mysql:        mysqlBackupResolver{mysql: mysqlDatabasesModule},
+		Postgres:     databaseBackupResolver{databases: databasesModule},
+		Mysql:        databaseBackupResolver{databases: databasesModule},
 		StateDBPath:  *state,
 		Logger:       logger,
 		AccessPolicy: identityModule,
@@ -261,8 +248,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 		sitesModule,
 		domainsModule,
 		certificatesModule,
-		postgresDatabasesModule,
-		mysqlDatabasesModule,
+		databasesModule,
 		adminToolsModule,
 		filesModule,
 		logsModule,

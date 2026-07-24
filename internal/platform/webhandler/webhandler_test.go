@@ -40,10 +40,10 @@ func (f *fakeRegistry) HandleAuthorized(pattern, permission string, _ http.Handl
 
 func TestHandleOpResolvesPatternAndPermissionFromSpec(t *testing.T) {
 	registry := newFakeRegistry()
-	if err := HandleOp(registry, "createMySQLFamilyAccount", func(http.ResponseWriter, *http.Request) {}); err != nil {
+	if err := HandleOp(registry, "createDatabaseUser", func(http.ResponseWriter, *http.Request) {}); err != nil {
 		t.Fatalf("HandleOp: %v", err)
 	}
-	const pattern = "POST /api/v1/mysql-family/accounts"
+	const pattern = "POST /api/v1/databases/users"
 	got, ok := registry.authorized[pattern]
 	if !ok {
 		t.Fatalf("expected authorized registration for %q, got %+v", pattern, registry.authorized)
@@ -64,16 +64,16 @@ func TestHandleOpRejectsUnknownOperation(t *testing.T) {
 func TestRegisterBindsEveryOperation(t *testing.T) {
 	registry := newFakeRegistry()
 	err := Register(registry, map[string]http.HandlerFunc{
-		"listMySQLFamilyEngines": func(http.ResponseWriter, *http.Request) {},
-		"dropMySQLFamilyGrant":   func(http.ResponseWriter, *http.Request) {},
+		"listDatabaseServers": func(http.ResponseWriter, *http.Request) {},
+		"dropDatabaseGrant":   func(http.ResponseWriter, *http.Request) {},
 	})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if _, ok := registry.authorized["GET /api/v1/mysql-family/engines"]; !ok {
-		t.Fatalf("engines not registered: %+v", registry.authorized)
+	if _, ok := registry.authorized["GET /api/v1/databases/servers"]; !ok {
+		t.Fatalf("servers not registered: %+v", registry.authorized)
 	}
-	if _, ok := registry.authorized["DELETE /api/v1/mysql-family/grants/{id}"]; !ok {
+	if _, ok := registry.authorized["DELETE /api/v1/databases/grants/{id}"]; !ok {
 		t.Fatalf("grant delete not registered: %+v", registry.authorized)
 	}
 }
