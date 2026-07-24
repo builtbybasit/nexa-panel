@@ -260,6 +260,40 @@ paths:
     $ref: ./paths/deploy.yaml#/sites_id_deployment_env
   /sites/{id}/deployment/prepare:
     $ref: ./paths/deploy.yaml#/sites_id_deployment_prepare
+  /audit/verify:
+    $ref: ./paths/audit.yaml#/audit_verify
+  /domains/{id}:
+    $ref: ./paths/domains.yaml#/domains_id
+  /postgresql/roles/{id}:
+    $ref: ./paths/postgresql.yaml#/postgresql_roles_id
+  /postgresql/databases/{id}:
+    $ref: ./paths/postgresql.yaml#/postgresql_databases_id
+  /postgresql/grants/{id}:
+    $ref: ./paths/postgresql.yaml#/postgresql_grants_id
+  /firewall:
+    $ref: ./paths/firewall.yaml#/firewall_root
+  /firewall/action:
+    $ref: ./paths/firewall.yaml#/firewall_action
+  /firewall/reverts:
+    $ref: ./paths/firewall.yaml#/firewall_reverts
+  /firewall/reverts/confirm:
+    $ref: ./paths/firewall.yaml#/firewall_reverts_confirm
+  /services:
+    $ref: ./paths/services.yaml#/services_root
+  /services/action:
+    $ref: ./paths/services.yaml#/services_action
+  /services/reverts:
+    $ref: ./paths/services.yaml#/services_reverts
+  /services/reverts/confirm:
+    $ref: ./paths/services.yaml#/services_reverts_confirm
+  /sites/{id}/sftp:
+    $ref: ./paths/site-sftp.yaml#/site_sftp
+  /sites/{id}/sftp/enable:
+    $ref: ./paths/site-sftp.yaml#/site_sftp_enable
+  /sites/{id}/sftp/disable:
+    $ref: ./paths/site-sftp.yaml#/site_sftp_disable
+  /sites/{id}/sftp/reset-password:
+    $ref: ./paths/site-sftp.yaml#/site_sftp_reset_password
 components:
   responses:
     ClientError:
