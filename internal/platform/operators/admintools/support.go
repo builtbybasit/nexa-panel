@@ -345,12 +345,18 @@ func pgAdminConfig(sessionID string, autoCreate bool) (string, error) {
 		"ENHANCED_COOKIE_PROTECTION = True\n", nil
 }
 
+// validToken guards the launch session id. Its character set is the intersection
+// of what is safe as a PHP session id (php_session_valid_key accepts
+// [A-Za-z0-9,-]) and what is safe in a cookie value (which forbids ','): the
+// session id becomes phpMyAdmin's SignonSession cookie and is handed straight to
+// PHP's session_id(). '_' is deliberately excluded — base64url tokens carrying
+// one made PHP reject the id and bounce sign-on to nexa-signon-failed.
 func validToken(value string) bool {
 	if len(value) < 16 || len(value) > 64 {
 		return false
 	}
 	for _, character := range value {
-		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '-' || character == '_') {
+		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '-') {
 			return false
 		}
 	}

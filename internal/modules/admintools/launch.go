@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -699,12 +698,19 @@ func extendProxyWriteDeadline(w http.ResponseWriter) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(proxyWriteWindow))
 }
 
+// secureToken mints a 256-bit random session/launch token as hex. Hex is a
+// deliberate choice over base64url: a tool session token becomes phpMyAdmin's
+// SignonSession cookie, which phpMyAdmin passes straight to PHP's session_id().
+// PHP only accepts [A-Za-z0-9,-] as a session id, so base64url's '_' made PHP
+// discard the id, start an empty session, and bounce ~half of all launches to
+// nexa-signon-failed at random. Hex stays safely inside that set (and inside a
+// cookie value, which forbids the ','), for both admin tools.
 func secureToken() (string, error) {
 	value := make([]byte, 32)
 	if _, err := rand.Read(value); err != nil {
 		return "", fmt.Errorf("generate secure token: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(value), nil
+	return hex.EncodeToString(value), nil
 }
 
 func tokenHash(value string) string {
