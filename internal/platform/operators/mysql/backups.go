@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 const restoreRollbackTimeout = 30 * time.Minute
@@ -22,7 +24,7 @@ func (o *HostOperator) createBackup(ctx context.Context, engine *Engine, change 
 	command.StdoutPath = temporary
 	if output, err := o.runner.Run(ctx, command); err != nil {
 		_ = os.Remove(temporary)
-		return Observation{}, commandError("create MySQL-family logical backup", output, err)
+		return Observation{}, hostcmd.Error("create MySQL-family logical backup", output, err)
 	}
 	digest, size, err := fileDigest(temporary)
 	if err != nil || size == 0 {
@@ -72,7 +74,7 @@ func (o *HostOperator) restoreBackup(ctx context.Context, engine *Engine, change
 		dump := o.dumpCommand(engine, change.Database)
 		dump.StdoutPath = rollback
 		if output, err := o.runner.Run(ctx, dump); err != nil {
-			return Observation{}, commandError("create MySQL-family restore rollback point", output, err)
+			return Observation{}, hostcmd.Error("create MySQL-family restore rollback point", output, err)
 		}
 		if _, size, digestErr := fileDigest(rollback); digestErr != nil || size == 0 {
 			_ = os.Remove(rollback)
@@ -98,7 +100,7 @@ func (o *HostOperator) restoreBackup(ctx context.Context, engine *Engine, change
 	}
 	reset := "DROP DATABASE IF EXISTS " + quoteIdentifier(change.Database) + ";\nCREATE DATABASE " + quoteIdentifier(change.Database) + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n"
 	if output, err := o.runner.Run(ctx, o.stdinCommand(engine, reset)); err != nil {
-		cause := commandError("prepare MySQL-family restore", output, err)
+		cause := hostcmd.Error("prepare MySQL-family restore", output, err)
 		rollbackErr := o.rollbackRestoreBounded(ctx, engine, change.Database, reset, rollback, originalExisted)
 		removeRollback = rollbackErr == nil
 		return Observation{}, restoreFailure(cause, rollbackErr, rollback)
@@ -107,7 +109,7 @@ func (o *HostOperator) restoreBackup(ctx context.Context, engine *Engine, change
 	importCommand.Args = append(importCommand.Args, change.Database)
 	importCommand.StdinPath = change.BackupPath
 	if output, err := o.runner.Run(ctx, importCommand); err != nil {
-		cause := commandError("restore MySQL-family backup", output, err)
+		cause := hostcmd.Error("restore MySQL-family backup", output, err)
 		rollbackErr := o.rollbackRestoreBounded(ctx, engine, change.Database, reset, rollback, originalExisted)
 		removeRollback = rollbackErr == nil
 		return Observation{}, restoreFailure(cause, rollbackErr, rollback)
@@ -131,22 +133,22 @@ func (o *HostOperator) rollbackRestore(ctx context.Context, engine *Engine, data
 	if !originalExisted {
 		statement := "DROP DATABASE IF EXISTS " + quoteIdentifier(database) + ";\n"
 		if output, err := o.runner.Run(ctx, o.stdinCommand(engine, statement)); err != nil {
-			return commandError("remove failed MySQL-family restore", output, err)
+			return hostcmd.Error("remove failed MySQL-family restore", output, err)
 		}
 		output, err := o.runner.Run(ctx, o.clientCommand(engine, "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME="+quoteLiteral(database)+";"))
 		if err != nil || strings.TrimSpace(string(output)) != "" {
-			return commandError("verify removal of failed MySQL-family restore", output, firstError(err, errors.New("database still exists")))
+			return hostcmd.Error("verify removal of failed MySQL-family restore", output, firstError(err, errors.New("database still exists")))
 		}
 		return nil
 	}
 	if output, err := o.runner.Run(ctx, o.stdinCommand(engine, reset)); err != nil {
-		return commandError("prepare MySQL-family restore rollback", output, err)
+		return hostcmd.Error("prepare MySQL-family restore rollback", output, err)
 	}
 	rollbackCommand := o.baseClientArgs(engine)
 	rollbackCommand.Args = append(rollbackCommand.Args, database)
 	rollbackCommand.StdinPath = rollback
 	if output, err := o.runner.Run(ctx, rollbackCommand); err != nil {
-		return commandError("replay MySQL-family restore rollback point", output, err)
+		return hostcmd.Error("replay MySQL-family restore rollback point", output, err)
 	}
 	if err := o.verifyDatabase(ctx, engine, database); err != nil {
 		return fmt.Errorf("verify MySQL-family restore rollback: %w", err)

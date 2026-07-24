@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
@@ -31,7 +32,7 @@ func (execRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 	} else if command.Stdin != "" {
 		process.Stdin = strings.NewReader(command.Stdin)
 	}
-	buffer := &cappedOutput{limit: 64 * 1024}
+	buffer := &hostcmd.Writer{Limit: 64 * 1024}
 	if command.StdoutPath != "" {
 		output, err = os.OpenFile(command.StdoutPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o640)
 		if err != nil {
@@ -44,24 +45,13 @@ func (execRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 	}
 	process.Stderr = buffer
 	err = process.Run()
-	return buffer.data, err
-}
-
-func (w *cappedOutput) Write(value []byte) (int, error) {
-	original := len(value)
-	if remaining := w.limit - len(w.data); remaining > 0 {
-		if len(value) > remaining {
-			value = value[:remaining]
-		}
-		w.data = append(w.data, value...)
-	}
-	return original, nil
+	return buffer.Bytes(), err
 }
 
 func (o *HostOperator) createDatabase(ctx context.Context, engine *Engine, change Change) (Observation, error) {
 	sql := "CREATE DATABASE " + quoteIdentifier(change.Database) + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n"
 	if output, err := o.runner.Run(ctx, o.stdinCommand(engine, sql)); err != nil {
-		return Observation{}, commandError("create MySQL-family database", output, err)
+		return Observation{}, hostcmd.Error("create MySQL-family database", output, err)
 	}
 	if err := o.verifyDatabase(ctx, engine, change.Database); err != nil {
 		return Observation{}, err
@@ -112,7 +102,7 @@ func safePrivileges(output string) ([]string, error) {
 func (o *HostOperator) databaseExists(ctx context.Context, engine *Engine, database string) (bool, error) {
 	output, err := o.runner.Run(ctx, o.clientCommand(engine, "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME="+quoteLiteral(database)+";"))
 	if err != nil {
-		return false, commandError("inspect MySQL-family database before restore", output, err)
+		return false, hostcmd.Error("inspect MySQL-family database before restore", output, err)
 	}
 	observed := strings.TrimSpace(string(output))
 	switch observed {
@@ -121,14 +111,14 @@ func (o *HostOperator) databaseExists(ctx context.Context, engine *Engine, datab
 	case database:
 		return true, nil
 	default:
-		return false, commandError("inspect MySQL-family database before restore", output, errors.New("unexpected database query response"))
+		return false, hostcmd.Error("inspect MySQL-family database before restore", output, errors.New("unexpected database query response"))
 	}
 }
 
 func (o *HostOperator) verifyDatabase(ctx context.Context, engine *Engine, database string) error {
 	output, err := o.runner.Run(ctx, o.clientCommand(engine, "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME="+quoteLiteral(database)+";"))
 	if err != nil || strings.TrimSpace(string(output)) != database {
-		return commandError("verify MySQL-family database", output, firstError(err, errors.New("database was not observed")))
+		return hostcmd.Error("verify MySQL-family database", output, firstError(err, errors.New("database was not observed")))
 	}
 	return nil
 }
@@ -137,7 +127,7 @@ func (o *HostOperator) verifyAccount(ctx context.Context, engine *Engine, change
 	query := "SELECT User FROM mysql.user WHERE User=" + quoteLiteral(change.Account) + " AND Host=" + quoteLiteral(change.AccountHost) + ";"
 	output, err := o.runner.Run(ctx, o.clientCommand(engine, query))
 	if err != nil || strings.TrimSpace(string(output)) != change.Account {
-		return commandError("verify MySQL-family account", output, firstError(err, errors.New("account was not observed")))
+		return hostcmd.Error("verify MySQL-family account", output, firstError(err, errors.New("account was not observed")))
 	}
 	return nil
 }
@@ -249,17 +239,6 @@ func firstError(values ...error) error {
 	return errors.New("operation failed")
 }
 
-func commandError(action string, output []byte, err error) error {
-	message := strings.TrimSpace(string(output))
-	if len(message) > 500 {
-		message = message[:500]
-	}
-	if message == "" {
-		return fmt.Errorf("%s: %w", action, err)
-	}
-	return fmt.Errorf("%s: %w: %s", action, err, message)
-}
-
 func redactCommandError(action string, output []byte, err error, secret string) error {
-	return commandError(action, []byte(strings.ReplaceAll(string(output), secret, "[redacted]")), err)
+	return hostcmd.Error(action, []byte(strings.ReplaceAll(string(output), secret, "[redacted]")), err)
 }

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"strconv"
 	"strings"
 )
@@ -37,7 +38,7 @@ func (o *HostOperator) Sizes(ctx context.Context, instanceID string) (map[string
 		"--username", "postgres", "--dbname", "postgres", "--command", sizeQuery)
 	output, err := o.runner.Run(ctx, command)
 	if err != nil {
-		return nil, commandError("measure PostgreSQL database sizes", output, err)
+		return nil, hostcmd.Error("measure PostgreSQL database sizes", output, err)
 	}
 	return parseSizes(string(output))
 }

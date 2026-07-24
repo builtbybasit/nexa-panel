@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 // The client runs with --batch, so rows arrive tab-separated with special
@@ -37,7 +39,7 @@ func (o *HostOperator) Sizes(ctx context.Context) (map[string]int64, error) {
 	}
 	output, err := o.runner.Run(ctx, o.clientCommand(engine, sizeQuery))
 	if err != nil {
-		return nil, commandError("measure MySQL-family database sizes", output, err)
+		return nil, hostcmd.Error("measure MySQL-family database sizes", output, err)
 	}
 	return parseSizes(string(output))
 }

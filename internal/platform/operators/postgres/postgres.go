@@ -135,11 +135,6 @@ type Runner interface {
 
 type execRunner struct{}
 
-type cappedOutput struct {
-	data  []byte
-	limit int
-}
-
 type HostOperator struct {
 	runner     Runner
 	now        func() time.Time

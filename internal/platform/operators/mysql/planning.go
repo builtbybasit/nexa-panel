@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 func (o *HostOperator) Plan(ctx context.Context, change Change) (Plan, error) {
@@ -53,7 +55,7 @@ func (o *HostOperator) normalizeChange(ctx context.Context, change Change, engin
 	if change.Action == ActionCreateAccount || change.Action == ActionRotateAccount {
 		output, err := o.runner.Run(ctx, o.clientCommand(engine, "SELECT @@GLOBAL.general_log;"))
 		if err != nil {
-			return Change{}, commandError("check MySQL-family general query log", output, err)
+			return Change{}, hostcmd.Error("check MySQL-family general query log", output, err)
 		}
 		if strings.TrimSpace(string(output)) != "0" {
 			return Change{}, errors.New("credential changes require the MySQL-family general query log to be disabled")

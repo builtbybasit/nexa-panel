@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"strconv"
 	"strings"
 )
@@ -87,7 +88,7 @@ func (o *HostOperator) applyGrant(ctx context.Context, change Change) (Observati
 	command := asPostgres(change.Version, "psql", "--no-psqlrc", "--host", o.socketRoot, "--port", strconv.Itoa(change.Port), "--username", "postgres", "--dbname", "postgres", "--set", "ON_ERROR_STOP=1")
 	command.Stdin = strings.Join(statements, "\n") + "\n"
 	if output, err := o.runner.Run(ctx, command); err != nil {
-		return Observation{}, commandError("apply PostgreSQL grant", output, err)
+		return Observation{}, hostcmd.Error("apply PostgreSQL grant", output, err)
 	}
 	return Observation{Action: change.Action, Database: change.Database, Role: change.Role, Access: string(change.Access), Verified: true}, nil
 }

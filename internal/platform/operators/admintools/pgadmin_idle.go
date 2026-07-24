@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 const (
@@ -101,7 +103,7 @@ func (o *HostOperator) schedulePGAdminStop(ctx context.Context) error {
 		return err
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"restart", pgAdminIdleTimerUnit}}); err != nil {
-		return commandError("schedule pgAdmin idle stop", output, err)
+		return hostcmd.Error("schedule pgAdmin idle stop", output, err)
 	}
 	return nil
 }
@@ -114,7 +116,7 @@ func (o *HostOperator) stopPGAdminTimer(ctx context.Context) error {
 		return err
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"stop", pgAdminIdleTimerUnit}}); err != nil {
-		return commandError("stop pgAdmin idle timer", output, err)
+		return hostcmd.Error("stop pgAdmin idle timer", output, err)
 	}
 	return nil
 }

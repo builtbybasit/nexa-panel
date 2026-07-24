@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"strconv"
 	"strings"
 )
@@ -36,7 +37,7 @@ func (o *HostOperator) dropRole(ctx context.Context, change Change) (Observation
 	}
 	if len(transfer) > 0 {
 		if output, err := o.runner.Run(ctx, o.adminPsql(change, "postgres", transfer)); err != nil {
-			return Observation{}, commandError("transfer PostgreSQL database ownership", output, err)
+			return Observation{}, hostcmd.Error("transfer PostgreSQL database ownership", output, err)
 		}
 	}
 
@@ -49,19 +50,19 @@ func (o *HostOperator) dropRole(ctx context.Context, change Change) (Observation
 		}
 		statements = append(statements, "DROP OWNED BY "+role+";")
 		if output, err := o.runner.Run(ctx, o.adminPsql(change, item.Name, statements)); err != nil {
-			return Observation{}, commandError("clear PostgreSQL role ownership in "+item.Name, output, err)
+			return Observation{}, hostcmd.Error("clear PostgreSQL role ownership in "+item.Name, output, err)
 		}
 	}
 
 	// 3. Sweep privileges on shared objects and anything in the maintenance
 	//    database. DROP OWNED never removes databases, so this cannot delete data.
 	if output, err := o.runner.Run(ctx, o.adminPsql(change, "postgres", []string{"DROP OWNED BY " + role + ";"})); err != nil {
-		return Observation{}, commandError("clear PostgreSQL role privileges", output, err)
+		return Observation{}, hostcmd.Error("clear PostgreSQL role privileges", output, err)
 	}
 
 	// 4. Drop the now-empty role.
 	if output, err := o.runner.Run(ctx, o.adminPsql(change, "postgres", []string{"DROP ROLE IF EXISTS " + role + ";"})); err != nil {
-		return Observation{}, commandError("drop PostgreSQL role", output, err)
+		return Observation{}, hostcmd.Error("drop PostgreSQL role", output, err)
 	}
 	if err := o.verifyRoleAbsent(ctx, change, change.Role); err != nil {
 		return Observation{}, err
@@ -86,7 +87,7 @@ func (o *HostOperator) revokeGrant(ctx context.Context, change Change) (Observat
 	command := asPostgres(change.Version, "psql", "--no-psqlrc", "--host", o.socketRoot, "--port", strconv.Itoa(change.Port), "--username", "postgres", "--dbname", "postgres", "--set", "ON_ERROR_STOP=1")
 	command.Stdin = strings.Join(statements, "\n") + "\n"
 	if output, err := o.runner.Run(ctx, command); err != nil {
-		return Observation{}, commandError("revoke PostgreSQL grant", output, err)
+		return Observation{}, hostcmd.Error("revoke PostgreSQL grant", output, err)
 	}
 	return Observation{Action: change.Action, Database: change.Database, Role: change.Role, Verified: true}, nil
 }
@@ -103,7 +104,7 @@ func (o *HostOperator) verifyRoleAbsent(ctx context.Context, change Change, role
 	command := asPostgres(change.Version, "psql", "--no-psqlrc", "--tuples-only", "--no-align", "--host", o.socketRoot, "--port", strconv.Itoa(change.Port), "--username", "postgres", "--dbname", "postgres", "--command", "SELECT 1 FROM pg_roles WHERE rolname = '"+role+"';")
 	output, err := o.runner.Run(ctx, command)
 	if err != nil {
-		return commandError("verify PostgreSQL role removal", output, err)
+		return hostcmd.Error("verify PostgreSQL role removal", output, err)
 	}
 	if strings.TrimSpace(string(output)) != "" {
 		return errors.New("PostgreSQL role still exists after removal")

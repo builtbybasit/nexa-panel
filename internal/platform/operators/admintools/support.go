@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
@@ -213,10 +214,10 @@ func (o *HostOperator) bootstrapLaunch(ctx context.Context, change Change, secre
 		}
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"restart", change.Tool.SystemdUnit}}); err != nil {
-		return Observation{}, commandError("restart pgAdmin with scoped server catalog", output, err)
+		return Observation{}, hostcmd.Error("restart pgAdmin with scoped server catalog", output, err)
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"is-active", change.Tool.SystemdUnit}}); err != nil || strings.TrimSpace(string(output)) != "active" {
-		return Observation{}, commandError("verify pgAdmin launch", output, firstError(err, errors.New("service is not active")))
+		return Observation{}, hostcmd.Error("verify pgAdmin launch", output, firstError(err, errors.New("service is not active")))
 	}
 	if err := o.schedulePGAdminStop(ctx); err != nil {
 		return Observation{}, err
@@ -415,17 +416,6 @@ func randomID() string { return secureid.Hex(16) }
 // Quadlet that was never generated into a unit.
 func mentionsMissingUnit(output []byte) bool {
 	return strings.Contains(strings.ToLower(string(output)), "not found")
-}
-
-func commandError(action string, output []byte, err error) error {
-	message := strings.TrimSpace(string(output))
-	if len(message) > 500 {
-		message = message[:500]
-	}
-	if message == "" {
-		return fmt.Errorf("%s: %w", action, err)
-	}
-	return fmt.Errorf("%s: %w: %s", action, err, message)
 }
 
 func firstError(values ...error) error {

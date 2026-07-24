@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -21,10 +22,10 @@ func (o *HostOperator) createBackup(ctx context.Context, change Change) (Observa
 	defer os.Remove(temporary)
 	command := asPostgres(change.Version, "pg_dump", "--host", o.socketRoot, "--port", strconv.Itoa(change.Port), "--username", "postgres", "--format", "custom", "--no-owner", "--no-privileges", "--file", temporary, change.Database)
 	if output, err := o.runner.Run(ctx, command); err != nil {
-		return Observation{}, commandError("create PostgreSQL logical backup", output, err)
+		return Observation{}, hostcmd.Error("create PostgreSQL logical backup", output, err)
 	}
 	if output, err := o.runner.Run(ctx, asPostgres(change.Version, "pg_restore", "--list", temporary)); err != nil {
-		return Observation{}, commandError("verify PostgreSQL logical backup", output, err)
+		return Observation{}, hostcmd.Error("verify PostgreSQL logical backup", output, err)
 	}
 	digest, size, err := fileDigest(temporary)
 	if err != nil || size == 0 {
@@ -79,11 +80,11 @@ func (o *HostOperator) restoreBackup(ctx context.Context, change Change) (Observ
 	}
 	create := asPostgres(change.Version, "createdb", "--host", o.socketRoot, "--port", strconv.Itoa(change.Port), "--username", "postgres", "--owner", change.OwnerRole, "--encoding", "UTF8", "--template", "template0", temporary)
 	if output, err := o.runner.Run(ctx, create); err != nil {
-		return Observation{}, commandError("create PostgreSQL restore staging database", output, err)
+		return Observation{}, hostcmd.Error("create PostgreSQL restore staging database", output, err)
 	}
 	restore := asPostgres(change.Version, "pg_restore", "--host", o.socketRoot, "--port", strconv.Itoa(change.Port), "--username", "postgres", "--dbname", temporary, "--exit-on-error", "--no-owner", "--no-privileges", "--role", change.OwnerRole, change.BackupPath)
 	if output, err := o.runner.Run(ctx, restore); err != nil {
-		cause := commandError("restore PostgreSQL archive", output, err)
+		cause := hostcmd.Error("restore PostgreSQL archive", output, err)
 		return Observation{}, errors.Join(cause, o.dropDatabaseForRecovery(ctx, change, temporary))
 	}
 	if err := o.verifyDatabase(ctx, change, temporary); err != nil {
@@ -96,7 +97,7 @@ func (o *HostOperator) restoreBackup(ctx context.Context, change Change) (Observ
 		admin.Stdin = terminateSQL(temporary) + "ALTER DATABASE " + quoteIdentifier(temporary) + " RENAME TO " + quoteIdentifier(change.Database) + ";\n"
 	}
 	if output, err := o.runner.Run(ctx, admin); err != nil {
-		cause := commandError("activate restored PostgreSQL database", output, err)
+		cause := hostcmd.Error("activate restored PostgreSQL database", output, err)
 		if originalExisted {
 			cause = errors.Join(cause, o.repairFailedSwapBounded(ctx, change, previous))
 		}
@@ -128,7 +129,7 @@ func (o *HostOperator) rollbackRestoreBounded(ctx context.Context, change Change
 		"ALTER DATABASE " + quoteIdentifier(change.Database) + " RENAME TO " + quoteIdentifier(temporary) + ";\n" +
 		"ALTER DATABASE " + quoteIdentifier(previous) + " RENAME TO " + quoteIdentifier(change.Database) + ";\n"
 	if output, err := o.runner.Run(recoveryContext, admin); err != nil {
-		return commandError("roll back PostgreSQL restore database swap", output, err)
+		return hostcmd.Error("roll back PostgreSQL restore database swap", output, err)
 	}
 	if err := o.verifyDatabase(recoveryContext, change, change.Database); err != nil {
 		return fmt.Errorf("verify PostgreSQL restore rollback: %w", err)
@@ -148,7 +149,7 @@ func (o *HostOperator) dropDatabaseForRecovery(ctx context.Context, change Chang
 func (o *HostOperator) dropDatabase(ctx context.Context, change Change, database string) error {
 	command := asPostgres(change.Version, "dropdb", "--if-exists", "--force", "--host", o.socketRoot, "--port", strconv.Itoa(change.Port), "--username", "postgres", database)
 	if output, err := o.runner.Run(ctx, command); err != nil {
-		return commandError("drop PostgreSQL database "+database, output, err)
+		return hostcmd.Error("drop PostgreSQL database "+database, output, err)
 	}
 	exists, err := o.databaseExists(ctx, change, database)
 	if err != nil {
