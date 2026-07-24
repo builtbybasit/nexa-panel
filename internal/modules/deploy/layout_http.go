@@ -38,9 +38,9 @@ func (m *Module) deploymentModeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var request modeRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[modeRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	change, err := m.switchMode(r.Context(), site, request.Mode, actor, httpapi.RemoteAddress(r))

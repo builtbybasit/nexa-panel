@@ -43,9 +43,9 @@ func (m *Module) ensureDeployKeyHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var request deployKeyRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[deployKeyRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	key, err := m.ensureKey(r.Context(), site, request.Repository, request.Rotate, actor, httpapi.RemoteAddress(r))
@@ -61,9 +61,9 @@ func (m *Module) testDeployKeyHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var request deployKeyRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[deployKeyRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	job, err := m.testGitHub(r.Context(), site, request.Repository, actor, httpapi.RemoteAddress(r))

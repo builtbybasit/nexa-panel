@@ -64,9 +64,9 @@ type changeExtensionRequest struct {
 }
 
 func (m *Module) changeExtensionHTTP(w http.ResponseWriter, r *http.Request) {
-	var request changeExtensionRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[changeExtensionRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	actor, ok := webhandler.ActorID(r)
@@ -96,9 +96,9 @@ type saveSettingsRequest struct {
 }
 
 func (m *Module) saveSettingsHTTP(w http.ResponseWriter, r *http.Request) {
-	var request saveSettingsRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[saveSettingsRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	actor, ok := webhandler.ActorID(r)
@@ -166,9 +166,9 @@ func (m *Module) saveSiteSettingsHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var request saveSettingsRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[saveSettingsRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	actor, _ := webhandler.ActorID(r)

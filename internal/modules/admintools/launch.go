@@ -21,6 +21,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	admintooloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/admintools"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 const (
@@ -160,9 +161,9 @@ func (m *Module) launchHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, 401, "authentication_required", "Sign in to continue.")
 		return
 	}
-	var request LaunchRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, 400, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[LaunchRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	kind := admintooloperator.Kind(r.PathValue("kind"))

@@ -7,6 +7,7 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
@@ -19,9 +20,9 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) createHTTP(w http.ResponseWriter, r *http.Request) {
-	var request CreateRequest
-	if httpapi.DecodeJSON(w, r, &request) != nil {
-		httpapi.WriteError(w, 400, "invalid_request", "Request body must be valid JSON.")
+	request, decodeErr := webhandler.Decode[CreateRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
 		return
 	}
 	user, ok := identity.UserFromContext(r.Context())
