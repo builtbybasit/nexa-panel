@@ -244,6 +244,11 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.ErrorHandler = func(writer http.ResponseWriter, _ *http.Request, _ error) {
 		writeError(writer, 502, "admin_tool_upstream_failed", "Admin tool did not respond.")
 	}
+	// A tool asset response can be many megabytes and, because the panel vhost
+	// proxies /tools with proxy_buffering off, streams at the browser's pace — so
+	// the transfer can outlast the API server's global WriteTimeout and be severed
+	// mid-body. Lift the per-connection write deadline before proxying.
+	extendProxyWriteDeadline(w)
 	proxy.ServeHTTP(w, r)
 }
 
@@ -567,6 +572,25 @@ func waitForUpstreamReady(ctx context.Context, port int, timeout time.Duration) 
 		case <-time.After(pause):
 		}
 	}
+}
+
+// proxyWriteWindow bounds a single admin-tool proxy response. pgAdmin ships
+// ~12 MB of vendor JavaScript, and the panel vhost proxies /tools with
+// proxy_buffering off, so the browser's own pace backpressures all the way to
+// this connection's socket writes — a real asset load routinely outlasts the
+// API server's 30s WriteTimeout. The window is generous enough for a slow client
+// pulling those bundles yet still bounds a wedged write, rather than clearing
+// the deadline outright.
+const proxyWriteWindow = 10 * time.Minute
+
+// extendProxyWriteDeadline lifts the API server's global WriteTimeout for a
+// single admin-tool proxy response. Without it a multi-megabyte asset is severed
+// mid-body once the 30s deadline elapses and the browser reports the truncated
+// stream as ERR_HTTP2_PROTOCOL_ERROR on an otherwise-200 response. This mirrors
+// the per-connection write deadline the job and log SSE streams already set
+// (internal/platform/jobs/http.go).
+func extendProxyWriteDeadline(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(proxyWriteWindow))
 }
 
 func secureToken() (string, error) {
