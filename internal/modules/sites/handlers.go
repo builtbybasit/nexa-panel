@@ -1,16 +1,45 @@
 package sites
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
+
+// recordPHPVersionChange stores the new runtime and the retirement that makes
+// the change real on the node. The node still serves the version from the last
+// successful apply, so only the first change since then records the retirement;
+// edits stacked before an apply keep it, and changing back to the version the
+// node runs cancels it.
+func (m *Module) recordPHPVersionChange(ctx context.Context, site Site, version string) error {
+	model := new(siteModel)
+	if err := m.database.NewSelect().Model(model).Column("retired_php_version").Where("id = ?", site.ID).Scan(ctx); err != nil {
+		return err
+	}
+	retired := site.PHPVersion
+	if model.RetiredPHPVersion != nil && *model.RetiredPHPVersion != "" {
+		retired = *model.RetiredPHPVersion
+	}
+	update := m.database.NewUpdate().Model((*siteModel)(nil)).
+		Set("php_version = ?", version).
+		Set("updated_at = ?", m.now().UTC()).
+		Where("id = ?", site.ID)
+	if retired == version {
+		update = update.Set("retired_php_version = NULL")
+	} else {
+		update = update.Set("retired_php_version = ?", retired)
+	}
+	_, err := update.Exec(ctx)
+	return err
+}
 
 func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 	items, err := m.List(r.Context())
@@ -196,6 +225,21 @@ func (m *Module) updateSettingsHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusUnprocessableEntity, "settings_invalid", err.Error())
 		return
 	}
+	// A runtime change rides the settings PATCH. Validate it before anything is
+	// persisted, so a rejected version leaves settings and site row untouched.
+	newVersion := strings.TrimSpace(request.PHPVersion)
+	changeVersion := newVersion != "" && newVersion != site.PHPVersion
+	if changeVersion {
+		allowed, err := m.runtimes.Allowed(r.Context(), newVersion)
+		if err != nil {
+			httpapi.WriteError(w, http.StatusInternalServerError, "site_unavailable", "The installed PHP runtimes could not be checked.")
+			return
+		}
+		if !allowed {
+			httpapi.WriteError(w, http.StatusUnprocessableEntity, "settings_invalid", "PHP "+newVersion+" is not installed and enabled on this node.")
+			return
+		}
+	}
 	encoded, err := json.Marshal(settings)
 	if err != nil {
 		httpapi.WriteError(w, http.StatusInternalServerError, "settings_invalid", "The settings could not be stored.")
@@ -205,6 +249,12 @@ func (m *Module) updateSettingsHTTP(w http.ResponseWriter, r *http.Request) {
 	if _, err := m.database.NewUpdate().Model((*siteModel)(nil)).Set("settings_json = ?", stored).Set("updated_at = ?", m.now().UTC()).Where("id = ?", site.ID).Exec(r.Context()); err != nil {
 		httpapi.WriteError(w, http.StatusInternalServerError, "settings_update_failed", "The settings could not be saved.")
 		return
+	}
+	if changeVersion {
+		if err := m.recordPHPVersionChange(r.Context(), site, newVersion); err != nil {
+			httpapi.WriteError(w, http.StatusInternalServerError, "settings_update_failed", "The PHP version change could not be saved.")
+			return
+		}
 	}
 
 	switch site.Status {

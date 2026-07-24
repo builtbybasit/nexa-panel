@@ -14,10 +14,18 @@ import {
   Switch,
 } from '@/shared/ui'
 
-import type { SiteSettings } from '../api'
+import type { Runtime, SiteSettings } from '../api'
 
-const props = defineProps<{ settings: SiteSettings; canWrite: boolean; busy: boolean }>()
-const emit = defineEmits<{ save: [settings: SiteSettings] }>()
+const props = defineProps<{
+  settings: SiteSettings
+  canWrite: boolean
+  busy: boolean
+  /** The site's current runtime; the selector below can move it. */
+  phpVersion: string
+  /** Installed runtimes offered as change targets. */
+  runtimes: Runtime[]
+}>()
+const emit = defineEmits<{ save: [settings: SiteSettings, phpVersion?: string] }>()
 
 // Plain data — a structural clone is enough to detach the editable draft from
 // the prop so edits don't mutate the query cache before they're saved.
@@ -26,6 +34,7 @@ function clone(settings: SiteSettings): SiteSettings {
 }
 
 const draft = ref<SiteSettings>(clone(props.settings))
+const draftPhpVersion = ref(props.phpVersion)
 
 // Re-sync whenever the site is refetched (e.g. after a save applies), unless
 // the user is mid-edit — a settled prop should not clobber pending changes.
@@ -35,9 +44,29 @@ watch(
     if (!dirty.value) draft.value = clone(next)
   },
 )
+watch(
+  () => props.phpVersion,
+  (next) => {
+    if (!dirty.value) draftPhpVersion.value = next
+  },
+)
 
-const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(props.settings))
+const versionChanged = computed(() => draftPhpVersion.value !== props.phpVersion)
+const dirty = computed(() => versionChanged.value || JSON.stringify(draft.value) !== JSON.stringify(props.settings))
 const disabled = computed(() => !props.canWrite || props.busy)
+
+// The current version stays selectable even when it is no longer installed
+// (its runtime may have been removed — often the reason for the change).
+const versionOptions = computed(() => {
+  const options = props.runtimes.map((runtime) => ({
+    version: runtime.version,
+    label: `PHP ${runtime.version}${runtime.supportStatus === 'end_of_life_allowed' ? ' — no longer supported' : ''}`,
+  }))
+  if (!options.some((option) => option.version === props.phpVersion)) {
+    options.unshift({ version: props.phpVersion, label: `PHP ${props.phpVersion} — no longer installed` })
+  }
+  return options
+})
 
 // number <input> emits strings; coerce back so the draft stays numeric for the
 // dirty comparison and the API body.
@@ -93,6 +122,10 @@ const activeTab = ref<(typeof tabs)[number]['id']>('static')
 
 function save() {
   if (!props.canWrite || props.busy || !dirty.value) return
+  if (versionChanged.value) {
+    emit('save', clone(draft.value), draftPhpVersion.value)
+    return
+  }
   emit('save', clone(draft.value))
 }
 </script>
@@ -299,6 +332,19 @@ function save() {
 
       <!-- Backend -->
       <div v-show="activeTab === 'backend'" class="space-y-4">
+        <FormField
+          label="PHP version"
+          hint="Moves this site's PHP-FPM pool to the selected runtime when you save. An active site is reloaded on both versions so the switch is seamless; extensions and php.ini overrides are per version, so review them after a change."
+        >
+          <Select v-model="draftPhpVersion" :disabled="disabled">
+            <SelectTrigger aria-label="PHP version" />
+            <SelectContent>
+              <SelectItem v-for="option in versionOptions" :key="option.version" :value="option.version">
+                {{ option.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </FormField>
         <div class="grid gap-4 sm:grid-cols-2">
           <FormField
             label="Application file"

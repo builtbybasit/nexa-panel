@@ -435,8 +435,80 @@ func TestUpdateSettingsHTTPLifecycle(t *testing.T) {
 	}
 
 	setStatus(t, module, site.ID, StatusActive)
-	if rec := patch(SettingsRequest{ClientMaxBodyMB: ptrIntValue(256)}); rec.Code != http.StatusAccepted {
+	rec = patch(SettingsRequest{ClientMaxBodyMB: ptrIntValue(256)})
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("active-site edit = %d, want 202: %s", rec.Code, rec.Body.String())
+	}
+	// Let the queued settings job finish before the state machine is forced
+	// elsewhere — it would otherwise flip the status back to active mid-test.
+	var queued jobs.Job
+	if err := json.Unmarshal(rec.Body.Bytes(), &queued); err != nil {
+		t.Fatal(err)
+	}
+	waitForJob(t, queue, queued.ID)
+
+	// --- PHP version change rides the same PATCH ---
+	module.runtimes = runtimeCatalog{"8.4": true, "8.5": true}
+	setStatus(t, module, site.ID, StatusDraft)
+	if rec := patch(SettingsRequest{PHPVersion: "9.9"}); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("uninstalled runtime = %d, want 422: %s", rec.Code, rec.Body.String())
+	}
+	if rec := patch(SettingsRequest{PHPVersion: "8.5"}); rec.Code != http.StatusOK {
+		t.Fatalf("runtime change = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	changed, err := module.Get(ctx, site.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.PHPVersion != "8.5" {
+		t.Fatalf("phpVersion = %s, want 8.5", changed.PHPVersion)
+	}
+	definition, err := module.Definition(ctx, site.ID, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if definition.RetiredPHPVersion != "8.4" {
+		t.Fatalf("definition retired version = %q, want 8.4 so the next plan removes the old pool", definition.RetiredPHPVersion)
+	}
+	// Changing back to the version the node still runs cancels the retirement.
+	if rec := patch(SettingsRequest{PHPVersion: "8.4"}); rec.Code != http.StatusOK {
+		t.Fatalf("runtime revert = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	definition, err = module.Definition(ctx, site.ID, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if definition.RetiredPHPVersion != "" {
+		t.Fatalf("definition retired version = %q, want none after reverting", definition.RetiredPHPVersion)
+	}
+}
+
+// A successful settings apply completes the version change, so the pending
+// retirement must not survive it — otherwise every later plan would keep
+// retiring (and re-reloading) a version that is long gone.
+func TestSettingsJobClearsThePendingRetirement(t *testing.T) {
+	operator := &capturingOperator{}
+	module, queue, ctx := newSettingsModule(t, operator)
+	site := createSite(t, module, queue, ctx, "verchange", "verchange.example.com")
+	if _, err := module.database.NewUpdate().Model((*siteModel)(nil)).
+		Set("php_version = ?", "8.5").Set("retired_php_version = ?", "8.4").
+		Where("id = ?", site.ID).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	setStatus(t, module, site.ID, StatusActive)
+	payload := mustJSON(t, map[string]string{"siteId": site.ID})
+	if _, err := module.settingsJob(ctx, payload, func(int, string) error { return nil }); err != nil {
+		t.Fatalf("settingsJob() = %v, want nil", err)
+	}
+	if operator.lastPlanned == nil || operator.lastPlanned.RetiredPHPVersion != "8.4" {
+		t.Fatalf("planned definition = %+v, want the pending retirement threaded through", operator.lastPlanned)
+	}
+	definition, err := module.Definition(ctx, site.ID, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if definition.RetiredPHPVersion != "" {
+		t.Fatalf("retired version after apply = %q, want cleared", definition.RetiredPHPVersion)
 	}
 }
 

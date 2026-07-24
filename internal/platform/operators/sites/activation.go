@@ -163,6 +163,16 @@ func (o *HostOperator) Apply(ctx context.Context, plan Plan) (Observation, error
 	if err := o.system.ValidateNginx(ctx); err != nil {
 		return Observation{}, o.rollbackFailure(ctx, plan, fmt.Errorf("validate Nginx configuration: %w", err))
 	}
+	// On a runtime change the outgoing version's FPM master still holds the old
+	// pool (and the site's socket). Reload it first so it lets go before the new
+	// version binds — best-effort, because a version change is often made
+	// precisely because the old runtime is about to be (or already was)
+	// uninstalled, and a missing service must not fail the site it no longer
+	// serves. The socket is safe either way: FPM unlinks a stale socket path
+	// before binding it.
+	if old := retiredPHP(plan); old != "" {
+		_ = o.system.ReloadPHP(ctx, old)
+	}
 	if err := o.system.ReloadPHP(ctx, plan.Site.PHPVersion); err != nil {
 		return Observation{}, o.rollbackFailure(ctx, plan, fmt.Errorf("reload PHP-FPM: %w", err))
 	}
@@ -183,10 +193,29 @@ func (o *HostOperator) rollbackFailure(ctx context.Context, plan Plan, cause err
 	if err := o.system.ReloadPHP(context.WithoutCancel(ctx), plan.Site.PHPVersion); err != nil {
 		failures = append(failures, "restore PHP-FPM reload: "+err.Error())
 	}
+	// The restore put the outgoing version's pool file back; its FPM must
+	// reload after the new version's (which just dropped the pool) so the old
+	// runtime re-binds the socket and keeps serving. This one is not
+	// best-effort: the site's previous configuration depends on it.
+	if old := retiredPHP(plan); old != "" {
+		if err := o.system.ReloadPHP(context.WithoutCancel(ctx), old); err != nil {
+			failures = append(failures, "restore previous PHP-FPM reload: "+err.Error())
+		}
+	}
 	if err := o.system.ReloadNginx(context.WithoutCancel(ctx)); err != nil {
 		failures = append(failures, "restore Nginx reload: "+err.Error())
 	}
 	return errors.New(strings.Join(failures, "; "))
+}
+
+// retiredPHP names the runtime whose pool this plan removes, "" when none. The
+// self-equality guard mirrors the renderer's, so reload choreography and the
+// retired artifact list can never disagree about whether a change happened.
+func retiredPHP(plan Plan) string {
+	if old := plan.Site.RetiredPHPVersion; old != "" && old != plan.Site.PHPVersion {
+		return old
+	}
+	return ""
 }
 
 func (o *HostOperator) Rollback(ctx context.Context, plan Plan) (Observation, error) {
@@ -222,6 +251,13 @@ func (o *HostOperator) Rollback(ctx context.Context, plan Plan) (Observation, er
 	}
 	if err := o.system.ReloadPHP(ctx, plan.Site.PHPVersion); err != nil {
 		return Observation{}, err
+	}
+	// Same ordering as rollbackFailure: the restored old-version pool must be
+	// picked up after the new version released the socket.
+	if old := retiredPHP(plan); old != "" {
+		if err := o.system.ReloadPHP(ctx, old); err != nil {
+			return Observation{}, err
+		}
 	}
 	if err := o.system.ReloadNginx(ctx); err != nil {
 		return Observation{}, err

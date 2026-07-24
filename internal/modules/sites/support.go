@@ -19,7 +19,14 @@ import (
 // SettingsRequest is the PATCH body. It mirrors the operator Settings except the
 // basic-auth secret arrives as plaintext (write-only) and is hashed server-side;
 // the hash never crosses this boundary in either direction.
+//
+// PHPVersion is the one field that is not a Settings knob: it changes the
+// site's runtime. Absent (or unchanged) leaves the version alone; a new value
+// is validated against the runtime catalog, moves the pool artifact to the new
+// version's pool.d on the next apply, and retires the outgoing version's copy.
 type SettingsRequest struct {
+	PHPVersion string `json:"phpVersion,omitempty"`
+
 	HSTS       bool  `json:"hsts"`
 	HSTSMaxAge int   `json:"hstsMaxAge"`
 	HTTP2      *bool `json:"http2"`

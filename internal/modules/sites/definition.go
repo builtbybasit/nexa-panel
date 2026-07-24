@@ -30,12 +30,18 @@ func (m *Module) Definition(ctx context.Context, siteID string, routes []siteope
 	if err != nil {
 		return siteoperator.Site{}, err
 	}
-	return siteoperator.Site{
+	definition := siteoperator.Site{
 		ID: model.ID, Slug: model.Slug, PrimaryDomain: model.PrimaryDomain, PHPVersion: model.PHPVersion,
 		UnixUser: model.UnixUser, RootPath: model.RootPath, SocketPath: model.SocketPath,
 		Routes: routes, TLS: tls, TLSDomains: tlsDomains, Settings: settings,
 		DeploymentMode: deploymentMode(model.DeploymentMode),
-	}, nil
+	}
+	// A pending runtime change threads through so the plan retires the outgoing
+	// version's pool; a successful apply clears the column.
+	if model.RetiredPHPVersion != nil {
+		definition.RetiredPHPVersion = *model.RetiredPHPVersion
+	}
+	return definition, nil
 }
 
 // loadSettings returns the persisted settings with the password hash intact, for

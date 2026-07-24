@@ -223,10 +223,13 @@ export function prepareSitePlan(siteId: string): Promise<Job> {
 // discriminate on a numeric `id` + `state` to decide whether to follow a job.
 // basicAuth.password is plaintext and write-only; sending "" while enabled with
 // the same username keeps the existing password.
-export function updateSiteSettings(siteId: string, settings: SiteSettings): Promise<Job | Site> {
+//
+// phpVersion, when provided, changes the site's runtime in the same request:
+// the next apply moves the FPM pool to the new version and retires the old one.
+export function updateSiteSettings(siteId: string, settings: SiteSettings, phpVersion?: string): Promise<Job | Site> {
   return request(`/api/v1/sites/${encodeURIComponent(siteId)}/settings`, {
     method: 'PATCH',
-    body: JSON.stringify(settings),
+    body: JSON.stringify({ ...settings, ...(phpVersion ? { phpVersion } : {}) }),
   })
 }
 

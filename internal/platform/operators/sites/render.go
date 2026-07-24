@@ -92,6 +92,15 @@ type Site struct {
 	// gate in validatePlan. An empty value means standard, which is what keeps
 	// every plan issued before the mode existed byte-identical.
 	DeploymentMode string `json:"deploymentMode,omitempty"`
+	// RetiredPHPVersion names a runtime this site previously activated with. A
+	// PHP version change moves the pool artifact to the new version's pool.d,
+	// so without this the old version's copy — still loaded by its own FPM
+	// master — would survive forever. When set (and different from PHPVersion)
+	// the renderer names the old pool path in Retired, and Apply reloads the
+	// outgoing FPM so it drops the pool. Empty renders byte-identically to a
+	// site that never changed versions, which is what lets the field ride
+	// through validatePlan's re-render gate on old plans.
+	RetiredPHPVersion string `json:"retiredPhpVersion,omitempty"`
 }
 
 // The two site layouts. deployerMode nests the release tree at {root}/app so
@@ -384,13 +393,19 @@ func (r Renderer) Render(site Site) (Plan, error) {
 		{site.Settings.BasicAuth.Enabled, Artifact{Kind: "nginx-htpasswd", Path: filepath.Join(includesRoot, "nexa-"+site.Slug+".htpasswd"), Mode: 0o640, Content: htpasswdArtifact(site)}},
 		{site.Settings.LogRotation.Enabled, Artifact{Kind: "logrotate", Path: filepath.Join(logrotateRoot, "nexa-"+site.Slug), Mode: 0o644, Content: logrotateArtifact(site)}},
 	}
-	retired := make([]string, 0, len(conditionals))
+	retired := make([]string, 0, len(conditionals)+1)
 	for _, conditional := range conditionals {
 		if conditional.enabled {
 			artifacts = append(artifacts, conditional.artifact)
 			continue
 		}
 		retired = append(retired, conditional.artifact.Path)
+	}
+	// A runtime change moves the pool artifact to the new version's pool.d;
+	// the outgoing version's copy is retired so the old FPM master stops
+	// serving a pool that competes for the site's socket.
+	if site.RetiredPHPVersion != "" && site.RetiredPHPVersion != site.PHPVersion {
+		retired = append(retired, filepath.Join(phpRoot, site.RetiredPHPVersion, "fpm", "pool.d", "nexa-"+site.Slug+".conf"))
 	}
 	return Plan{Site: site, Artifacts: artifacts, Retired: retired, Warnings: []string{"Activation requires PHP-FPM and Nginx validation on the managed node."}}, nil
 }
@@ -401,6 +416,11 @@ func (r Renderer) validate(site Site) error {
 	}
 	if site.DeploymentMode != "" && site.DeploymentMode != standardMode && site.DeploymentMode != deployerMode {
 		return errors.New("site deployment mode must be standard or deployer")
+	}
+	// The retired version becomes a filesystem path segment in Retired, so it is
+	// held to the same format rule as the active version.
+	if site.RetiredPHPVersion != "" && !phpVersionSupported(site.RetiredPHPVersion) {
+		return errors.New("site retired PHP version is malformed")
 	}
 	expectedUser := "nexa_" + strings.ReplaceAll(site.Slug, "-", "_")
 	if site.UnixUser != expectedUser {

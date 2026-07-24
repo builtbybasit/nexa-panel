@@ -16,7 +16,7 @@ import {
   SkeletonRow,
 } from '@/shared/ui'
 
-import { listSites, mergeSiteSettings, updateSiteSettings, type Site, type SiteSettings } from '../api'
+import { listRuntimes, listSites, mergeSiteSettings, updateSiteSettings, type Site, type SiteSettings } from '../api'
 import SiteSettingsCard from '../components/SiteSettingsCard.vue'
 
 const route = useRoute()
@@ -30,6 +30,9 @@ const siteId = computed(() => String(route.params.siteId ?? ''))
 // navigating back shows the updated site without a second fetch.
 const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: listSites, retry: false })
 const site = computed(() => sitesQuery.data.value?.find((candidate) => candidate.id === siteId.value))
+// Same key as the create wizard, so the installed-runtime list is shared.
+const runtimesQuery = useQuery({ queryKey: ['runtimes'], queryFn: listRuntimes, retry: false })
+const runtimes = computed(() => runtimesQuery.data.value ?? [])
 
 // A 202 returns a Job (numeric id + state) to follow; a 200 returns the updated
 // Site (settled, non-active states persist only).
@@ -41,12 +44,12 @@ async function refreshSite() {
   await sitesQuery.refetch()
 }
 
-async function saveSettings(next: SiteSettings) {
+async function saveSettings(next: SiteSettings, phpVersion?: string) {
   const current = site.value
   if (!current || !canWriteSites.value) return
   await runner.run(
     async () => {
-      const response = await updateSiteSettings(current.id, next)
+      const response = await updateSiteSettings(current.id, next, phpVersion)
       if (isJob(response)) return response.id
       // Persist-only: no job to follow, so refresh the site ourselves.
       await refreshSite()
@@ -54,7 +57,7 @@ async function saveSettings(next: SiteSettings) {
     },
     {
       onSettled: refreshSite,
-      successToast: 'Site settings saved',
+      successToast: phpVersion ? `Settings saved — the site now targets PHP ${phpVersion}` : 'Site settings saved',
       failureMessage: 'Saving site settings failed',
     },
   )
@@ -117,6 +120,8 @@ const progressExtras = computed(() => ({
         :settings="mergeSiteSettings(site.settings)"
         :can-write="canWriteSites"
         :busy="runner.busy.value"
+        :php-version="site.phpVersion"
+        :runtimes="runtimes"
         @save="saveSettings"
       />
     </template>

@@ -145,22 +145,26 @@ func (m *Module) SetRouteSource(source RouteSource) { m.routeSource = source }
 func (m *Module) SetTLSProvider(provider TLSProvider) { m.tls = provider }
 
 type siteModel struct {
-	bun.BaseModel  `bun:"table:sites,alias:site"`
-	ID             string `bun:",pk"`
-	Slug           string
-	DisplayName    string
-	PrimaryDomain  string
-	PHPVersion     string
-	UnixUser       string
-	RootPath       string
-	SocketPath     string
-	Status         string
-	SettingsJSON   *string
-	DeploymentMode string
-	LastJobID      *int64
-	Failure        *string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	bun.BaseModel `bun:"table:sites,alias:site"`
+	ID            string `bun:",pk"`
+	Slug          string
+	DisplayName   string
+	PrimaryDomain string
+	PHPVersion    string
+	// RetiredPHPVersion records the runtime the node is still serving with
+	// after a version change was requested but before it was applied. The next
+	// plan retires that version's pool; a successful apply clears the column.
+	RetiredPHPVersion *string
+	UnixUser          string
+	RootPath          string
+	SocketPath        string
+	Status            string
+	SettingsJSON      *string
+	DeploymentMode    string
+	LastJobID         *int64
+	Failure           *string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type planModel struct {

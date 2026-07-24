@@ -86,7 +86,9 @@ func (m *Module) activateJob(ctx context.Context, request json.RawMessage, repor
 		return nil, err
 	}
 	now := m.now().UTC()
-	_, err = m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", StatusActive).Set("failure = NULL").Set("updated_at = ?", now).Where("id = ?", plan.Site.ID).Exec(ctx)
+	// The apply removed the outgoing runtime's pool (the plan carried the
+	// retirement), so the pending version change is complete — clear it.
+	_, err = m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", StatusActive).Set("failure = NULL").Set("retired_php_version = NULL").Set("updated_at = ?", now).Where("id = ?", plan.Site.ID).Exec(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +174,9 @@ func (m *Module) settingsJob(ctx context.Context, request json.RawMessage, repor
 		return nil, err
 	}
 	now := m.now().UTC()
-	if _, err := m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", StatusActive).Set("failure = NULL").Set("updated_at = ?", now).Where("id = ?", payload.SiteID).Exec(ctx); err != nil {
+	// Same as activateJob: the settings apply carried any pending runtime
+	// retirement, so it is complete once the apply succeeded.
+	if _, err := m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", StatusActive).Set("failure = NULL").Set("retired_php_version = NULL").Set("updated_at = ?", now).Where("id = ?", payload.SiteID).Exec(ctx); err != nil {
 		return nil, err
 	}
 	return observation, nil

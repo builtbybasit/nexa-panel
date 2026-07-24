@@ -8694,6 +8694,11 @@
         "additionalProperties": false,
         "description": "Per-site Nginx/PHP-FPM tuning. Every field is optional; an absent field falls back to a hardened default, so an empty object ({}) re-renders the baseline configuration identically.",
         "properties": {
+          "phpVersion": {
+            "type": "string",
+            "pattern": "^(7\\.4|8\\.[0-9]{1,2})$",
+            "description": "Write-only, and only meaningful on the settings update: change the site's PHP runtime. The version must be installed and enabled on the node. The next apply moves the site's FPM pool to the new version and retires the outgoing one. Absent (or equal to the current version) leaves the runtime untouched; the field is never emitted on reads — the site's own phpVersion property reports the runtime."
+          },
           "hsts": {
             "type": "boolean",
             "description": "Emit an HTTP Strict-Transport-Security response header."

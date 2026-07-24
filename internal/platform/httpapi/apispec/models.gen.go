@@ -1979,6 +1979,9 @@ type SiteSettings struct {
 	// LogRotation Optional logrotate stanza for the site's own logs (logs/access.log, logs/error.log, logs/php-error.log). Absent or disabled emits no file at all, which is the historical behaviour: Nexa does not rotate site logs unless this is turned on.
 	LogRotation *SiteLogRotation `json:"logRotation,omitempty"`
 
+	// PhpVersion Write-only, and only meaningful on the settings update: change the site's PHP runtime. The version must be installed and enabled on the node. The next apply moves the site's FPM pool to the new version and retires the outgoing one. Absent (or equal to the current version) leaves the runtime untouched; the field is never emitted on reads — the site's own phpVersion property reports the runtime.
+	PhpVersion *string `json:"phpVersion,omitempty"`
+
 	// PmMaxChildren PHP-FPM pm.max_children. 0 or absent falls back to 3.
 	PmMaxChildren *int `json:"pmMaxChildren,omitempty"`
 
