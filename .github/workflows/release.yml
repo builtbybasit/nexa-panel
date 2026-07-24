@@ -225,10 +225,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Prepend this version's curated CHANGELOG section (if present) to the
+          # auto-generated notes, so the release page carries a human changelog
+          # above the commit/PR list. The heading is matched on the version with
+          # or without its leading v; an absent section just falls back to the
+          # generated notes alone.
+          notes_args=(--generate-notes)
+          version_no_v="${VERSION#v}"
+          awk -v ver="${version_no_v}" '
+            /^## / { if (grab) exit; grab = (index($0, ver) > 0); next }
+            grab { print }
+          ' CHANGELOG.md > release-notes.md || true
+          if [ -s release-notes.md ]; then
+            notes_args=(--notes-file release-notes.md --generate-notes)
+          fi
           gh release create "${VERSION}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${VERSION}" \
-            --generate-notes \
+            "${notes_args[@]}" \
             --verify-tag \
             dist/nexa-panel-linux-amd64.tar.gz \
             dist/nexa-panel-linux-amd64.tar.gz.sha256 \

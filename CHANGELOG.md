@@ -38,3 +38,15 @@ once stable releases begin.
 
 The final release entry must be cut from this section only after the complete
 release matrix in `PLAN.md` passes on AMD64 and ARM64.
+
+## v0.5.10 — 2026-07-24
+
+### Changed
+
+- Site creation is now a guided step wizard: the monolithic form is split into
+  a stepper flow with dedicated template, configuration, and success stages.
+
+### Added
+
+- A shared password generator that mixes upper, lower, digit, and symbol classes
+  from a cryptographically secure source, wired through the password field.
