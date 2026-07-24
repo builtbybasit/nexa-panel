@@ -10,6 +10,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/adapters/podman"
 	"github.com/nexa-panel/nexa-panel/internal/platform/capacity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 type podmanInspector interface {
@@ -53,14 +54,24 @@ func (m *Module) Descriptor() module.Descriptor {
 	return descriptor
 }
 
+// Register binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract. The self-update routes only appear
+// when WithUpdates configured the feature.
 func (m *Module) Register(registry module.Registry) error {
 	if m.initErr != nil {
 		return m.initErr
 	}
-	if err := registry.HandleAuthorized("GET /api/v1/system/overview", "system.read", http.HandlerFunc(m.overview)); err != nil {
-		return err
+	routes := map[string]http.HandlerFunc{
+		"getSystemOverview": m.overview,
 	}
-	return m.registerUpdates(registry)
+	if m.updates != nil {
+		routes["getSystemUpdates"] = m.availableUpdateHTTP
+		routes["applySystemUpdate"] = m.applyUpdateHTTP
+	}
+	return webhandler.Register(registry, routes)
 }
 
 type overviewResponse struct {

@@ -5,10 +5,13 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 func (m *Module) registerPrepareHTTP(registry module.Registry) error {
-	return registry.HandleAuthorized("POST /api/v1/sites/{id}/deployment/prepare", "deploy.write", http.HandlerFunc(m.prepareHTTP))
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"prepareNodeForDeployments": m.prepareHTTP,
+	})
 }
 
 // prepareHTTP starts the node preparation. There is no request body: the only
@@ -24,5 +27,5 @@ func (m *Module) prepareHTTP(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"job": job})
+	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"job": job})
 }

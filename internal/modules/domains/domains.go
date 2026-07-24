@@ -12,6 +12,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 
 	"github.com/uptrace/bun"
 )
@@ -144,21 +145,17 @@ func (m *Module) Descriptor() module.Descriptor {
 	return module.Descriptor{ID: "domains", Name: "Domains", Version: "0.1.0", Description: "Primary domains, subdomains, aliases, redirects, and DNS preflight.", Dependencies: []string{"identity", "jobs", "sites"}, EstimatedIdleBytes: 512 * 1024}
 }
 
+// Register binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract.
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern, permission string
-		handler             http.Handler
-	}{
-		{"GET /api/v1/domains", "domains.read", http.HandlerFunc(m.listHTTP)},
-		{"POST /api/v1/domains", "domains.write", http.HandlerFunc(m.createHTTP)},
-		{"GET /api/v1/domains/{id}/plan", "domains.read", http.HandlerFunc(m.planHTTP)},
-		{"POST /api/v1/domains/{id}/activate", "operations.apply", http.HandlerFunc(m.activateHTTP)},
-		{"DELETE /api/v1/domains/{id}", "operations.apply", http.HandlerFunc(m.deleteHTTP)},
-	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"listDomains":    m.listHTTP,
+		"createDomain":   m.createHTTP,
+		"getDomainPlan":  m.planHTTP,
+		"activateDomain": m.activateHTTP,
+		"deleteDomain":   m.deleteHTTP,
+	})
 }

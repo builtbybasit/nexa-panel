@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi/apispec"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	"github.com/uptrace/bun"
 )
@@ -81,16 +82,34 @@ func (m *Module) Descriptor() module.Descriptor {
 	}
 }
 
+// Register binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract.
+//
+// This mirrors webhandler.Register/HandleOp but resolves the spec directly:
+// webhandler imports identity, which imports this package, so importing it here
+// would form a cycle. The apispec lookup has no such dependency.
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern, permission string
-		handler             http.Handler
-	}{
-		{"GET /api/v1/audit/events", "audit.read", http.HandlerFunc(m.listHTTP)},
-		{"GET /api/v1/audit/verify", "audit.read", http.HandlerFunc(m.verifyHTTP)},
+	handlers := map[string]http.HandlerFunc{
+		"listAuditEvents":  m.listHTTP,
+		"verifyAuditChain": m.verifyHTTP,
 	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
+	for operationID, handler := range handlers {
+		op, err := apispec.Lookup(operationID)
+		if err != nil {
+			return err
+		}
+		switch {
+		case op.Permission != "":
+			err = registry.HandleAuthorized(op.Pattern(), op.Permission, handler)
+		case op.Secured:
+			err = registry.HandleAuthenticated(op.Pattern(), handler)
+		default:
+			err = registry.Handle(op.Pattern(), handler)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -181,29 +200,24 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 200 {
-			writeError(w, http.StatusBadRequest, "invalid_limit", "Limit must be between 1 and 200.")
+			httpapi.WriteError(w, http.StatusBadRequest, "invalid_limit", "Limit must be between 1 and 200.")
 			return
 		}
 		limit = parsed
 	}
 	events, err := m.List(r.Context(), limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "audit_unavailable", "Audit events could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "audit_unavailable", "Audit events could not be loaded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": events})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": events})
 }
 
 func (m *Module) verifyHTTP(w http.ResponseWriter, r *http.Request) {
 	result, err := m.Verify(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "audit_unavailable", "The audit chain could not be verified.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "audit_unavailable", "The audit chain could not be verified.")
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	httpapi.WriteJSON(w, http.StatusOK, result)
 }
-
-var (
-	writeJSON  = httpapi.WriteJSON
-	writeError = httpapi.WriteError
-)

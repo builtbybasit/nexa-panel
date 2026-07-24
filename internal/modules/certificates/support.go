@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
-	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
@@ -51,9 +50,3 @@ func (m certificateModel) toCertificate(now time.Time) Certificate {
 	}
 	return Certificate{ID: m.ID, SiteID: m.SiteID, PrimaryDomain: m.PrimaryDomain, Email: m.Email, Status: Status(m.Status), Domains: names, CertificatePath: path, IssuedAt: m.IssuedAt, ExpiresAt: m.ExpiresAt, ExpiringSoon: m.ExpiresAt != nil && m.ExpiresAt.Before(now.Add(30*24*time.Hour)), LastJobID: m.LastJobID, Failure: failure, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
-
-var (
-	decodeJSON = httpapi.DecodeJSON
-	writeJSON  = httpapi.WriteJSON
-	writeError = httpapi.WriteError
-)

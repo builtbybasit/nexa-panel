@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	sftpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sftp"
 
 	"github.com/uptrace/bun"
@@ -19,10 +20,10 @@ func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	access, err := m.currentAccess(r.Context(), site)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "sftp_unavailable", "SFTP access could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "sftp_unavailable", "SFTP access could not be loaded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, access)
+	httpapi.WriteJSON(w, http.StatusOK, access)
 }
 
 // enableHTTP turns SFTP on and issues a fresh password. Enabling is idempotent
@@ -54,50 +55,50 @@ func (m *Module) provision(w http.ResponseWriter, r *http.Request, site sites.Si
 	// re-checks this on the node, which closes the race against an SSH enable
 	// that lands in between.
 	if m.ssh == nil {
-		writeError(w, http.StatusInternalServerError, "sftp_unavailable", "SFTP access could not be configured.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "sftp_unavailable", "SFTP access could not be configured.")
 		return
 	}
 	interactive, err := m.ssh.AccessEnabled(r.Context(), site.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "sftp_unavailable", "SFTP access could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "sftp_unavailable", "SFTP access could not be loaded.")
 		return
 	}
 	if interactive {
-		writeError(w, http.StatusConflict, "ssh_access_enabled", "Disable SSH access for this site first. One account cannot have both an SSH login and an SFTP jail.")
+		httpapi.WriteError(w, http.StatusConflict, "ssh_access_enabled", "Disable SSH access for this site first. One account cannot have both an SSH login and an SFTP jail.")
 		return
 	}
 	if !allowCreate {
 		access, err := m.currentAccess(r.Context(), site)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "sftp_unavailable", "SFTP access could not be loaded.")
+			httpapi.WriteError(w, http.StatusInternalServerError, "sftp_unavailable", "SFTP access could not be loaded.")
 			return
 		}
 		if !access.Enabled {
-			writeError(w, http.StatusConflict, "sftp_not_enabled", "Enable SFTP for this site before resetting its password.")
+			httpapi.WriteError(w, http.StatusConflict, "sftp_not_enabled", "Enable SFTP for this site before resetting its password.")
 			return
 		}
 	}
 	password, err := generatePassword()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "sftp_password_failed", "A new password could not be generated.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "sftp_password_failed", "A new password could not be generated.")
 		return
 	}
 	if _, err := m.operator.Apply(r.Context(), sftpoperator.Request{
 		Slug: site.Slug, UnixUser: site.UnixUser, RootPath: site.RootPath, Enabled: true, Password: password,
 	}); err != nil {
 		if errors.Is(err, sftpoperator.ErrSSHAccessPresent) {
-			writeError(w, http.StatusConflict, "ssh_access_enabled", "The node still has SSH access configured for this site. Disable it, then try again.")
+			httpapi.WriteError(w, http.StatusConflict, "ssh_access_enabled", "The node still has SSH access configured for this site. Disable it, then try again.")
 			return
 		}
-		writeError(w, http.StatusConflict, "sftp_operation_failed", err.Error())
+		httpapi.WriteError(w, http.StatusConflict, "sftp_operation_failed", err.Error())
 		return
 	}
 	now := m.now().UTC()
 	if err := m.upsert(r.Context(), site, true, &now); err != nil {
-		writeError(w, http.StatusInternalServerError, "sftp_state_failed", "SFTP was configured but its state could not be recorded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "sftp_state_failed", "SFTP was configured but its state could not be recorded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
 		"enabled": true, "username": site.UnixUser, "host": site.PrimaryDomain, "port": sshPort, "password": password,
 	})
 }
@@ -110,14 +111,14 @@ func (m *Module) disableHTTP(w http.ResponseWriter, r *http.Request) {
 	if _, err := m.operator.Apply(r.Context(), sftpoperator.Request{
 		Slug: site.Slug, UnixUser: site.UnixUser, RootPath: site.RootPath, Enabled: false,
 	}); err != nil {
-		writeError(w, http.StatusConflict, "sftp_operation_failed", err.Error())
+		httpapi.WriteError(w, http.StatusConflict, "sftp_operation_failed", err.Error())
 		return
 	}
 	if err := m.upsert(r.Context(), site, false, nil); err != nil {
-		writeError(w, http.StatusInternalServerError, "sftp_state_failed", "SFTP was disabled but its state could not be recorded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "sftp_state_failed", "SFTP was disabled but its state could not be recorded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, Access{SiteID: site.ID, Enabled: false, Username: site.UnixUser, Host: site.PrimaryDomain, Port: sshPort})
+	httpapi.WriteJSON(w, http.StatusOK, Access{SiteID: site.ID, Enabled: false, Username: site.UnixUser, Host: site.PrimaryDomain, Port: sshPort})
 }
 
 // upsert records the SFTP state. On disable it clears password_set_at so the UI

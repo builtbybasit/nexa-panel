@@ -15,6 +15,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	certificateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/certificates"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 type Status string
@@ -135,14 +136,11 @@ func (m *Module) Descriptor() module.Descriptor {
 }
 
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern, permission string
-		handler             http.Handler
-	}{{"GET /api/v1/certificates", "certificates.read", http.HandlerFunc(m.listHTTP)}, {"POST /api/v1/certificates", "certificates.write", http.HandlerFunc(m.createHTTP)}, {"GET /api/v1/certificates/{id}/plan", "certificates.read", http.HandlerFunc(m.planHTTP)}, {"POST /api/v1/certificates/{id}/plans", "certificates.write", http.HandlerFunc(m.prepareHTTP)}, {"POST /api/v1/certificates/{id}/apply", "operations.apply", http.HandlerFunc(m.applyHTTP)}}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"listCertificates":            m.listHTTP,
+		"createCertificate":           m.createHTTP,
+		"getCertificatePlan":          m.planHTTP,
+		"prepareCertificateOperation": m.prepareHTTP,
+		"applyCertificateOperation":   m.applyHTTP,
+	})
 }

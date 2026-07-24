@@ -157,30 +157,30 @@ func (m *Module) expireLaunchesAt(ctx context.Context, kind admintooloperator.Ki
 func (m *Module) launchHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, 401, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, 401, "authentication_required", "Sign in to continue.")
 		return
 	}
 	var request LaunchRequest
-	if decodeJSON(w, r, &request) != nil {
-		writeError(w, 400, "invalid_request", "Request body must be valid JSON.")
+	if httpapi.DecodeJSON(w, r, &request) != nil {
+		httpapi.WriteError(w, 400, "invalid_request", "Request body must be valid JSON.")
 		return
 	}
 	kind := admintooloperator.Kind(r.PathValue("kind"))
 	token, path, err := m.CreateLaunch(r.Context(), kind, request, user, httpapi.RemoteAddress(r))
 	if err != nil {
-		writeError(w, 409, "admin_tool_launch_failed", err.Error())
+		httpapi.WriteError(w, 409, "admin_tool_launch_failed", err.Error())
 		return
 	}
 	secure := httpapi.IsHTTPS(r)
 	http.SetCookie(w, &http.Cookie{Name: launchCookieName, Value: token, Path: path, HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: 60})
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 201, map[string]string{"url": path})
+	httpapi.WriteJSON(w, 201, map[string]string{"url": path})
 }
 
 func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, 401, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, 401, "authentication_required", "Sign in to continue.")
 		return
 	}
 	kind := admintooloperator.Kind(r.PathValue("kind"))
@@ -190,25 +190,25 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	model, sessionToken, issueCookie, err := m.authorizeProxy(r.Context(), kind, user.ID, r)
 	if err != nil {
-		writeError(w, 401, "admin_tool_session_invalid", err.Error())
+		httpapi.WriteError(w, 401, "admin_tool_session_invalid", err.Error())
 		return
 	}
 	if issueCookie {
 		m.setProxySession(w, r, kind, sessionToken, model.SessionExpiresAt)
 	}
 	if kind == admintooloperator.PHPMyAdmin && r.PathValue("path") == "nexa-signon-failed" {
-		writeError(w, 502, "admin_tool_signon_failed", "phpMyAdmin could not connect with the selected database account.")
+		httpapi.WriteError(w, 502, "admin_tool_signon_failed", "phpMyAdmin could not connect with the selected database account.")
 		return
 	}
 	if kind == admintooloperator.PGAdmin {
 		if _, err := admintooloperator.PGAdminSessionHeader(sessionToken); err != nil {
-			writeError(w, 401, "admin_tool_session_invalid", "Admin tool session is invalid.")
+			httpapi.WriteError(w, 401, "admin_tool_session_invalid", "Admin tool session is invalid.")
 			return
 		}
 	}
 	tool, err := m.get(r.Context(), kind)
 	if err != nil || !launchableStatus(Status(tool.Status)) {
-		writeError(w, 503, "admin_tool_unavailable", "Admin tool is not active.")
+		httpapi.WriteError(w, 503, "admin_tool_unavailable", "Admin tool is not active.")
 		return
 	}
 	// pgAdmin restarts during launch bootstrap to reload its per-database server
@@ -235,7 +235,7 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 			writeAdminToolEnded(w, kind)
 			return
 		}
-		writeError(w, 502, "admin_tool_upstream_failed", "Admin tool did not respond.")
+		httpapi.WriteError(w, 502, "admin_tool_upstream_failed", "Admin tool did not respond.")
 		return
 	}
 	// Continued proxy traffic re-arms an on-demand container's idle-stop timer so a
@@ -271,7 +271,7 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		return rewriteAdminToolProxyResponse(response, kind, prefix, secure)
 	}
 	proxy.ErrorHandler = func(writer http.ResponseWriter, _ *http.Request, _ error) {
-		writeError(writer, 502, "admin_tool_upstream_failed", "Admin tool did not respond.")
+		httpapi.WriteError(writer, 502, "admin_tool_upstream_failed", "Admin tool did not respond.")
 	}
 	// A tool asset response can be many megabytes and, because the panel vhost
 	// proxies /tools with proxy_buffering off, streams at the browser's pace — so

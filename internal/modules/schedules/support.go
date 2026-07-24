@@ -92,22 +92,13 @@ func randomID() string {
 
 func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
 
-func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {
-	return httpapi.DecodeJSON(w, r, destination)
-}
-
-var (
-	writeJSON  = httpapi.WriteJSON
-	writeError = httpapi.WriteError
-)
-
 // writeOperatorError relays the operator's typed failure with its HTTP
 // status; anything else is an agent transport problem and stays generic.
 func writeOperatorError(w http.ResponseWriter, err error) {
 	var operationErr *scheduleoperator.OperationError
 	if errors.As(err, &operationErr) {
-		writeJSON(w, scheduleoperator.StatusFor(operationErr.Code), operationErr)
+		httpapi.WriteJSON(w, scheduleoperator.StatusFor(operationErr.Code), operationErr)
 		return
 	}
-	writeError(w, http.StatusBadGateway, "schedules_agent_unavailable", "The node agent could not complete the schedule operation.")
+	httpapi.WriteError(w, http.StatusBadGateway, "schedules_agent_unavailable", "The node agent could not complete the schedule operation.")
 }

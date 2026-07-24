@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi/apispec"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 
@@ -218,57 +220,64 @@ func (m *Module) Descriptor() module.Descriptor {
 	}
 }
 
+// Register binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract.
+//
+// The shared webhandler.Register would express this, but webhandler imports
+// identity for its Actor helper, so identity resolves the same spec directly to
+// avoid the import cycle. The dispatch is identical: an x-permission operation is
+// authorized, a merely secured one authenticated, an unsecured one open.
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern       string
-		handler       http.Handler
-		authenticated bool
-	}{
-		{"GET /api/v1/auth/status", http.HandlerFunc(m.statusHTTP), false},
-		{"POST /api/v1/auth/bootstrap", http.HandlerFunc(m.bootstrapHTTP), false},
-		{"POST /api/v1/auth/login", http.HandlerFunc(m.loginHTTP), false},
-		{"POST /api/v1/auth/mfa/enroll", http.HandlerFunc(m.mfaEnrollHTTP), false},
-		{"POST /api/v1/auth/mfa/confirm", http.HandlerFunc(m.mfaConfirmHTTP), false},
-		{"POST /api/v1/auth/mfa/verify", http.HandlerFunc(m.mfaVerifyHTTP), false},
-		// Recovery consumes one stored code, revokes every other session, and hands
-		// back fresh enrollment material. Open to every enrolled role: the recovery
-		// code is the credential, so an operator or developer who lost a phone can
-		// re-pair without an administrator.
-		{"POST /api/v1/auth/mfa/recover", http.HandlerFunc(m.mfaRecoverHTTP), false},
-		// Disabling requires a fully authenticated session (the middleware enforces
-		// a completed MFA challenge when one is enrolled), so a stolen password
-		// alone can never strip the second factor.
-		{"POST /api/v1/auth/mfa/disable", http.HandlerFunc(m.mfaDisableHTTP), true},
-		// Self-service password change: authenticated, and re-confirmed with the
-		// current password. A fully authenticated session is required (the
-		// middleware enforces a completed MFA challenge when one is enrolled).
-		{"POST /api/v1/auth/password", http.HandlerFunc(m.changePasswordHTTP), true},
-		{"GET /api/v1/auth/session", http.HandlerFunc(m.sessionHTTP), true},
-		{"POST /api/v1/auth/logout", http.HandlerFunc(m.logoutHTTP), false},
+	handlers := map[string]http.HandlerFunc{
+		"getIdentityStatus":      m.statusHTTP,
+		"bootstrapAdministrator": m.bootstrapHTTP,
+		"login":                  m.loginHTTP,
+		"enrollMFA":              m.mfaEnrollHTTP,
+		"confirmMFA":             m.mfaConfirmHTTP,
+		"verifyMFA":              m.mfaVerifyHTTP,
+		"recoverMFA":             m.mfaRecoverHTTP,
+		"disableMFA":             m.mfaDisableHTTP,
+		"changePassword":         m.changePasswordHTTP,
+		"getSession":             m.sessionHTTP,
+		"logout":                 m.logoutHTTP,
+		"listUsers":              m.listUsersHTTP,
+		"createUser":             m.createUserHTTP,
+		"updateUser":             m.updateUserHTTP,
+		"deleteUser":             m.deleteUserHTTP,
+		"replaceUserSiteGrants":  m.replaceUserSitesHTTP,
 	}
-	for _, route := range routes {
-		var err error
-		if route.authenticated {
-			err = registry.HandleAuthenticated(route.pattern, route.handler)
-		} else {
-			err = registry.Handle(route.pattern, route.handler)
-		}
+	// The mid-challenge and sign-out endpoints carry a session-cookie security
+	// requirement in the contract, yet they must stay OUTSIDE the authenticated
+	// middleware. Each runs its own session check (preAuthentication for the MFA
+	// challenge, requireSession for logout) that deliberately skips the panel-wide
+	// MFA-challenge gate: verifyMFA is the very call that satisfies that gate, and
+	// enroll/confirm/recover run before it is satisfied, while logout owns its CSRF
+	// rejection path. Routing them through HandleAuthenticated would make the gate
+	// reject the request meant to clear it, so they are bound open even though the
+	// spec marks them secured.
+	selfAuthed := map[string]bool{
+		"enrollMFA": true, "confirmMFA": true, "verifyMFA": true,
+		"recoverMFA": true, "logout": true,
+	}
+	for operationID, handler := range handlers {
+		op, err := apispec.Lookup(operationID)
 		if err != nil {
 			return err
 		}
-	}
-	authorized := []struct {
-		pattern string
-		handler http.Handler
-	}{
-		{"GET /api/v1/users", http.HandlerFunc(m.listUsersHTTP)},
-		{"POST /api/v1/users", http.HandlerFunc(m.createUserHTTP)},
-		{"PATCH /api/v1/users/{id}", http.HandlerFunc(m.updateUserHTTP)},
-		{"DELETE /api/v1/users/{id}", http.HandlerFunc(m.deleteUserHTTP)},
-		{"PUT /api/v1/users/{id}/sites", http.HandlerFunc(m.replaceUserSitesHTTP)},
-	}
-	for _, route := range authorized {
-		if err := registry.HandleAuthorized(route.pattern, "users.manage", route.handler); err != nil {
+		switch {
+		case selfAuthed[operationID]:
+			err = registry.Handle(op.Pattern(), handler)
+		case op.Permission != "":
+			err = registry.HandleAuthorized(op.Pattern(), op.Permission, handler)
+		case op.Secured:
+			err = registry.HandleAuthenticated(op.Pattern(), handler)
+		default:
+			err = registry.Handle(op.Pattern(), handler)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -280,7 +289,7 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 		person, err := m.authenticate(r.Context(), r)
 		if err != nil {
 			clearSessionCookie(w, r)
-			writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+			httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 			return
 		}
 		// Enrollment is optional for every role, including admin: an account without
@@ -288,11 +297,11 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 		// strict the moment a factor exists — the challenge below cannot be skipped,
 		// and disabling the factor is itself gated on having completed one.
 		if person.TOTPConfirmedAt != nil && person.MFAVerifiedAt == nil {
-			writeError(w, http.StatusUnauthorized, "mfa_required", "Complete multi-factor authentication to continue.")
+			httpapi.WriteError(w, http.StatusUnauthorized, "mfa_required", "Complete multi-factor authentication to continue.")
 			return
 		}
 		if !validRequestOrigin(r) {
-			writeError(w, http.StatusForbidden, "invalid_origin", "The request origin is not allowed.")
+			httpapi.WriteError(w, http.StatusForbidden, "invalid_origin", "The request origin is not allowed.")
 			return
 		}
 		// Admin tools are same-origin reverse-proxied applications with their own
@@ -303,7 +312,7 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 		toolProxy := strings.HasPrefix(r.URL.Path, "/tools/")
 		if !toolProxy && !validCSRFToken(r, person) {
 			m.logger.Warn("rejected request without a valid CSRF token", "user", person.Username, "path", r.URL.Path, "remote", remoteAddress(r))
-			writeError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
+			httpapi.WriteError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, person)))

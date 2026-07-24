@@ -6,23 +6,15 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	deployoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/deploy"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 func (m *Module) registerLayoutHTTP(registry module.Registry) error {
-	routes := []struct {
-		pattern, permission string
-		handler             http.Handler
-	}{
-		{"PATCH /api/v1/sites/{id}/deployment-mode", "deploy.write", http.HandlerFunc(m.deploymentModeHTTP)},
-		{"GET /api/v1/sites/{id}/deployment/env", "deploy.read", http.HandlerFunc(m.sharedEnvHTTP)},
-		{"PUT /api/v1/sites/{id}/deployment/env", "deploy.write", http.HandlerFunc(m.updateSharedEnvHTTP)},
-	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"setSiteDeploymentMode": m.deploymentModeHTTP,
+		"getSiteSharedEnv":      m.sharedEnvHTTP,
+		"updateSiteSharedEnv":   m.updateSharedEnvHTTP,
+	})
 }
 
 type modeRequest struct {
@@ -47,8 +39,8 @@ func (m *Module) deploymentModeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request modeRequest
-	if decodeJSON(w, r, &request) != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	if httpapi.DecodeJSON(w, r, &request) != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
 		return
 	}
 	change, err := m.switchMode(r.Context(), site, request.Mode, actor, httpapi.RemoteAddress(r))
@@ -57,10 +49,10 @@ func (m *Module) deploymentModeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if change.Job == nil {
-		writeJSON(w, http.StatusOK, change)
+		httpapi.WriteJSON(w, http.StatusOK, change)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, change)
+	httpapi.WriteJSON(w, http.StatusAccepted, change)
 }
 
 func (m *Module) sharedEnvHTTP(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +65,7 @@ func (m *Module) sharedEnvHTTP(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, shared)
+	httpapi.WriteJSON(w, http.StatusOK, shared)
 }
 
 func (m *Module) updateSharedEnvHTTP(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +75,7 @@ func (m *Module) updateSharedEnvHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var request envRequestBody
 	if httpapi.DecodeJSONLimit(w, r, &request, sharedEnvBodyLimit) != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
 		return
 	}
 	shared, err := m.writeSharedEnv(r.Context(), site, request.Content, actor, httpapi.RemoteAddress(r))
@@ -91,7 +83,7 @@ func (m *Module) updateSharedEnvHTTP(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, shared)
+	httpapi.WriteJSON(w, http.StatusOK, shared)
 }
 
 // sharedEnvBodyLimit leaves room for JSON escaping on top of a document at the

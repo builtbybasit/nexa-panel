@@ -7,36 +7,32 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/modules/safeguard"
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
-	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	firewalloperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/firewall"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
+// registerHTTP binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract.
 func (m *Module) registerHTTP(registry module.Registry) error {
-	routes := []struct {
-		pattern, permission string
-		handler             http.Handler
-	}{
-		{"GET /api/v1/firewall", "firewall.read", http.HandlerFunc(m.statusHTTP)},
-		{"POST /api/v1/firewall/action", "firewall.write", http.HandlerFunc(m.actionHTTP)},
-		{"GET /api/v1/firewall/reverts", "firewall.read", http.HandlerFunc(m.revertsHTTP)},
-		{"POST /api/v1/firewall/reverts/confirm", "firewall.write", http.HandlerFunc(m.confirmRevertHTTP)},
-	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"getFirewallStatus":     m.statusHTTP,
+		"submitFirewallAction":  m.actionHTTP,
+		"listFirewallReverts":   m.revertsHTTP,
+		"confirmFirewallRevert": m.confirmRevertHTTP,
+	})
 }
 
 func (m *Module) statusHTTP(w http.ResponseWriter, r *http.Request) {
 	status, err := m.Status(r.Context())
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "firewall_unavailable", "The firewall status could not be read. The node agent may be unreachable.")
+		httpapi.WriteError(w, http.StatusServiceUnavailable, "firewall_unavailable", "The firewall status could not be read. The node agent may be unreachable.")
 		return
 	}
-	writeJSON(w, http.StatusOK, status)
+	httpapi.WriteJSON(w, http.StatusOK, status)
 }
 
 // actionRequest carries the change verb and the rule it targets. The rule is
@@ -51,13 +47,13 @@ type actionRequest struct {
 
 func (m *Module) actionHTTP(w http.ResponseWriter, r *http.Request) {
 	var request actionRequest
-	if decodeJSON(w, r, &request) != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	if httpapi.DecodeJSON(w, r, &request) != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
 		return
 	}
-	actor, ok := actorID(r)
+	actor, ok := webhandler.ActorID(r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	change := firewalloperator.Change{Action: request.Action, Rule: request.Rule}
@@ -69,7 +65,7 @@ func (m *Module) actionHTTP(w http.ResponseWriter, r *http.Request) {
 		// The reasons are repeated inside message because the shared client error
 		// envelope carries only code and message; a caller that reads just the
 		// message still learns exactly why the change was refused.
-		writeJSON(w, http.StatusConflict, map[string]any{
+		httpapi.WriteJSON(w, http.StatusConflict, map[string]any{
 			"code":                "lockout_risk",
 			"message":             "This change can cut off your access to this server. " + risk.Error(),
 			"reasons":             risk.Reasons,
@@ -78,23 +74,23 @@ func (m *Module) actionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, audit.ErrUnauditable) {
-		writeError(w, http.StatusServiceUnavailable, "audit_unavailable", "The change was refused because it could not be recorded in the audit log.")
+		httpapi.WriteError(w, http.StatusServiceUnavailable, "audit_unavailable", "The change was refused because it could not be recorded in the audit log.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "firewall_action_invalid", err.Error())
+		httpapi.WriteError(w, http.StatusUnprocessableEntity, "firewall_action_invalid", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, submission)
+	httpapi.WriteJSON(w, http.StatusAccepted, submission)
 }
 
 func (m *Module) revertsHTTP(w http.ResponseWriter, r *http.Request) {
 	reverts, err := m.Reverts(r.Context())
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "reverts_unavailable", "Pending automatic rollbacks could not be read.")
+		httpapi.WriteError(w, http.StatusServiceUnavailable, "reverts_unavailable", "Pending automatic rollbacks could not be read.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": reverts, "windowSeconds": m.RevertWindowSeconds()})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": reverts, "windowSeconds": m.RevertWindowSeconds()})
 }
 
 // confirmRevertHTTP disarms one pending revert. The route is authenticated and
@@ -104,28 +100,14 @@ func (m *Module) confirmRevertHTTP(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		ID string `json:"id"`
 	}
-	if decodeJSON(w, r, &request) != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
+	if httpapi.DecodeJSON(w, r, &request) != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Request body must be valid JSON.")
 		return
 	}
 	revert, err := m.ConfirmRevert(r.Context(), request.ID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "revert_not_found", "That automatic rollback is no longer pending.")
+		httpapi.WriteError(w, http.StatusNotFound, "revert_not_found", "That automatic rollback is no longer pending.")
 		return
 	}
-	writeJSON(w, http.StatusOK, revert)
+	httpapi.WriteJSON(w, http.StatusOK, revert)
 }
-
-func actorID(r *http.Request) (*string, bool) {
-	user, ok := identity.UserFromContext(r.Context())
-	if !ok {
-		return nil, false
-	}
-	return &user.ID, true
-}
-
-var (
-	decodeJSON = httpapi.DecodeJSON
-	writeJSON  = httpapi.WriteJSON
-	writeError = httpapi.WriteError
-)

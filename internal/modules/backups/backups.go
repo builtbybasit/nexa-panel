@@ -19,6 +19,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 // SiteResolver and DatabaseResolver let the backups module read the details a
@@ -164,36 +165,31 @@ func (m *Module) Descriptor() module.Descriptor {
 	}
 }
 
+// Register binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract.
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern    string
-		permission string
-		handler    http.Handler
-	}{
-		{"GET /api/v1/backups/accounts", "backups.read", http.HandlerFunc(m.listAccountsHTTP)},
-		{"POST /api/v1/backups/accounts", "backups.write", http.HandlerFunc(m.createAccountHTTP)},
-		{"GET /api/v1/backups/accounts/{id}", "backups.read", http.HandlerFunc(m.getAccountHTTP)},
-		{"PUT /api/v1/backups/accounts/{id}", "backups.write", http.HandlerFunc(m.updateAccountHTTP)},
-		{"DELETE /api/v1/backups/accounts/{id}", "backups.write", http.HandlerFunc(m.deleteAccountHTTP)},
-		{"POST /api/v1/backups/accounts/{id}/test", "backups.write", http.HandlerFunc(m.testAccountHTTP)},
-		{"GET /api/v1/backups/plans", "backups.read", http.HandlerFunc(m.listPlansHTTP)},
-		{"POST /api/v1/backups/plans", "backups.write", http.HandlerFunc(m.createPlanHTTP)},
-		{"GET /api/v1/backups/plans/{id}", "backups.read", http.HandlerFunc(m.getPlanHTTP)},
-		{"PUT /api/v1/backups/plans/{id}", "backups.write", http.HandlerFunc(m.updatePlanHTTP)},
-		{"POST /api/v1/backups/plans/{id}/toggle", "backups.write", http.HandlerFunc(m.togglePlanHTTP)},
-		{"POST /api/v1/backups/plans/{id}/run", "backups.write", http.HandlerFunc(m.runPlanHTTP)},
-		{"DELETE /api/v1/backups/plans/{id}", "backups.write", http.HandlerFunc(m.deletePlanHTTP)},
-		{"GET /api/v1/backups/plans/{id}/copies", "backups.read", http.HandlerFunc(m.listCopiesHTTP)},
-		{"POST /api/v1/backups/copies/{copyId}/restore/preview", "operations.apply", http.HandlerFunc(m.previewRestoreCopyHTTP)},
-		{"POST /api/v1/backups/copies/{copyId}/restore", "operations.apply", http.HandlerFunc(m.restoreCopyHTTP)},
-		{"DELETE /api/v1/backups/copies/{copyId}", "backups.write", http.HandlerFunc(m.deleteCopyHTTP)},
-		{"GET /api/v1/backups/system", "backups.read", http.HandlerFunc(m.listSystemCopiesHTTP)},
-		{"POST /api/v1/backups/system", "backups.write", http.HandlerFunc(m.runSystemHTTP)},
-	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"listBackupAccounts":   m.listAccountsHTTP,
+		"createBackupAccount":  m.createAccountHTTP,
+		"getBackupAccount":     m.getAccountHTTP,
+		"updateBackupAccount":  m.updateAccountHTTP,
+		"deleteBackupAccount":  m.deleteAccountHTTP,
+		"testBackupAccount":    m.testAccountHTTP,
+		"listBackupPlans":      m.listPlansHTTP,
+		"createBackupPlan":     m.createPlanHTTP,
+		"getBackupPlan":        m.getPlanHTTP,
+		"updateBackupPlan":     m.updatePlanHTTP,
+		"toggleBackupPlan":     m.togglePlanHTTP,
+		"runBackupPlan":        m.runPlanHTTP,
+		"deleteBackupPlan":     m.deletePlanHTTP,
+		"listBackupCopies":     m.listCopiesHTTP,
+		"previewBackupRestore": m.previewRestoreCopyHTTP,
+		"restoreBackupCopy":    m.restoreCopyHTTP,
+		"deleteBackupCopy":     m.deleteCopyHTTP,
+		"listSystemBackups":    m.listSystemCopiesHTTP,
+		"runSystemBackup":      m.runSystemHTTP,
+	})
 }

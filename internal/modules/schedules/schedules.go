@@ -11,6 +11,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 
 	"github.com/uptrace/bun"
 )
@@ -124,26 +125,21 @@ func (m *Module) Descriptor() module.Descriptor {
 	}
 }
 
+// Register binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract.
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern    string
-		permission string
-		handler    http.Handler
-	}{
-		{"GET /api/v1/sites/{id}/tasks", "schedules.read", http.HandlerFunc(m.listHTTP)},
-		{"POST /api/v1/sites/{id}/tasks", "schedules.write", http.HandlerFunc(m.createHTTP)},
-		{"GET /api/v1/sites/{id}/tasks/{taskId}", "schedules.read", http.HandlerFunc(m.getHTTP)},
-		{"PUT /api/v1/sites/{id}/tasks/{taskId}", "schedules.write", http.HandlerFunc(m.updateHTTP)},
-		{"DELETE /api/v1/sites/{id}/tasks/{taskId}", "schedules.write", http.HandlerFunc(m.deleteHTTP)},
-		{"POST /api/v1/sites/{id}/tasks/{taskId}/apply", "operations.apply", http.HandlerFunc(m.applyHTTP)},
-		{"POST /api/v1/sites/{id}/tasks/{taskId}/rollback", "operations.apply", http.HandlerFunc(m.rollbackHTTP)},
-		{"POST /api/v1/sites/{id}/tasks/{taskId}/run", "operations.apply", http.HandlerFunc(m.runHTTP)},
-		{"GET /api/v1/sites/{id}/tasks/{taskId}/runs", "schedules.read", http.HandlerFunc(m.runsHTTP)},
-	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"listScheduledTasks":        m.listHTTP,
+		"createScheduledTask":       m.createHTTP,
+		"getScheduledTask":          m.getHTTP,
+		"updateScheduledTask":       m.updateHTTP,
+		"deleteScheduledTask":       m.deleteHTTP,
+		"applyScheduledTaskPlan":    m.applyHTTP,
+		"rollbackScheduledTaskPlan": m.rollbackHTTP,
+		"runScheduledTask":          m.runHTTP,
+		"listScheduledTaskRuns":     m.runsHTTP,
+	})
 }

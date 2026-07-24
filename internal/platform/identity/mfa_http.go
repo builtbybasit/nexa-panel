@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/uptrace/bun"
 )
 
@@ -51,10 +52,10 @@ func (m *Module) resetMFAAttempts(userID string) {
 
 func writeMFARateLimited(w http.ResponseWriter, locked bool) {
 	if locked {
-		writeError(w, http.StatusTooManyRequests, "account_locked", "Too many failed verification attempts. This account is temporarily locked. Try again later.")
+		httpapi.WriteError(w, http.StatusTooManyRequests, "account_locked", "Too many failed verification attempts. This account is temporarily locked. Try again later.")
 		return
 	}
-	writeError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many verification attempts. Try again later.")
+	httpapi.WriteError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many verification attempts. Try again later.")
 }
 
 type mfaCodeRequest struct {
@@ -71,11 +72,11 @@ func (m *Module) mfaEnrollHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := m.database.NewSelect().Model(model).
 		Column("id", "username", "totp_secret_encrypted", "totp_confirmed_at").
 		Where("id = ?", person.ID).Scan(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be loaded.")
 		return
 	}
 	if model.TOTPConfirmedAt != nil {
-		writeError(w, http.StatusConflict, "mfa_already_enrolled", "Multi-factor authentication is already enrolled.")
+		httpapi.WriteError(w, http.StatusConflict, "mfa_already_enrolled", "Multi-factor authentication is already enrolled.")
 		return
 	}
 
@@ -83,30 +84,30 @@ func (m *Module) mfaEnrollHTTP(w http.ResponseWriter, r *http.Request) {
 	if model.TOTPSecretEncrypted == nil {
 		generated, err := generateTOTPSecret()
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be created.")
+			httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be created.")
 			return
 		}
 		encrypted, err := m.secrets.Encrypt(totpSecretLabelPrefix+person.ID, []byte(generated))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be protected.")
+			httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be protected.")
 			return
 		}
 		if _, err := m.database.NewUpdate().Model((*userModel)(nil)).
 			Set("totp_secret_encrypted = ?", encrypted).Where("id = ?", person.ID).Exec(r.Context()); err != nil {
-			writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be stored.")
+			httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be stored.")
 			return
 		}
 		secret = generated
 	} else {
 		decrypted, err := m.secrets.Decrypt(totpSecretLabelPrefix+person.ID, *model.TOTPSecretEncrypted)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be decrypted.")
+			httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be decrypted.")
 			return
 		}
 		secret = string(decrypted)
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]string{
+	httpapi.WriteJSON(w, http.StatusOK, map[string]string{
 		"secret": secret, "provisioningUri": provisioningURI(person.Username, secret),
 	})
 }
@@ -117,8 +118,8 @@ func (m *Module) mfaConfirmHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input mfaCodeRequest
-	if err := decodeJSON(w, r, &input); err != nil || input.Code == "" || input.RecoveryCode != "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "A six-digit authenticator code is required.")
+	if err := httpapi.DecodeJSON(w, r, &input); err != nil || input.Code == "" || input.RecoveryCode != "" {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "A six-digit authenticator code is required.")
 		return
 	}
 	if ok, locked := m.allowMFAAttempt(person.ID); !ok {
@@ -127,21 +128,21 @@ func (m *Module) mfaConfirmHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	model, secret, err := m.loadMFAUser(r.Context(), person.ID)
 	if err != nil || model.TOTPSecretEncrypted == nil {
-		writeError(w, http.StatusConflict, "mfa_enrollment_required", "Start MFA enrollment before confirming it.")
+		httpapi.WriteError(w, http.StatusConflict, "mfa_enrollment_required", "Start MFA enrollment before confirming it.")
 		return
 	}
 	if model.TOTPConfirmedAt != nil {
-		writeError(w, http.StatusConflict, "mfa_already_enrolled", "Multi-factor authentication is already enrolled.")
+		httpapi.WriteError(w, http.StatusConflict, "mfa_already_enrolled", "Multi-factor authentication is already enrolled.")
 		return
 	}
 	step, valid := validateTOTP(secret, input.Code, m.now().UTC(), model.TOTPLastStep)
 	if !valid {
-		writeError(w, http.StatusUnauthorized, "invalid_mfa_code", "The authenticator code is invalid or expired.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "invalid_mfa_code", "The authenticator code is invalid or expired.")
 		return
 	}
 	codes, hashes, err := generateRecoveryCodes(10)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "Recovery codes could not be created.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "Recovery codes could not be created.")
 		return
 	}
 	encodedHashes, _ := json.Marshal(hashes)
@@ -163,13 +164,13 @@ func (m *Module) mfaConfirmHTTP(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be confirmed.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "MFA enrollment could not be confirmed.")
 		return
 	}
 	m.resetMFAAttempts(person.ID)
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_enrolled", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r)})
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"user": person.User, "recoveryCodes": codes})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"user": person.User, "recoveryCodes": codes})
 }
 
 type mfaDisableRequest struct {
@@ -185,56 +186,56 @@ type mfaDisableRequest struct {
 func (m *Module) mfaDisableHTTP(w http.ResponseWriter, r *http.Request) {
 	person, ok := principalFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	// The middleware already refuses an enrolled session that has not answered its
 	// challenge; repeating the check here keeps the guarantee local to the handler
 	// that removes the factor, so no future route registration can weaken it.
 	if person.TOTPConfirmedAt != nil && person.MFAVerifiedAt == nil {
-		writeError(w, http.StatusForbidden, "mfa_step_up_required", "Confirm multi-factor authentication before disabling it.")
+		httpapi.WriteError(w, http.StatusForbidden, "mfa_step_up_required", "Confirm multi-factor authentication before disabling it.")
 		return
 	}
 	var input mfaDisableRequest
-	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	if input.Password == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Your current password is required to disable MFA.")
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Your current password is required to disable MFA.")
 		return
 	}
 	attemptKey := "mfa-disable:" + person.ID
 	if !m.attempts.Allow(attemptKey, m.now()) {
-		writeError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many attempts. Try again later.")
+		httpapi.WriteError(w, http.StatusTooManyRequests, "too_many_attempts", "Too many attempts. Try again later.")
 		return
 	}
 	model := new(userModel)
 	if err := m.database.NewSelect().Model(model).
 		Column("id", "password_hash", "totp_confirmed_at").Where("id = ?", person.ID).Scan(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA could not be updated.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "MFA could not be updated.")
 		return
 	}
 	if model.TOTPConfirmedAt == nil {
-		writeError(w, http.StatusConflict, "mfa_not_enrolled", "Multi-factor authentication is not enabled.")
+		httpapi.WriteError(w, http.StatusConflict, "mfa_not_enrolled", "Multi-factor authentication is not enabled.")
 		return
 	}
 	valid, err := verifyPassword(input.Password, model.PasswordHash)
 	if err != nil || !valid {
-		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The password is incorrect.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "invalid_credentials", "The password is incorrect.")
 		return
 	}
 	if _, err := m.database.NewUpdate().Model((*userModel)(nil)).
 		Set("totp_secret_encrypted = NULL").Set("totp_confirmed_at = NULL").
 		Set("totp_last_step = 0").Set("recovery_code_hashes = '[]'").
 		Where("id = ?", person.ID).Exec(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA could not be disabled.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "MFA could not be disabled.")
 		return
 	}
 	m.attempts.Reset(attemptKey)
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_disabled", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r), Metadata: map[string]any{"role": person.Role}})
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"user": person.User, "mfaEnabled": false})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"user": person.User, "mfaEnabled": false})
 }
 
 // mfaVerifyHTTP answers the sign-in challenge with either an authenticator code
@@ -247,8 +248,8 @@ func (m *Module) mfaVerifyHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input mfaCodeRequest
-	if err := decodeJSON(w, r, &input); err != nil || (input.Code == "") == (input.RecoveryCode == "") {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Provide either an authenticator code or one recovery code.")
+	if err := httpapi.DecodeJSON(w, r, &input); err != nil || (input.Code == "") == (input.RecoveryCode == "") {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Provide either an authenticator code or one recovery code.")
 		return
 	}
 	if ok, locked := m.allowMFAAttempt(person.ID); !ok {
@@ -266,12 +267,12 @@ func (m *Module) mfaVerifyHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_failed", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r), Metadata: map[string]any{"method": method}})
-		writeError(w, http.StatusUnauthorized, "invalid_mfa_code", "The authentication or recovery code is invalid.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "invalid_mfa_code", "The authentication or recovery code is invalid.")
 		return
 	}
 	m.resetMFAAttempts(person.ID)
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.login", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r), Metadata: map[string]any{"method": method}})
-	writeJSON(w, http.StatusOK, map[string]any{"user": person.User})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"user": person.User})
 }
 
 // mfaRecoverHTTP replaces a lost factor using one recovery code. The account
@@ -292,8 +293,8 @@ func (m *Module) mfaRecoverHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input mfaCodeRequest
-	if err := decodeJSON(w, r, &input); err != nil || input.RecoveryCode == "" || input.Code != "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "One recovery code is required.")
+	if err := httpapi.DecodeJSON(w, r, &input); err != nil || input.RecoveryCode == "" || input.Code != "" {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "One recovery code is required.")
 		return
 	}
 	if ok, locked := m.allowMFAAttempt(person.ID); !ok {
@@ -302,23 +303,23 @@ func (m *Module) mfaRecoverHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	secret, err := generateTOTPSecret()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA recovery could not be started.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "MFA recovery could not be started.")
 		return
 	}
 	encrypted, err := m.secrets.Encrypt(totpSecretLabelPrefix+person.ID, []byte(secret))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "MFA recovery could not be protected.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "MFA recovery could not be protected.")
 		return
 	}
 	if err := m.replaceMFAWithRecovery(r.Context(), person, input.RecoveryCode, encrypted); err != nil {
 		m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_recovery_failed", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r)})
-		writeError(w, http.StatusUnauthorized, "invalid_mfa_code", "The recovery code is invalid or already consumed.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "invalid_mfa_code", "The recovery code is invalid or already consumed.")
 		return
 	}
 	m.resetMFAAttempts(person.ID)
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &person.ID, Action: "identity.mfa_recovery_started", Subject: "user:" + person.ID, RemoteAddress: remoteAddress(r)})
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]string{"secret": secret, "provisioningUri": provisioningURI(person.Username, secret)})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]string{"secret": secret, "provisioningUri": provisioningURI(person.Username, secret)})
 }
 
 func (m *Module) verifyTOTPChallenge(ctx context.Context, person principal, code string) error {
@@ -445,16 +446,16 @@ func (m *Module) preAuthentication(w http.ResponseWriter, r *http.Request) (prin
 	person, err := m.authenticate(r.Context(), r)
 	if err != nil {
 		clearSessionCookie(w, r)
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return principal{}, false
 	}
 	if !validRequestOrigin(r) {
-		writeError(w, http.StatusForbidden, "invalid_origin", "The request origin is not allowed.")
+		httpapi.WriteError(w, http.StatusForbidden, "invalid_origin", "The request origin is not allowed.")
 		return principal{}, false
 	}
 	if !validCSRFToken(r, person) {
 		m.logger.Warn("rejected request without a valid CSRF token", "user", person.Username, "path", r.URL.Path, "remote", remoteAddress(r))
-		writeError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
+		httpapi.WriteError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
 		return principal{}, false
 	}
 	return person, true

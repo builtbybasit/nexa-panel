@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
@@ -24,30 +25,30 @@ import (
 func (m *Module) resolveSite(w http.ResponseWriter, r *http.Request) (sites.Site, sitefs.Scope, identity.User, bool) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	site, err := m.sites.Get(r.Context(), r.PathValue("id"))
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	accessible, err := m.access.SiteAccessible(r.Context(), user, site.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	if !accessible {
-		writeError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	switch site.Status {
 	case sites.StatusDraft, sites.StatusPlanning, sites.StatusPlanReady:
-		writeError(w, http.StatusConflict, "site_not_provisioned", "Logs are not available until the site has been provisioned.")
+		httpapi.WriteError(w, http.StatusConflict, "site_not_provisioned", "Logs are not available until the site has been provisioned.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	scope := sitefs.Scope{SiteID: site.ID, Slug: site.Slug, RootPath: site.RootPath, UnixUser: site.UnixUser}
@@ -65,7 +66,7 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 		// simply has no logs to discover.
 		var operationErr *logsoperator.OperationError
 		if errors.As(err, &operationErr) && operationErr.Code == logsoperator.CodeNotFound {
-			writeJSON(w, http.StatusOK, logsoperator.Listing{Items: []logsoperator.Entry{}})
+			httpapi.WriteJSON(w, http.StatusOK, logsoperator.Listing{Items: []logsoperator.Entry{}})
 			return
 		}
 		writeOperatorError(w, err)
@@ -74,7 +75,7 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 	if listing.Items == nil {
 		listing.Items = []logsoperator.Entry{}
 	}
-	writeJSON(w, http.StatusOK, listing)
+	httpapi.WriteJSON(w, http.StatusOK, listing)
 }
 
 // parseReadRequest maps the read/poll query parameters onto the operator
@@ -112,7 +113,7 @@ func parseReadRequest(r *http.Request) (logsoperator.ReadRequest, error) {
 func (m *Module) readHTTP(w http.ResponseWriter, r *http.Request) {
 	request, err := parseReadRequest(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	_, scope, _, ok := m.resolveSite(w, r)
@@ -124,7 +125,7 @@ func (m *Module) readHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOperatorError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	httpapi.WriteJSON(w, http.StatusOK, result)
 }
 
 type streamEvent struct {
@@ -142,7 +143,7 @@ func (m *Module) streamHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming_unavailable", "Log streaming is unavailable.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "streaming_unavailable", "Log streaming is unavailable.")
 		return
 	}
 	name := r.URL.Query().Get("name")
@@ -151,7 +152,7 @@ func (m *Module) streamHTTP(w http.ResponseWriter, r *http.Request) {
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
 		resumeFrom, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || resumeFrom < 0 {
-			writeError(w, http.StatusBadRequest, "invalid_event_id", "Last-Event-ID must be a non-negative integer.")
+			httpapi.WriteError(w, http.StatusBadRequest, "invalid_event_id", "Last-Event-ID must be a non-negative integer.")
 			return
 		}
 		request = logsoperator.ReadRequest{Name: name, Filter: filter, FromOffset: &resumeFrom}

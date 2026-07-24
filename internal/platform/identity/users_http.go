@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/uptrace/bun"
 )
 
@@ -99,12 +100,12 @@ func (m *Module) listUsersHTTP(w http.ResponseWriter, r *http.Request) {
 		Column("id", "username", "role", "created_at", "last_login_at", "totp_confirmed_at").
 		OrderExpr("username COLLATE NOCASE").Scan(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "Users could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "Users could not be loaded.")
 		return
 	}
 	grants := make([]siteGrantModel, 0)
 	if err := m.database.NewSelect().Model(&grants).OrderExpr("site_id").Scan(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "Users could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "Users could not be loaded.")
 		return
 	}
 	siteIDs := make(map[string][]string, len(grants))
@@ -115,7 +116,7 @@ func (m *Module) listUsersHTTP(w http.ResponseWriter, r *http.Request) {
 	for index := range models {
 		items = append(items, models[index].toManagedUser(siteIDs[models[index].ID]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 type createUserRequest struct {
@@ -127,26 +128,26 @@ type createUserRequest struct {
 func (m *Module) createUserHTTP(w http.ResponseWriter, r *http.Request) {
 	actor, ok := UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	var input createUserRequest
-	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	input.Username = strings.TrimSpace(input.Username)
 	if err := validateCredentials(credentials{Username: input.Username, Password: input.Password}); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_credentials", err.Error())
+		httpapi.WriteError(w, http.StatusUnprocessableEntity, "invalid_credentials", err.Error())
 		return
 	}
 	if !validManagedRole(input.Role) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_role", "Role must be admin, operator, developer, or viewer.")
+		httpapi.WriteError(w, http.StatusUnprocessableEntity, "invalid_role", "Role must be admin, operator, developer, or viewer.")
 		return
 	}
 	passwordHash, err := hashPassword(input.Password, m.parameters)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be created.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be created.")
 		return
 	}
 	model := &userModel{
@@ -155,14 +156,14 @@ func (m *Module) createUserHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := m.database.NewInsert().Model(model).Exec(r.Context()); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
-			writeError(w, http.StatusConflict, "username_taken", "A user with this username already exists.")
+			httpapi.WriteError(w, http.StatusConflict, "username_taken", "A user with this username already exists.")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be created.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be created.")
 		return
 	}
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &actor.ID, Action: "identity.user_created", Subject: "user:" + model.ID, RemoteAddress: remoteAddress(r), Metadata: map[string]any{"username": model.Username, "role": model.Role}})
-	writeJSON(w, http.StatusCreated, model.toManagedUser(nil))
+	httpapi.WriteJSON(w, http.StatusCreated, model.toManagedUser(nil))
 }
 
 type updateUserRequest struct {
@@ -173,20 +174,20 @@ type updateUserRequest struct {
 func (m *Module) updateUserHTTP(w http.ResponseWriter, r *http.Request) {
 	actor, ok := UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	var input updateUserRequest
-	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	if input.Role == nil && input.Password == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "Provide a role or a password to update.")
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "Provide a role or a password to update.")
 		return
 	}
 	if input.Role != nil && !validManagedRole(*input.Role) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_role", "Role must be admin, operator, developer, or viewer.")
+		httpapi.WriteError(w, http.StatusUnprocessableEntity, "invalid_role", "Role must be admin, operator, developer, or viewer.")
 		return
 	}
 	id := r.PathValue("id")
@@ -199,19 +200,19 @@ func (m *Module) updateUserHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := m.database.NewSelect().Model((*userModel)(nil)).Column("username").
 			Where("id = ?", id).Scan(r.Context(), &username); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				writeError(w, http.StatusNotFound, "user_not_found", "The requested user does not exist.")
+				httpapi.WriteError(w, http.StatusNotFound, "user_not_found", "The requested user does not exist.")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be updated.")
+			httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be updated.")
 			return
 		}
 		if err := validatePassword(*input.Password, username); err != nil {
-			writeError(w, http.StatusUnprocessableEntity, "invalid_credentials", err.Error())
+			httpapi.WriteError(w, http.StatusUnprocessableEntity, "invalid_credentials", err.Error())
 			return
 		}
 		hash, err := hashPassword(*input.Password, m.parameters)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be updated.")
+			httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be updated.")
 			return
 		}
 		passwordHash = hash
@@ -248,15 +249,15 @@ func (m *Module) updateUserHTTP(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "user_not_found", "The requested user does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "user_not_found", "The requested user does not exist.")
 		return
 	}
 	if errors.Is(err, errLastAdmin) {
-		writeError(w, http.StatusConflict, "last_admin", "The last administrator cannot lose the admin role.")
+		httpapi.WriteError(w, http.StatusConflict, "last_admin", "The last administrator cannot lose the admin role.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be updated.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be updated.")
 		return
 	}
 	metadata := map[string]any{"passwordChanged": input.Password != nil}
@@ -266,21 +267,21 @@ func (m *Module) updateUserHTTP(w http.ResponseWriter, r *http.Request) {
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &actor.ID, Action: "identity.user_updated", Subject: "user:" + id, RemoteAddress: remoteAddress(r), Metadata: metadata})
 	siteIDs, err := m.grantedSiteIDs(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be loaded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, model.toManagedUser(siteIDs))
+	httpapi.WriteJSON(w, http.StatusOK, model.toManagedUser(siteIDs))
 }
 
 func (m *Module) deleteUserHTTP(w http.ResponseWriter, r *http.Request) {
 	actor, ok := UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	id := r.PathValue("id")
 	if id == actor.ID {
-		writeError(w, http.StatusConflict, "self_delete_forbidden", "You cannot delete your own account.")
+		httpapi.WriteError(w, http.StatusConflict, "self_delete_forbidden", "You cannot delete your own account.")
 		return
 	}
 	model := new(userModel)
@@ -305,15 +306,15 @@ func (m *Module) deleteUserHTTP(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "user_not_found", "The requested user does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "user_not_found", "The requested user does not exist.")
 		return
 	}
 	if errors.Is(err, errLastAdmin) {
-		writeError(w, http.StatusConflict, "last_admin", "The last administrator cannot be deleted.")
+		httpapi.WriteError(w, http.StatusConflict, "last_admin", "The last administrator cannot be deleted.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be deleted.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "The user could not be deleted.")
 		return
 	}
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &actor.ID, Action: "identity.user_deleted", Subject: "user:" + id, RemoteAddress: remoteAddress(r), Metadata: map[string]any{"username": model.Username, "role": model.Role}})
@@ -327,31 +328,31 @@ type replaceSitesRequest struct {
 func (m *Module) replaceUserSitesHTTP(w http.ResponseWriter, r *http.Request) {
 	actor, ok := UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	if m.siteDirectory == nil {
-		writeError(w, http.StatusServiceUnavailable, "sites_unavailable", "Site grants are not configured on this control plane.")
+		httpapi.WriteError(w, http.StatusServiceUnavailable, "sites_unavailable", "Site grants are not configured on this control plane.")
 		return
 	}
 	var input replaceSitesRequest
-	if err := decodeJSON(w, r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	if input.SiteIDs == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "siteIds must be provided.")
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", "siteIds must be provided.")
 		return
 	}
 	siteIDs := dedupeStrings(input.SiteIDs)
 	for _, siteID := range siteIDs {
 		exists, err := m.siteDirectory.SiteExists(r.Context(), siteID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "identity_unavailable", "Site grants could not be validated.")
+			httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "Site grants could not be validated.")
 			return
 		}
 		if !exists {
-			writeError(w, http.StatusUnprocessableEntity, "unknown_site", "Site "+siteID+" does not exist.")
+			httpapi.WriteError(w, http.StatusUnprocessableEntity, "unknown_site", "Site "+siteID+" does not exist.")
 			return
 		}
 	}
@@ -379,19 +380,19 @@ func (m *Module) replaceUserSitesHTTP(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "user_not_found", "The requested user does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "user_not_found", "The requested user does not exist.")
 		return
 	}
 	if errors.Is(err, errNotDeveloper) {
-		writeError(w, http.StatusBadRequest, "user_not_developer", "Site grants apply to developer users only.")
+		httpapi.WriteError(w, http.StatusBadRequest, "user_not_developer", "Site grants apply to developer users only.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "identity_unavailable", "Site grants could not be updated.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "identity_unavailable", "Site grants could not be updated.")
 		return
 	}
 	m.recordAudit(r.Context(), audit.Entry{ActorUserID: &actor.ID, Action: "identity.user_site_grants_replaced", Subject: "user:" + id, RemoteAddress: remoteAddress(r), Metadata: map[string]any{"siteIds": siteIDs}})
-	writeJSON(w, http.StatusOK, map[string]any{"siteIds": siteIDs})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"siteIds": siteIDs})
 }
 
 func dedupeStrings(values []string) []string {

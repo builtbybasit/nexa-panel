@@ -12,6 +12,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
@@ -123,25 +124,25 @@ func (m *Module) recordSystemCopy(ctx context.Context, accountID string, manifes
 func (m *Module) runSystemHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	if user.Role == "developer" {
-		writeError(w, http.StatusForbidden, "backup_system_forbidden", "Panel-state backups require an operator role.")
+		httpapi.WriteError(w, http.StatusForbidden, "backup_system_forbidden", "Panel-state backups require an operator role.")
 		return
 	}
 	var request systemRunPayload
 	if err := decodeJSON(w, r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	model, err := m.getAccountModel(r.Context(), strings.TrimSpace(request.AccountID))
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "backup_account_not_found", "The requested backup account does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "backup_account_not_found", "The requested backup account does not exist.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_account_unavailable", "The backup account could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_account_unavailable", "The backup account could not be loaded.")
 		return
 	}
 	job, err := m.jobs.SubmitTitledWithOptions(r.Context(), "backup.system", "Back up panel state",
@@ -151,34 +152,34 @@ func (m *Module) runSystemHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	if err != nil {
 		if errors.Is(err, jobs.ErrIdempotencyConflict) {
-			writeError(w, http.StatusConflict, "backup_system_idempotency_conflict", "The idempotency key was already used for a different backup request.")
+			httpapi.WriteError(w, http.StatusConflict, "backup_system_idempotency_conflict", "The idempotency key was already used for a different backup request.")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "backup_system_failed", "The panel-state backup could not be queued.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_system_failed", "The panel-state backup could not be queued.")
 		return
 	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, job)
+	httpapi.WriteJSON(w, http.StatusAccepted, job)
 }
 
 func (m *Module) listSystemCopiesHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	if user.Role == "developer" {
-		writeError(w, http.StatusForbidden, "backup_system_forbidden", "Panel-state backups require an operator role.")
+		httpapi.WriteError(w, http.StatusForbidden, "backup_system_forbidden", "Panel-state backups require an operator role.")
 		return
 	}
 	var models []systemCopyModel
 	if err := m.database.NewSelect().Model(&models).Order("copy_name DESC").Scan(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_system_copies_unavailable", "The panel-state backups could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_system_copies_unavailable", "The panel-state backups could not be loaded.")
 		return
 	}
 	copies := make([]SystemCopy, 0, len(models))
 	for _, model := range models {
 		copies = append(copies, model.toSystemCopy())
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": copies})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": copies})
 }

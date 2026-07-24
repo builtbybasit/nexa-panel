@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
@@ -43,9 +42,3 @@ func (m domainModel) toDomain() Domain {
 	}
 	return Domain{ID: m.ID, SiteID: m.SiteID, Hostname: m.Hostname, Kind: Kind(m.Kind), RedirectTarget: target, Status: Status(m.Status), ResolvedAddresses: addresses, LastJobID: m.LastJobID, Failure: failure, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
-
-var (
-	decodeJSON = httpapi.DecodeJSON
-	writeJSON  = httpapi.WriteJSON
-	writeError = httpapi.WriteError
-)

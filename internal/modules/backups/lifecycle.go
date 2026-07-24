@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 )
 
@@ -21,10 +22,10 @@ func (e validationError) Error() string { return e.message }
 func writeAccountError(w http.ResponseWriter, err error) {
 	var invalid validationError
 	if errors.As(err, &invalid) {
-		writeError(w, http.StatusUnprocessableEntity, "backup_account_invalid", invalid.message)
+		httpapi.WriteError(w, http.StatusUnprocessableEntity, "backup_account_invalid", invalid.message)
 		return
 	}
-	writeError(w, http.StatusInternalServerError, "backup_account_failed", "The backup account could not be saved.")
+	httpapi.WriteError(w, http.StatusInternalServerError, "backup_account_failed", "The backup account could not be saved.")
 }
 
 func (m *Module) CreateAccount(ctx context.Context, request AccountRequest) (Account, error) {
