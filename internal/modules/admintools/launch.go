@@ -64,7 +64,7 @@ func (m *Module) CreateLaunch(ctx context.Context, kind admintooloperator.Kind, 
 		return "", "", errors.New("admin tool does not match the selected database engine")
 	}
 	tool, err := m.get(ctx, kind)
-	if err != nil || tool.Status != string(StatusActive) {
+	if err != nil || !launchableStatus(Status(tool.Status)) {
 		return "", "", errors.New("admin tool must be active before launch")
 	}
 	credential, err := m.resolver(ctx, request.SourceEngine, strings.TrimSpace(request.DatabaseID), strings.TrimSpace(request.AccountID))
@@ -128,7 +128,19 @@ func (m *Module) CreateLaunch(ctx context.Context, kind admintooloperator.Kind, 
 		_, _ = m.database.NewDelete().Model((*launchModel)(nil)).Where("id = ?", id).Exec(context.WithoutCancel(ctx))
 		return "", "", err
 	}
+	// The launch bootstrap restarted the container, so a tool the database recorded
+	// as idle is running again. Reflect that immediately rather than waiting for the
+	// next Sync, keeping the list and the just-established session consistent. The
+	// guard leaves any in-flight lifecycle status untouched.
+	_, _ = m.database.NewUpdate().Model((*toolModel)(nil)).Set("status = ?", StatusActive).Set("updated_at = ?", now).Where("kind = ?", kind).Where("status = ?", StatusIdle).Exec(context.WithoutCancel(ctx))
 	return launchToken, "/tools/" + string(kind) + "/", nil
+}
+
+// launchableStatus reports whether a tool can start a session. An on-demand tool
+// idled by its stop timer is still installed, and the launch bootstrap restarts
+// its container, so idle is launchable exactly like active.
+func launchableStatus(status Status) bool {
+	return status == StatusActive || status == StatusIdle
 }
 
 func (m *Module) expireLaunches(ctx context.Context, kind admintooloperator.Kind) error {
@@ -196,7 +208,7 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	tool, err := m.get(r.Context(), kind)
-	if err != nil || tool.Status != string(StatusActive) {
+	if err != nil || !launchableStatus(Status(tool.Status)) {
 		writeError(w, 503, "admin_tool_unavailable", "Admin tool is not active.")
 		return
 	}
@@ -208,12 +220,30 @@ func (m *Module) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	// pays only a single local connect.
 	if err := waitForUpstreamReady(r.Context(), tool.Port, 2*time.Second); err != nil {
 		if kind == admintooloperator.PGAdmin && r.Context().Err() == nil {
-			writeAdminToolStarting(w)
+			if planUpstreamRecovery(m.liveToolStatus(r.Context(), kind)) == recoveryStarting {
+				// The unit is up but its worker has not bound yet — a cold boot after a
+				// launch. Bridge it with the auto-refreshing "Starting" page.
+				writeAdminToolStarting(w)
+				return
+			}
+			// The container is down and will not restart on its own; the idle-stop
+			// unit scrubbed its launch credentials, so a bare restart would be
+			// useless. Surface the tool as idle, retire the now-dead session, and tell
+			// the browser to relaunch instead of spinning on a dead upstream forever.
+			persistCtx := context.WithoutCancel(r.Context())
+			m.markToolIdle(persistCtx, kind)
+			_ = m.expireLaunches(persistCtx, kind)
+			writeAdminToolEnded(w, kind)
 			return
 		}
 		writeError(w, 502, "admin_tool_upstream_failed", "Admin tool did not respond.")
 		return
 	}
+	// Continued proxy traffic re-arms an on-demand container's idle-stop timer so a
+	// tool in active use is not stopped on a countdown fixed at its launch. This
+	// runs at the cadence of session renewal (issueCookie), keeping the container
+	// and the panel session aligned so they expire together on real inactivity.
+	m.rearmActiveToolTimer(context.WithoutCancel(r.Context()), kind, tool.OnDemand, issueCookie)
 	target := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", tool.Port)}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	original := proxy.Director
@@ -500,6 +530,82 @@ func (m *Module) sessionByHash(ctx context.Context, hash string) (launchModel, e
 	var model launchModel
 	err := m.database.NewSelect().Model(&model).Where("session_token_hash = ?", hash).Scan(ctx)
 	return model, err
+}
+
+// recoveryAction is how the proxy answers when a tool's upstream is not yet
+// reachable: bridge a cold boot, or tell the user their session ended.
+type recoveryAction int
+
+const (
+	recoveryStarting recoveryAction = iota // the unit is up/booting — retry behind the Starting page
+	recoveryEnded                          // the unit is down — a fresh launch is required
+)
+
+// planUpstreamRecovery decides the answer from the tool's live systemd status. A
+// status systemd still reports as up means the container is mid-boot after a
+// launch and will bind its port shortly, so the caller retries. Any other state
+// — including an empty status when the live probe itself failed — means the
+// idle-stop timer (or a crash) took the container down; it will not return on its
+// own and its launch credentials were scrubbed, so only a fresh launch recovers.
+func planUpstreamRecovery(liveStatus string) recoveryAction {
+	switch liveStatus {
+	case "active", "activating", "reloading":
+		return recoveryStarting
+	default:
+		return recoveryEnded
+	}
+}
+
+// liveToolStatus returns the tool's current systemd status straight from the
+// agent, bypassing the panel database whose record can lag behind an idle-stop.
+// An empty string on any failure steers recovery toward the safe "relaunch"
+// answer rather than an endless retry.
+func (m *Module) liveToolStatus(ctx context.Context, kind admintooloperator.Kind) string {
+	tools, err := m.operator.Discover(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, tool := range tools {
+		if tool.Kind == kind {
+			return tool.Status
+		}
+	}
+	return ""
+}
+
+// markToolIdle records that an on-demand tool the proxy just found down was
+// auto-stopped, so the Applications list reflects it without waiting for the next
+// Sync. The guard keeps in-flight lifecycle statuses and a recorded uninstall
+// untouched.
+func (m *Module) markToolIdle(ctx context.Context, kind admintooloperator.Kind) {
+	_, _ = m.database.NewUpdate().Model((*toolModel)(nil)).
+		Set("status = ?", StatusIdle).Set("updated_at = ?", m.now().UTC()).
+		Where("kind = ?", kind).Where("status IN (?, ?)", StatusActive, StatusIdle).Exec(ctx)
+}
+
+// rearmActiveToolTimer re-arms an on-demand tool's idle-stop timer when live
+// proxy activity has slid its session forward, so continued use keeps the
+// container alive. Best-effort: a miss only risks an early idle-stop, which the
+// recovery path handles gracefully.
+func (m *Module) rearmActiveToolTimer(ctx context.Context, kind admintooloperator.Kind, onDemand, slid bool) {
+	if !onDemand || !slid {
+		return
+	}
+	_ = m.operator.KeepAlive(ctx, kind)
+}
+
+// writeAdminToolEnded replaces the infinite "Starting" spinner for a tool whose
+// container was stopped out from under a still-valid session. It states plainly
+// that the session ended and links back to the databases page, where the per-row
+// launch lives, so the user relaunches instead of watching a dead upstream.
+func writeAdminToolEnded(w http.ResponseWriter, kind admintooloperator.Kind) {
+	name := displayName(kind)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Pragma", "no-cache")
+	w.WriteHeader(http.StatusGone)
+	_, _ = io.WriteString(w, `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>`+name+` session ended</title><style>body{background:#f7f8fa;color:#172033;font:16px system-ui,sans-serif;display:grid;min-height:100vh;margin:0;place-items:center}.card{background:white;border:1px solid #dfe3ea;border-radius:14px;box-shadow:0 12px 35px #17203314;max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.35rem;margin:.25rem 0 .75rem}p{color:#596579;line-height:1.55;margin:0 0 1.25rem}a{display:inline-block;background:#2f6bff;color:white;text-decoration:none;border-radius:9px;padding:.6rem 1.1rem;font-weight:600}</style><body><main class="card"><h1>`+name+` session ended</h1><p>This isolated database client was stopped after a period of inactivity. Relaunch it from the database it belongs to.</p><a href="/databases">Back to databases</a></main></body></html>`)
 }
 
 func writeAdminToolStarting(w http.ResponseWriter) {

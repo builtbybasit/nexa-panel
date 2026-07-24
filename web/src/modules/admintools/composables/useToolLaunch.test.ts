@@ -71,4 +71,15 @@ describe('useToolLaunch', () => {
 
     expect(wrapper.get('[data-testid="availability"]').text()).toBe('error')
   })
+
+  it('treats an idle on-demand tool as launchable — the launch bootstrap restarts it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(Response.json({ items: [{ kind: 'pgadmin', status: 'idle' }] }))),
+    )
+    const wrapper = mountHarness()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="availability"]').text()).toBe('ready')
+  })
 })

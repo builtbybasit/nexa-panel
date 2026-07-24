@@ -82,6 +82,17 @@ func (o *HostOperator) scrubPGAdminLaunchState() error {
 	return nil
 }
 
+// KeepAlive re-arms the idle-stop timer so an actively proxied tool is not
+// stopped on a countdown that began at its launch. The panel calls it as it
+// slides a live tool session forward, keeping the container and the panel
+// session aligned so they expire together on real inactivity.
+func (o *HostOperator) KeepAlive(ctx context.Context, kind Kind) error {
+	if kind != PGAdmin {
+		return nil
+	}
+	return o.schedulePGAdminStop(ctx)
+}
+
 func (o *HostOperator) schedulePGAdminStop(ctx context.Context) error {
 	if _, err := os.Stat(o.pgAdminIdleTimerPath()); err != nil {
 		if os.IsNotExist(err) {

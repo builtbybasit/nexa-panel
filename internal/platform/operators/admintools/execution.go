@@ -66,7 +66,7 @@ func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observat
 		}
 	}
 	verb := "start"
-	if change.Action == ActionDeploy {
+	if change.Action == ActionDeploy || change.Action == ActionRestart {
 		verb = "restart"
 	}
 	if change.Action == ActionStop {

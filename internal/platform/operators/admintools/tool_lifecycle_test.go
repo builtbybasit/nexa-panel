@@ -324,6 +324,87 @@ func TestStoppingPGAdminClearsSessionCredentialAndTrust(t *testing.T) {
 	}
 }
 
+func TestRestartPGAdminKeepsCredentialsAndRearmsIdleTimer(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{active: map[string]bool{"nexa-pgadmin.service": true, pgAdminIdleTimerUnit: true}}
+	operator, err := NewHostOperator(runner, HostConfig{QuadletRoot: filepath.Join(root, "quadlets"), SystemdRoot: filepath.Join(root, "systemd"), ConfigRoot: filepath.Join(root, "config")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := operator.prepareToolConfig(PGAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if err := operator.writePGAdminIdleUnits(); err != nil {
+		t.Fatal(err)
+	}
+	pgpassPath := filepath.Join(operator.configRoot, "pgadmin", "pgpass")
+	configPath := filepath.Join(operator.configRoot, "pgadmin", "config_local.py")
+	if err := secureWrite(pgpassPath, []byte("localhost:5432:app_db:app_user:secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := secureWrite(configPath, []byte("WEBSERVER_REMOTE_USER = 'x'\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := operator.Plan(context.Background(), Change{Action: ActionRestart, Tool: Tool{Kind: PGAdmin}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := operator.Apply(context.Background(), Execution{Plan: plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Verified || result.Tool.Status != "active" {
+		t.Fatalf("result=%+v", result)
+	}
+	// A plain restart leaves the session credential and trust configuration intact —
+	// unlike a stop, which scrubs them. The proxy session survives the restart.
+	for _, path := range []string{pgpassPath, configPath} {
+		contents, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if len(contents) == 0 {
+			t.Fatalf("restart must not scrub launch state at %s", path)
+		}
+	}
+	commands := fmt.Sprint(runner.commands)
+	if !strings.Contains(commands, "restart nexa-pgadmin.service") {
+		t.Fatalf("restart did not issue systemctl restart on the tool unit: %s", commands)
+	}
+	// Restarting a live tool re-arms the idle-stop timer, exactly as a launch does,
+	// so the freshly restarted container is not stopped on the old countdown.
+	if !strings.Contains(commands, "restart nexa-pgadmin-idle-stop.timer") {
+		t.Fatalf("restart did not re-arm the pgAdmin idle timer: %s", commands)
+	}
+}
+
+func TestKeepAliveRearmsPGAdminIdleTimer(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{active: map[string]bool{"nexa-pgadmin.service": true, pgAdminIdleTimerUnit: true}}
+	operator, err := NewHostOperator(runner, HostConfig{QuadletRoot: filepath.Join(root, "quadlets"), SystemdRoot: filepath.Join(root, "systemd"), ConfigRoot: filepath.Join(root, "config")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := operator.writePGAdminIdleUnits(); err != nil {
+		t.Fatal(err)
+	}
+	if err := operator.KeepAlive(context.Background(), PGAdmin); err != nil {
+		t.Fatal(err)
+	}
+	commands := fmt.Sprint(runner.commands)
+	if !strings.Contains(commands, "restart nexa-pgadmin-idle-stop.timer") {
+		t.Fatalf("KeepAlive did not re-arm the pgAdmin idle timer: %s", commands)
+	}
+	// phpMyAdmin has no idle timer, so a keep-alive is a no-op that must not error.
+	runner.commands = nil
+	if err := operator.KeepAlive(context.Background(), PHPMyAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("KeepAlive(phpMyAdmin) must be a no-op: %v", runner.commands)
+	}
+}
+
 func TestPGAdminQuadletUsesItsRuntimeUIDAndGID(t *testing.T) {
 	quadlet := renderQuadlet(Tool{Kind: PGAdmin, Port: 18081, MemoryMB: 512, PIDsLimit: 192, Image: "docker.io/dpage/pgadmin4:9.16", ContainerName: "nexa-pgadmin"}, t.TempDir())
 	for _, wanted := range []string{"User=5050:5050", "DropCapability=ALL"} {

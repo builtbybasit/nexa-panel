@@ -52,6 +52,21 @@ func (s *Server) adminToolsApplyHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, observation)
 }
 
+func (s *Server) adminToolsKeepAliveHTTP(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Kind string `json:"kind"`
+	}
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := s.adminTools.KeepAlive(r.Context(), admintooloperator.Kind(request.Kind)); err != nil {
+		writeError(w, http.StatusConflict, "admin_tool_keepalive_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) signAdminToolPlan(plan admintooloperator.Plan) string {
 	plan.Signature = ""
 	return signPayload(s.token, "admin-tool.plan.v1", plan)

@@ -36,6 +36,10 @@ func (c *UnixClient) Apply(ctx context.Context, execution Execution) (Observatio
 	return result, err
 }
 
+func (c *UnixClient) KeepAlive(ctx context.Context, kind Kind) error {
+	return c.call(ctx, http.MethodPost, "/v1/admin-tools/keepalive", map[string]string{"kind": string(kind)}, nil)
+}
+
 func (c *UnixClient) call(ctx context.Context, method, path string, input, output any) error {
 	return c.client.JSON(ctx, method, path, input, output)
 }

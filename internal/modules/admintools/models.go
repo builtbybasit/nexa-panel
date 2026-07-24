@@ -16,7 +16,13 @@ const (
 	StatusApplying  Status = "applying"
 	StatusActive    Status = "active"
 	StatusStopped   Status = "stopped"
-	StatusFailed    Status = "failed"
+	// StatusIdle marks an on-demand tool that is installed but not currently
+	// running because its idle-stop timer fired. It is distinct from stopped (which
+	// reads as uninstalled) and must never be reported as active — the proxy relies
+	// on that distinction to recover a lapsed session gracefully instead of
+	// spinning on a dead upstream.
+	StatusIdle   Status = "idle"
+	StatusFailed Status = "failed"
 )
 
 type Tool struct {

@@ -14,15 +14,22 @@ export type ToolAvailability = 'loading' | 'error' | 'ready' | 'inactive'
  * as the database's owner — the row already identifies the database, and its
  * owner is the natural identity, exactly like FastPanel's per-row launch icon.
  *
- * The tool must be deployed (active) before it can be launched; `isReady`
- * reflects the admin-tools deployment state so callers can guide the user to
- * install it from the Applications page when it is not.
+ * The tool must be installed before it can be launched; `isReady` reflects the
+ * admin-tools deployment state so callers can guide the user to install it from
+ * the Applications page when it is not. An on-demand tool the idle-stop timer
+ * put to sleep reports `idle` — still installed, and the launch bootstrap starts
+ * its container again — so it is launchable exactly like an active tool.
  */
 export function useToolLaunch() {
   const identity = useIdentityStore()
   const toolsQuery = useQuery({ queryKey: ['admin-tools'], queryFn: listTools, retry: false })
-  const activeKinds = computed(
-    () => new Set((toolsQuery.data.value ?? []).filter((tool) => tool.status === 'active').map((tool) => tool.kind)),
+  const launchableKinds = computed(
+    () =>
+      new Set(
+        (toolsQuery.data.value ?? [])
+          .filter((tool) => tool.status === 'active' || tool.status === 'idle')
+          .map((tool) => tool.kind),
+      ),
   )
 
   // Keyed by database id so only the clicked row shows a spinner.
@@ -38,7 +45,7 @@ export function useToolLaunch() {
   function availability(kind: ToolKind): ToolAvailability {
     if (toolsQuery.isPending.value) return 'loading'
     if (toolsQuery.isError.value) return 'error'
-    return activeKinds.value.has(kind) ? 'ready' : 'inactive'
+    return launchableKinds.value.has(kind) ? 'ready' : 'inactive'
   }
 
   async function launch(kind: ToolKind, sourceEngine: SourceEngine, databaseId: string) {
@@ -71,5 +78,5 @@ export function useToolLaunch() {
     }
   }
 
-  return { toolsQuery, activeKinds, availability, isReady, launch, launchingId, error, blocked }
+  return { toolsQuery, launchableKinds, availability, isReady, launch, launchingId, error, blocked }
 }

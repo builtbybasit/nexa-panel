@@ -178,11 +178,27 @@ function isWebClient(app: Application) {
 function canDeployTool(app: Application) {
   return canWriteDatabases.value && isWebClient(app) && (app.status === 'stopped' || app.status === 'inactive' || app.status === 'failed')
 }
+// An idle web client is still installed — its on-demand container was stopped by
+// the idle timer — so it can be uninstalled or restarted just like an active one.
+function isInstalledTool(app: Application) {
+  return isWebClient(app) && (app.status === 'active' || app.status === 'idle')
+}
 function canStopTool(app: Application) {
-  return canWriteDatabases.value && isWebClient(app) && app.status === 'active'
+  return canWriteDatabases.value && isInstalledTool(app)
+}
+// Restart is a plain systemctl restart, not a re-deploy: it leaves the tool's
+// configuration and credentials intact, unlike Install/Uninstall.
+function canRestartTool(app: Application) {
+  return canWriteDatabases.value && isInstalledTool(app)
 }
 function canReviewTool(app: Application) {
   return isWebClient(app) && app.status === 'plan_ready'
+}
+
+function toolActionLabel(operation?: ToolAction) {
+  if (operation === 'tool.stop') return 'Uninstall'
+  if (operation === 'tool.restart') return 'Restart'
+  return 'Install'
 }
 
 const toolReviewFacts = computed<Fact[]>(() => {
@@ -191,13 +207,14 @@ const toolReviewFacts = computed<Fact[]>(() => {
   if (!app || !plan) return []
   return [
     { label: 'Web client', value: app.label },
-    { label: 'Action', value: plan.operation === 'tool.stop' ? 'Uninstall' : 'Install' },
+    { label: 'Action', value: toolActionLabel(plan.operation) },
   ]
 })
 
-// The card buttons read Install/Uninstall, so the review dialog must too: the
-// underlying tool.deploy/tool.stop lifecycle is an implementation detail here.
-const toolApproveLabel = computed(() => (toolPlan.value?.operation === 'tool.stop' ? 'Uninstall' : 'Install'))
+// The card buttons read Install/Uninstall/Restart, so the review dialog must too:
+// the underlying tool.deploy/tool.stop/tool.restart lifecycle is an
+// implementation detail here.
+const toolApproveLabel = computed(() => toolActionLabel(toolPlan.value?.operation))
 
 async function loadToolPlan(app: Application) {
   toolSelected.value = app
@@ -243,13 +260,14 @@ async function approveTool() {
   if (!identity.can('operations.apply')) return
   const app = toolSelected.value
   if (!app) return
-  const stopping = toolPlan.value?.operation === 'tool.stop'
+  const operation = toolPlan.value?.operation
+  const outcome = operation === 'tool.stop' ? 'stopped' : operation === 'tool.restart' ? 'restarted' : 'deployed'
   await applyRunner.run(async () => (await applyToolPlan(app.app as ToolKind)).id, {
     onSettled: async () => {
       closeToolReview()
       await appsQuery.refetch()
     },
-    successToast: `${app.label} ${stopping ? 'stopped' : 'deployed'}`,
+    successToast: `${app.label} ${outcome}`,
     failureMessage: `The ${app.label} operation failed`,
   })
 }
@@ -351,6 +369,15 @@ async function approveTool() {
                 </AppButton>
                 <AppButton v-if="canReviewTool(app)" icon="eye" :disabled="anyBusy" @click="loadToolPlan(app)">
                   Review plan
+                </AppButton>
+                <AppButton
+                  v-if="canRestartTool(app)"
+                  icon="refresh-cw"
+                  :loading="toolPendingId === app.id"
+                  :disabled="anyBusy"
+                  @click="prepareTool(app, 'tool.restart')"
+                >
+                  Restart
                 </AppButton>
                 <AppButton
                   v-if="canStopTool(app)"

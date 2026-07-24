@@ -19,10 +19,11 @@ const (
 type Action string
 
 const (
-	ActionDeploy Action = "tool.deploy"
-	ActionStart  Action = "tool.start"
-	ActionStop   Action = "tool.stop"
-	ActionLaunch Action = "tool.launch"
+	ActionDeploy  Action = "tool.deploy"
+	ActionStart   Action = "tool.start"
+	ActionStop    Action = "tool.stop"
+	ActionRestart Action = "tool.restart"
+	ActionLaunch  Action = "tool.launch"
 )
 
 type Launch struct {
@@ -81,6 +82,10 @@ type Operator interface {
 	Discover(context.Context) ([]Tool, error)
 	Plan(context.Context, Change) (Plan, error)
 	Apply(context.Context, Execution) (Observation, error)
+	// KeepAlive resets an on-demand tool's idle-stop countdown so continued proxy
+	// activity keeps its container alive. It is a no-op for tools without an idle
+	// timer.
+	KeepAlive(context.Context, Kind) error
 }
 
 type Command struct {

@@ -20,10 +20,18 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 )
 
-type fakeOperator struct{ tools []admintooloperator.Tool }
+type fakeOperator struct {
+	tools      []admintooloperator.Tool
+	keepAlives []admintooloperator.Kind
+}
 
 func (f *fakeOperator) Discover(context.Context) ([]admintooloperator.Tool, error) {
 	return append([]admintooloperator.Tool(nil), f.tools...), nil
+}
+
+func (f *fakeOperator) KeepAlive(_ context.Context, kind admintooloperator.Kind) error {
+	f.keepAlives = append(f.keepAlives, kind)
+	return nil
 }
 
 func (f *fakeOperator) Plan(_ context.Context, change admintooloperator.Change) (admintooloperator.Plan, error) {
@@ -596,6 +604,80 @@ func TestSyncKeepsPlanReadyStatusApplicable(t *testing.T) {
 	}
 	if _, err = module.ApplyPlan(ctx, tool.Kind, nil); err != nil {
 		t.Fatalf("plan_ready tool was not applicable after Sync: %v", err)
+	}
+}
+
+func TestSyncSurfacesIdleStoppedOnDemandTool(t *testing.T) {
+	ctx := context.Background()
+	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistence.RunMigrations(ctx, database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	defer database.Close()
+	auditLog, err := audit.New(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, err := jobs.NewWithConfig(ctx, database, auditLog, slog.New(slog.NewTextHandler(io.Discard, nil)), jobs.Config{PollInterval: 5 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both tools start running: the on-demand pgAdmin container and the always-on
+	// native phpMyAdmin route.
+	running := admintooloperator.Defaults()
+	for index := range running {
+		running[index].Status = "active"
+	}
+	operator := &fakeOperator{tools: running}
+	module, err := New(ctx, database, queue, operator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := module.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The idle-stop timer fires: the container is stopped but never uninstalled, so
+	// systemd now reports both tools inactive. The idle-stop unit does not touch the
+	// panel database, so this Sync is the first observation of the change.
+	stopped := admintooloperator.Defaults()
+	for index := range stopped {
+		stopped[index].Status = "stopped"
+	}
+	operator.tools = stopped
+	items, err := module.Sync(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKind := map[admintooloperator.Kind]string{}
+	for _, item := range items {
+		byKind[item.Kind] = item.Status
+	}
+	// The on-demand tool that was running and is now down surfaces as idle — a
+	// distinct, honest state, not the stale "active" the proxy used to trust nor the
+	// "stopped" that reads as uninstalled.
+	if byKind[admintooloperator.PGAdmin] != string(StatusIdle) {
+		t.Fatalf("pgAdmin status = %q, want idle", byKind[admintooloperator.PGAdmin])
+	}
+	// A non-on-demand tool going inactive is not idle — it is genuinely stopped.
+	if byKind[admintooloperator.PHPMyAdmin] != string(StatusStopped) {
+		t.Fatalf("phpMyAdmin status = %q, want stopped", byKind[admintooloperator.PHPMyAdmin])
+	}
+	// A subsequent uninstall (recorded as stopped) must not be re-surfaced as idle:
+	// once the database records the stop intent, an inactive unit stays stopped.
+	if _, err := database.NewUpdate().Model((*toolModel)(nil)).Set("status = ?", StatusStopped).Where("kind = ?", admintooloperator.PGAdmin).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	items, err = module.Sync(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.Kind == admintooloperator.PGAdmin && item.Status != string(StatusStopped) {
+			t.Fatalf("uninstalled pgAdmin status = %q, want stopped", item.Status)
+		}
 	}
 }
 

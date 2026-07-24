@@ -78,7 +78,15 @@ func (m *Module) Sync(ctx context.Context) ([]Tool, error) {
 		// with the tool's observed systemd status, or the queued plan can no
 		// longer be applied. Unqualified `status` on the RHS is the pre-update
 		// value; EXCLUDED.status is the freshly observed one.
-		_, err = m.database.NewInsert().Model(&model).On("CONFLICT (kind) DO UPDATE").Set("image = EXCLUDED.image").Set("container_name = EXCLUDED.container_name").Set("port = EXCLUDED.port").Set("memory_mb = EXCLUDED.memory_mb").Set("pids_limit = EXCLUDED.pids_limit").Set("status = CASE WHEN status IN ('planning', 'plan_ready', 'applying') THEN status ELSE EXCLUDED.status END").Set("systemd_unit = EXCLUDED.systemd_unit").Set("on_demand = EXCLUDED.on_demand").Set("updated_at = EXCLUDED.updated_at").Exec(ctx)
+		//
+		// The idle-stop timer stops an on-demand container without touching this
+		// database, so a tool the database last saw active but systemd now reports
+		// inactive was auto-stopped: surface it as idle, not the stale active the
+		// proxy would otherwise trust or the stopped that reads as uninstalled. The
+		// stop is only inferred from a running→down transition, so a recorded
+		// uninstall (stopped) or failure stays put — an idle tool never re-derives
+		// itself as freshly uninstalled.
+		_, err = m.database.NewInsert().Model(&model).On("CONFLICT (kind) DO UPDATE").Set("image = EXCLUDED.image").Set("container_name = EXCLUDED.container_name").Set("port = EXCLUDED.port").Set("memory_mb = EXCLUDED.memory_mb").Set("pids_limit = EXCLUDED.pids_limit").Set("status = CASE WHEN status IN ('planning', 'plan_ready', 'applying') THEN status WHEN EXCLUDED.status != 'active' AND EXCLUDED.on_demand AND status IN ('active', 'idle') THEN 'idle' ELSE EXCLUDED.status END").Set("systemd_unit = EXCLUDED.systemd_unit").Set("on_demand = EXCLUDED.on_demand").Set("updated_at = EXCLUDED.updated_at").Exec(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -102,7 +110,7 @@ func (m *Module) RequestChange(ctx context.Context, kind admintooloperator.Kind,
 	if kind != admintooloperator.PHPMyAdmin && kind != admintooloperator.PGAdmin {
 		return Tool{}, jobs.Job{}, errors.New("admin tool is unsupported")
 	}
-	if action != admintooloperator.ActionDeploy && action != admintooloperator.ActionStart && action != admintooloperator.ActionStop {
+	if action != admintooloperator.ActionDeploy && action != admintooloperator.ActionStart && action != admintooloperator.ActionRestart && action != admintooloperator.ActionStop {
 		return Tool{}, jobs.Job{}, errors.New("admin tool action is unsupported")
 	}
 	if _, err := m.Sync(ctx); err != nil {
@@ -119,6 +127,8 @@ func (m *Module) RequestChange(ctx context.Context, kind admintooloperator.Kind,
 	switch action {
 	case admintooloperator.ActionStart:
 		verb = "Start"
+	case admintooloperator.ActionRestart:
+		verb = "Restart"
 	case admintooloperator.ActionStop:
 		verb = "Uninstall"
 	}

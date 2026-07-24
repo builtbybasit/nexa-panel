@@ -37,6 +37,8 @@ func (o *HostOperator) Plan(ctx context.Context, change Change) (Plan, error) {
 		}
 	case ActionStart:
 		steps = []string{"Start the existing tool service.", "Verify the service is active."}
+	case ActionRestart:
+		steps = []string{"Restart the tool service without touching its configuration or credentials.", "Verify the service is active."}
 	case ActionStop:
 		steps = []string{"Stop the tool service.", "Verify the service is inactive."}
 	case ActionLaunch:
@@ -58,7 +60,7 @@ func normalize(change Change) (Change, error) {
 	if base == nil {
 		return Change{}, errors.New("admin tool must be phpmyadmin or pgadmin")
 	}
-	if change.Action != ActionDeploy && change.Action != ActionStart && change.Action != ActionStop && change.Action != ActionLaunch {
+	if change.Action != ActionDeploy && change.Action != ActionStart && change.Action != ActionRestart && change.Action != ActionStop && change.Action != ActionLaunch {
 		return Change{}, errors.New("admin tool action is unsupported")
 	}
 	if change.Tool.Port != 0 {

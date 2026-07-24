@@ -3,7 +3,7 @@ import { apiRequest } from '@/shared/api/request'
 import type { Job } from '../jobs/api'
 
 export type ToolKind = 'phpmyadmin' | 'pgadmin'
-export type ToolAction = 'tool.deploy' | 'tool.start' | 'tool.stop'
+export type ToolAction = 'tool.deploy' | 'tool.start' | 'tool.restart' | 'tool.stop'
 
 export interface AdminTool {
   kind: ToolKind
