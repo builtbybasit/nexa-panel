@@ -10,7 +10,6 @@ import {
   AppAlert,
   AppButton,
   AppCard,
-  AppIcon,
   EmptyState,
   ListToolbar,
   PageHeader,
@@ -115,16 +114,6 @@ function openCreate() {
         />
         <template v-else>
           <div class="grid gap-2 sm:grid-cols-2">
-            <!-- FastPanel-style dashed launcher sits alongside the site cards. -->
-            <button
-              v-if="canCreate"
-              type="button"
-              class="flex min-h-[68px] items-center justify-center gap-2 rounded-xl border border-dashed border-outline-strong text-[13px] font-medium text-ink-secondary transition-colors hover:border-accent-400/40 hover:bg-white/[0.03] hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-400"
-              @click="openCreate"
-            >
-              <AppIcon name="plus" :size="16" />
-              Create site
-            </button>
             <RouterLink
               v-for="site in items"
               :key="site.id"
