@@ -39,6 +39,14 @@ once stable releases begin.
 The final release entry must be cut from this section only after the complete
 release matrix in `PLAN.md` passes on AMD64 and ARM64.
 
+## v0.5.12 — 2026-07-24
+
+### Added
+
+- A site's PHP version can be changed from its settings. The new PHP-FPM pool is
+  provisioned and the outgoing pool is retired only once the change is applied,
+  with the old runtime restored on rollback.
+
 ## v0.5.11 — 2026-07-24
 
 ### Added
