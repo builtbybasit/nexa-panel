@@ -299,8 +299,7 @@ and the v1 release gates are in [PLAN.md](./PLAN.md).
 
 ## License
 
-Nexa Panel is proprietary commercial software, not open source. Use requires a
-separate written agreement with the copyright holder; redistribution and
-sublicensing are not permitted. See [LICENSE](./LICENSE), the
+Nexa Panel is open source under the Apache License, Version 2.0. See
+[LICENSE](./LICENSE) and [NOTICE](./NOTICE), the
 [security policy](./SECURITY.md), and the
 [support and compatibility policy](./docs/support-policy.md).
