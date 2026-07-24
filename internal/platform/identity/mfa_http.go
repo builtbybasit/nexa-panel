@@ -196,9 +196,9 @@ func (m *Module) mfaDisableHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusForbidden, "mfa_step_up_required", "Confirm multi-factor authentication before disabling it.")
 		return
 	}
-	var input mfaDisableRequest
-	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	input, decodeErr := httpapi.Decode[mfaDisableRequest](w, r)
+	if decodeErr != nil {
+		httpapi.Fail(w, decodeErr)
 		return
 	}
 	if input.Password == "" {

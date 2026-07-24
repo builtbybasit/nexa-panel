@@ -59,9 +59,9 @@ type bootstrapRequest struct {
 }
 
 func (m *Module) bootstrapHTTP(w http.ResponseWriter, r *http.Request) {
-	var input bootstrapRequest
-	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	input, decodeErr := httpapi.Decode[bootstrapRequest](w, r)
+	if decodeErr != nil {
+		httpapi.Fail(w, decodeErr)
 		return
 	}
 	// An unauthenticated REMOTE client must never be able to claim the admin
@@ -121,9 +121,9 @@ func (m *Module) bootstrapHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) loginHTTP(w http.ResponseWriter, r *http.Request) {
-	var input credentials
-	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	input, decodeErr := httpapi.Decode[credentials](w, r)
+	if decodeErr != nil {
+		httpapi.Fail(w, decodeErr)
 		return
 	}
 	input.Username = strings.TrimSpace(input.Username)
@@ -217,9 +217,9 @@ func (m *Module) changePasswordHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	var input changePasswordRequest
-	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	input, decodeErr := httpapi.Decode[changePasswordRequest](w, r)
+	if decodeErr != nil {
+		httpapi.Fail(w, decodeErr)
 		return
 	}
 	if input.CurrentPassword == "" {

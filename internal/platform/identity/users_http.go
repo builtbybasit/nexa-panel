@@ -131,9 +131,9 @@ func (m *Module) createUserHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	var input createUserRequest
-	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	input, decodeErr := httpapi.Decode[createUserRequest](w, r)
+	if decodeErr != nil {
+		httpapi.Fail(w, decodeErr)
 		return
 	}
 	input.Username = strings.TrimSpace(input.Username)
@@ -177,9 +177,9 @@ func (m *Module) updateUserHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
-	var input updateUserRequest
-	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	input, decodeErr := httpapi.Decode[updateUserRequest](w, r)
+	if decodeErr != nil {
+		httpapi.Fail(w, decodeErr)
 		return
 	}
 	if input.Role == nil && input.Password == nil {
@@ -335,9 +335,9 @@ func (m *Module) replaceUserSitesHTTP(w http.ResponseWriter, r *http.Request) {
 		httpapi.WriteError(w, http.StatusServiceUnavailable, "sites_unavailable", "Site grants are not configured on this control plane.")
 		return
 	}
-	var input replaceSitesRequest
-	if err := httpapi.DecodeJSON(w, r, &input); err != nil {
-		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	input, decodeErr := httpapi.Decode[replaceSitesRequest](w, r)
+	if decodeErr != nil {
+		httpapi.Fail(w, decodeErr)
 		return
 	}
 	if input.SiteIDs == nil {
