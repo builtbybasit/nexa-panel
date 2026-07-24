@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 func (o *HostOperator) Discover(ctx context.Context) (*Engine, error) {
@@ -13,7 +15,7 @@ func (o *HostOperator) Discover(ctx context.Context) (*Engine, error) {
 	output, err := o.runner.Run(ctx, command)
 	if err != nil {
 		if !commandMissing(output, err) {
-			return nil, commandError("discover MySQL-family engine", output, err)
+			return nil, hostcmd.Error("discover MySQL-family engine", output, err)
 		}
 		command = o.clientCommandName("mariadb", "SELECT @@version, @@version_comment, @@socket, @@port;")
 		output, err = o.runner.Run(ctx, command)
@@ -21,7 +23,7 @@ func (o *HostOperator) Discover(ctx context.Context) (*Engine, error) {
 			if commandMissing(output, err) {
 				return nil, nil
 			}
-			return nil, commandError("discover MySQL-family engine", output, err)
+			return nil, hostcmd.Error("discover MySQL-family engine", output, err)
 		}
 	}
 	parts := strings.Split(strings.TrimSpace(string(output)), "\t")

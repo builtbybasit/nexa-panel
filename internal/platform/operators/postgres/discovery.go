@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -16,7 +17,7 @@ func (o *HostOperator) Discover(ctx context.Context) ([]Instance, error) {
 		if errors.Is(err, exec.ErrNotFound) {
 			return []Instance{}, nil
 		}
-		return nil, commandError("discover PostgreSQL instances", output, err)
+		return nil, hostcmd.Error("discover PostgreSQL instances", output, err)
 	}
 	var rows []struct {
 		Version       jsonString      `json:"version"`

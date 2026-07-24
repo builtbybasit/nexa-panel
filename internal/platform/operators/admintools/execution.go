@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observation, error) {
@@ -62,7 +64,7 @@ func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observat
 			}
 		}
 		if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"daemon-reload"}}); err != nil {
-			return Observation{}, commandError("reload admin tool units", output, err)
+			return Observation{}, hostcmd.Error("reload admin tool units", output, err)
 		}
 	}
 	verb := "start"
@@ -87,7 +89,7 @@ func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observat
 		if change.Action == ActionDeploy && change.Tool.Kind == PGAdmin && mentionsMissingUnit(output) {
 			return Observation{}, fmt.Errorf("%s was not generated from its Quadlet definition — the Podman Quadlet generator rejected it (run `/usr/libexec/podman/quadlet -dryrun` to see which key); ensure Podman with Quadlet support is installed: %w", change.Tool.SystemdUnit, err)
 		}
-		return Observation{}, commandError(verb+" admin tool", output, err)
+		return Observation{}, hostcmd.Error(verb+" admin tool", output, err)
 	}
 	if change.Action == ActionStop && change.Tool.Kind == PGAdmin {
 		if err := o.scrubPGAdminLaunchState(); err != nil {
@@ -103,7 +105,7 @@ func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observat
 		change.Tool.Status = "stopped"
 	} else {
 		if verifyErr != nil || status != "active" {
-			return Observation{}, commandError("verify admin tool", output, firstError(verifyErr, errors.New("service is not active")))
+			return Observation{}, hostcmd.Error("verify admin tool", output, firstError(verifyErr, errors.New("service is not active")))
 		}
 		change.Tool.Status = "active"
 		if change.Tool.Kind == PGAdmin {

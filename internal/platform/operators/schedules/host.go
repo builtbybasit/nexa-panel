@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
@@ -468,32 +469,16 @@ type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, command Command) (int, []byte, error) {
 	process := exec.CommandContext(ctx, command.Name, command.Args...)
-	buffer := &cappedOutput{limit: 64 * 1024}
+	buffer := &hostcmd.Writer{Limit: 64 * 1024}
 	process.Stdout = buffer
 	process.Stderr = buffer
 	err := process.Run()
 	if err == nil {
-		return 0, buffer.data, nil
+		return 0, buffer.Bytes(), nil
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode(), buffer.data, nil
+		return exitErr.ExitCode(), buffer.Bytes(), nil
 	}
-	return -1, buffer.data, err
-}
-
-type cappedOutput struct {
-	data  []byte
-	limit int
-}
-
-func (w *cappedOutput) Write(value []byte) (int, error) {
-	original := len(value)
-	if remaining := w.limit - len(w.data); remaining > 0 {
-		if len(value) > remaining {
-			value = value[:remaining]
-		}
-		w.data = append(w.data, value...)
-	}
-	return original, nil
+	return -1, buffer.Bytes(), err
 }

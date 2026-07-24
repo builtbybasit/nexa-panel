@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,13 +15,13 @@ func (o *HostOperator) provision(ctx context.Context, change Change) (Observatio
 	logPath := filepath.Join(o.logRoot, fmt.Sprintf("postgresql-%s-%s.log", change.Version, change.Cluster))
 	args := []string{"--port", strconv.Itoa(change.Port), "--datadir", dataPath, "--socketdir", o.socketRoot, "--logfile", logPath, "--start-conf", "auto", change.Version, change.Cluster}
 	if output, err := o.runner.Run(ctx, Command{Name: "pg_createcluster", Args: args}); err != nil {
-		return Observation{}, commandError("create PostgreSQL instance", output, err)
+		return Observation{}, hostcmd.Error("create PostgreSQL instance", output, err)
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "pg_ctlcluster", Args: []string{change.Version, change.Cluster, "start"}}); err != nil && !strings.Contains(strings.ToLower(string(output)), "already running") {
-		return Observation{}, commandError("start PostgreSQL instance", output, err)
+		return Observation{}, hostcmd.Error("start PostgreSQL instance", output, err)
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: binary(change.Version, "pg_isready"), Args: []string{"--host", o.socketRoot, "--port", strconv.Itoa(change.Port), "--dbname", "postgres"}}); err != nil {
-		return Observation{}, commandError("verify PostgreSQL instance", output, err)
+		return Observation{}, hostcmd.Error("verify PostgreSQL instance", output, err)
 	}
 	instance := o.instance(change.Version, change.Cluster, change.Port, "online", "postgres", dataPath, logPath)
 	return Observation{Action: change.Action, Instance: &instance, Verified: true}, nil
@@ -94,7 +95,7 @@ func (o *HostOperator) ensureSocketScramAuth(ctx context.Context, version, clust
 		return err
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "pg_ctlcluster", Args: []string{version, cluster, "reload"}}); err != nil {
-		return commandError("reload PostgreSQL for socket authentication", output, err)
+		return hostcmd.Error("reload PostgreSQL for socket authentication", output, err)
 	}
 	return nil
 }
@@ -114,7 +115,7 @@ func (o *HostOperator) rotateRole(ctx context.Context, change Change, secret str
 func (o *HostOperator) createDatabase(ctx context.Context, change Change) (Observation, error) {
 	command := asPostgres(change.Version, "createdb", "--host", o.socketRoot, "--port", strconv.Itoa(change.Port), "--username", "postgres", "--owner", change.OwnerRole, "--encoding", "UTF8", "--template", "template0", change.Database)
 	if output, err := o.runner.Run(ctx, command); err != nil {
-		return Observation{}, commandError("create PostgreSQL database", output, err)
+		return Observation{}, hostcmd.Error("create PostgreSQL database", output, err)
 	}
 	if err := o.verifyDatabase(ctx, change, change.Database); err != nil {
 		return Observation{}, err

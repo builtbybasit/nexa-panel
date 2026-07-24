@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 const (
@@ -73,7 +75,7 @@ func (o *HostOperator) deployNativePHPMyAdmin(ctx context.Context, tool Tool) er
 	quadlet := o.quadletPath(PHPMyAdmin)
 	if _, err := os.Lstat(quadlet); err == nil {
 		if output, stopErr := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"stop", tool.SystemdUnit}}); stopErr != nil {
-			return commandError("stop the legacy phpMyAdmin container", output, stopErr)
+			return hostcmd.Error("stop the legacy phpMyAdmin container", output, stopErr)
 		}
 		if err := os.Remove(quadlet); err != nil {
 			return fmt.Errorf("remove the legacy phpMyAdmin Quadlet: %w", err)
@@ -135,7 +137,7 @@ func (o *HostOperator) deployNativePHPMyAdmin(ctx context.Context, tool Tool) er
 	// phpMyAdmin silently stays offline. grantPHPFPMSessionAccess already ran
 	// daemon-reload, so systemd knows the freshly written unit here.
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"enable", tool.SystemdUnit}}); err != nil {
-		return commandError("enable the native phpMyAdmin lifecycle unit", output, err)
+		return hostcmd.Error("enable the native phpMyAdmin lifecycle unit", output, err)
 	}
 	return nil
 }
@@ -158,10 +160,10 @@ func (o *HostOperator) grantPHPFPMSessionAccess(ctx context.Context) error {
 		return fmt.Errorf("make php-fpm session drop-in readable: %w", err)
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"daemon-reload"}}); err != nil {
-		return commandError("reload systemd for the php-fpm session drop-in", output, err)
+		return hostcmd.Error("reload systemd for the php-fpm session drop-in", output, err)
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"restart", phpFPMUnit}}); err != nil {
-		return commandError("restart php-fpm with session write access", output, err)
+		return hostcmd.Error("restart php-fpm with session write access", output, err)
 	}
 	return nil
 }
@@ -192,14 +194,14 @@ func (o *HostOperator) installNativePHPMyAdmin(ctx context.Context) error {
 	// input reaches the shell.
 	const preseed = `printf '%s\n' 'phpmyadmin phpmyadmin/reconfigure-webserver multiselect' 'phpmyadmin phpmyadmin/dbconfig-install boolean false' | debconf-set-selections`
 	if output, err := o.runner.Run(ctx, Command{Name: "sh", Args: []string{"-c", preseed}}); err != nil {
-		return commandError("configure non-interactive phpMyAdmin installation", output, err)
+		return hostcmd.Error("configure non-interactive phpMyAdmin installation", output, err)
 	}
 	if output, err := o.runner.Run(ctx, Command{Name: "apt-get", Args: []string{"update"}}); err != nil {
-		return commandError("update the package index for phpMyAdmin", output, err)
+		return hostcmd.Error("update the package index for phpMyAdmin", output, err)
 	}
 	args := append([]string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "--no-install-recommends"}, missing...)
 	if output, err := o.runner.Run(ctx, Command{Name: "/usr/bin/env", Args: args}); err != nil {
-		return commandError("install native phpMyAdmin", output, err)
+		return hostcmd.Error("install native phpMyAdmin", output, err)
 	}
 	return nil
 }

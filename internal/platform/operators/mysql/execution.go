@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 func (o *HostOperator) Apply(ctx context.Context, execution Execution) (Observation, error) {
@@ -72,7 +74,7 @@ func (o *HostOperator) applyGrant(ctx context.Context, engine *Engine, change Ch
 	query := "SELECT PRIVILEGE_TYPE FROM INFORMATION_SCHEMA.SCHEMA_PRIVILEGES WHERE TABLE_SCHEMA=" + quoteLiteral(change.Database) + " AND GRANTEE=CONCAT(QUOTE(" + quoteLiteral(change.Account) + "),'@',QUOTE(" + quoteLiteral(change.AccountHost) + ")) ORDER BY PRIVILEGE_TYPE;"
 	output, err := o.runner.Run(ctx, o.clientCommand(engine, query))
 	if err != nil {
-		return Observation{}, commandError("inspect existing MySQL-family grant", output, err)
+		return Observation{}, hostcmd.Error("inspect existing MySQL-family grant", output, err)
 	}
 	privileges, err := safePrivileges(string(output))
 	if err != nil {
@@ -90,7 +92,7 @@ func (o *HostOperator) applyGrant(ctx context.Context, engine *Engine, change Ch
 	}
 	statements = append(statements, "FLUSH PRIVILEGES;")
 	if output, err := o.runner.Run(ctx, o.stdinCommand(engine, strings.Join(statements, "\n")+"\n")); err != nil {
-		return Observation{}, commandError("apply MySQL-family grant", output, err)
+		return Observation{}, hostcmd.Error("apply MySQL-family grant", output, err)
 	}
 	return Observation{Action: change.Action, Engine: engine, Database: change.Database, Account: change.Account + "@" + change.AccountHost, Access: string(change.Access), Verified: true}, nil
 }

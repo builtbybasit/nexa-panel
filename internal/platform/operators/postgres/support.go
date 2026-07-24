@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
@@ -21,22 +22,10 @@ func (execRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 	if command.Stdin != "" {
 		process.Stdin = strings.NewReader(command.Stdin)
 	}
-	output := &cappedOutput{limit: 64 * 1024}
+	output := &hostcmd.Writer{Limit: 64 * 1024}
 	process.Stdout, process.Stderr = output, output
 	err := process.Run()
-	return output.data, err
-}
-
-func (w *cappedOutput) Write(value []byte) (int, error) {
-	original := len(value)
-	remaining := w.limit - len(w.data)
-	if remaining > 0 {
-		if len(value) > remaining {
-			value = value[:remaining]
-		}
-		w.data = append(w.data, value...)
-	}
-	return original, nil
+	return output.Bytes(), err
 }
 
 func (o *HostOperator) instance(version, cluster string, port int, status, owner, dataPath, logPath string) Instance {
@@ -123,17 +112,6 @@ func fingerprint(value any) (string, error) {
 
 func randomID() string { return secureid.Hex(16) }
 
-func commandError(action string, output []byte, err error) error {
-	message := strings.TrimSpace(string(output))
-	if len(message) > 500 {
-		message = message[:500]
-	}
-	if message == "" {
-		return fmt.Errorf("%s: %w", action, err)
-	}
-	return fmt.Errorf("%s: %w: %s", action, err, message)
-}
-
 func asPostgres(version, program string, args ...string) Command {
 	return Command{Name: "runuser", Args: append([]string{"-u", "postgres", "--", binary(version, program)}, args...)}
 }
@@ -158,7 +136,7 @@ func truncateName(value string) string {
 }
 
 func redactCommandError(action string, output []byte, err error, secret string) error {
-	return commandError(action, []byte(strings.ReplaceAll(string(output), secret, "[redacted]")), err)
+	return hostcmd.Error(action, []byte(strings.ReplaceAll(string(output), secret, "[redacted]")), err)
 }
 
 func firstError(values ...error) error {

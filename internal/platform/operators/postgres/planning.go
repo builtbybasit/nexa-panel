@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"path/filepath"
 	"strings"
 	"time"
@@ -59,7 +60,7 @@ func (o *HostOperator) normalizeChange(ctx context.Context, change Change, insta
 			}
 		}
 		if output, err := o.runner.Run(ctx, Command{Name: binary(change.Version, "postgres"), Args: []string{"--version"}}); err != nil {
-			return Change{}, nil, commandError("verify PostgreSQL server package", output, err)
+			return Change{}, nil, hostcmd.Error("verify PostgreSQL server package", output, err)
 		}
 		return change, instances, nil
 	}
