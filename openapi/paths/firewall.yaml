@@ -1,0 +1,59 @@
+firewall_root:
+  get:
+    operationId: getFirewallStatus
+    summary: Get Firewall Status
+    tags:
+    - Firewall
+    x-permission: firewall.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Get Firewall Status
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+firewall_action:
+  post:
+    operationId: submitFirewallAction
+    summary: Submit Firewall Action
+    tags:
+    - Firewall
+    x-permission: firewall.write
+    security:
+    - sessionCookie: []
+    responses:
+      '202':
+        description: Submit Firewall Action
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+firewall_reverts:
+  get:
+    operationId: listFirewallReverts
+    summary: List Firewall Reverts
+    tags:
+    - Firewall
+    x-permission: firewall.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: List Firewall Reverts
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+firewall_reverts_confirm:
+  post:
+    operationId: confirmFirewallRevert
+    summary: Confirm Firewall Revert
+    tags:
+    - Firewall
+    x-permission: firewall.write
+    security:
+    - sessionCookie: []
+    responses:
+      '202':
+        description: Confirm Firewall Revert
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

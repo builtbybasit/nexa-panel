@@ -90,3 +90,23 @@ domains_id_activate:
 
       '4XX':
         $ref: ../components/responses.yaml#/ClientError
+domains_id:
+  delete:
+    operationId: deleteDomain
+    summary: Delete Domain
+    tags:
+    - Domains
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Delete Domain
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

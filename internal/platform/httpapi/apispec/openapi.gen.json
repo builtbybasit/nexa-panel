@@ -8012,6 +8012,477 @@
           }
         }
       }
+    },
+    "/audit/verify": {
+      "get": {
+        "operationId": "verifyAuditChain",
+        "summary": "Verify Audit Chain",
+        "tags": [
+          "Audit"
+        ],
+        "x-permission": "audit.read",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verify Audit Chain"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/domains/{id}": {
+      "delete": {
+        "operationId": "deleteDomain",
+        "summary": "Delete Domain",
+        "tags": [
+          "Domains"
+        ],
+        "x-permission": "operations.apply",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Delete Domain"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/postgresql/roles/{id}": {
+      "delete": {
+        "operationId": "dropPostgreSQLRole",
+        "summary": "Drop PostgreSQL Role",
+        "tags": [
+          "Databases"
+        ],
+        "x-permission": "databases.write",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Drop PostgreSQL Role"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/postgresql/databases/{id}": {
+      "delete": {
+        "operationId": "dropManagedPostgreSQLDatabase",
+        "summary": "Drop Managed PostgreSQL Database",
+        "tags": [
+          "Databases"
+        ],
+        "x-permission": "databases.write",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Drop Managed PostgreSQL Database"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/postgresql/grants/{id}": {
+      "delete": {
+        "operationId": "dropPostgreSQLGrant",
+        "summary": "Drop PostgreSQL Grant",
+        "tags": [
+          "Databases"
+        ],
+        "x-permission": "databases.write",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Drop PostgreSQL Grant"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/firewall": {
+      "get": {
+        "operationId": "getFirewallStatus",
+        "summary": "Get Firewall Status",
+        "tags": [
+          "Firewall"
+        ],
+        "x-permission": "firewall.read",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Get Firewall Status"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/firewall/action": {
+      "post": {
+        "operationId": "submitFirewallAction",
+        "summary": "Submit Firewall Action",
+        "tags": [
+          "Firewall"
+        ],
+        "x-permission": "firewall.write",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Submit Firewall Action"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/firewall/reverts": {
+      "get": {
+        "operationId": "listFirewallReverts",
+        "summary": "List Firewall Reverts",
+        "tags": [
+          "Firewall"
+        ],
+        "x-permission": "firewall.read",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List Firewall Reverts"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/firewall/reverts/confirm": {
+      "post": {
+        "operationId": "confirmFirewallRevert",
+        "summary": "Confirm Firewall Revert",
+        "tags": [
+          "Firewall"
+        ],
+        "x-permission": "firewall.write",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Confirm Firewall Revert"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/services": {
+      "get": {
+        "operationId": "listServices",
+        "summary": "List Services",
+        "tags": [
+          "Services"
+        ],
+        "x-permission": "services.read",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List Services"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/services/action": {
+      "post": {
+        "operationId": "runServiceAction",
+        "summary": "Run Service Action",
+        "tags": [
+          "Services"
+        ],
+        "x-permission": "services.write",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Run Service Action"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/services/reverts": {
+      "get": {
+        "operationId": "listServiceReverts",
+        "summary": "List Service Reverts",
+        "tags": [
+          "Services"
+        ],
+        "x-permission": "services.read",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List Service Reverts"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/services/reverts/confirm": {
+      "post": {
+        "operationId": "confirmServiceRevert",
+        "summary": "Confirm Service Revert",
+        "tags": [
+          "Services"
+        ],
+        "x-permission": "services.write",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Confirm Service Revert"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/sites/{id}/sftp": {
+      "get": {
+        "operationId": "getSiteSftpAccess",
+        "summary": "Get Site SFTP Access",
+        "tags": [
+          "Site Tools"
+        ],
+        "x-permission": "sites.read",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Get Site SFTP Access"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/sites/{id}/sftp/enable": {
+      "post": {
+        "operationId": "enableSiteSftpAccess",
+        "summary": "Enable Site SFTP Access",
+        "tags": [
+          "Site Tools"
+        ],
+        "x-permission": "operations.apply",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Enable Site SFTP Access"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/sites/{id}/sftp/disable": {
+      "post": {
+        "operationId": "disableSiteSftpAccess",
+        "summary": "Disable Site SFTP Access",
+        "tags": [
+          "Site Tools"
+        ],
+        "x-permission": "operations.apply",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Disable Site SFTP Access"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
+    "/sites/{id}/sftp/reset-password": {
+      "post": {
+        "operationId": "resetSiteSftpPassword",
+        "summary": "Reset Site SFTP Password",
+        "tags": [
+          "Site Tools"
+        ],
+        "x-permission": "operations.apply",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Reset Site SFTP Password"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
     }
   },
   "components": {

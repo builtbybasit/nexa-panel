@@ -32,3 +32,17 @@ audit_events:
 
       '4XX':
         $ref: ../components/responses.yaml#/ClientError
+audit_verify:
+  get:
+    operationId: verifyAuditChain
+    summary: Verify Audit Chain
+    tags:
+    - Audit
+    x-permission: audit.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: Verify Audit Chain
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

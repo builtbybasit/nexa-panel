@@ -1,0 +1,83 @@
+site_sftp:
+  get:
+    operationId: getSiteSftpAccess
+    summary: Get Site SFTP Access
+    tags:
+    - Site Tools
+    x-permission: sites.read
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '200':
+        description: Get Site SFTP Access
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+site_sftp_enable:
+  post:
+    operationId: enableSiteSftpAccess
+    summary: Enable Site SFTP Access
+    tags:
+    - Site Tools
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Enable Site SFTP Access
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+site_sftp_disable:
+  post:
+    operationId: disableSiteSftpAccess
+    summary: Disable Site SFTP Access
+    tags:
+    - Site Tools
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Disable Site SFTP Access
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+site_sftp_reset_password:
+  post:
+    operationId: resetSiteSftpPassword
+    summary: Reset Site SFTP Password
+    tags:
+    - Site Tools
+    x-permission: operations.apply
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Reset Site SFTP Password
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

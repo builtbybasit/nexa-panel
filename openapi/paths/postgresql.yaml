@@ -359,3 +359,65 @@ postgresql_resourceType_id_apply:
 
       '4XX':
         $ref: ../components/responses.yaml#/ClientError
+postgresql_roles_id:
+  delete:
+    operationId: dropPostgreSQLRole
+    summary: Drop PostgreSQL Role
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Drop PostgreSQL Role
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+postgresql_databases_id:
+  delete:
+    operationId: dropManagedPostgreSQLDatabase
+    summary: Drop Managed PostgreSQL Database
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Drop Managed PostgreSQL Database
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+postgresql_grants_id:
+  delete:
+    operationId: dropPostgreSQLGrant
+    summary: Drop PostgreSQL Grant
+    tags:
+    - Databases
+    x-permission: databases.write
+    security:
+    - sessionCookie: []
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    responses:
+      '202':
+        description: Drop PostgreSQL Grant
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError

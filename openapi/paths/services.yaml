@@ -1,0 +1,59 @@
+services_root:
+  get:
+    operationId: listServices
+    summary: List Services
+    tags:
+    - Services
+    x-permission: services.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: List Services
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+services_action:
+  post:
+    operationId: runServiceAction
+    summary: Run Service Action
+    tags:
+    - Services
+    x-permission: services.write
+    security:
+    - sessionCookie: []
+    responses:
+      '202':
+        description: Run Service Action
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+services_reverts:
+  get:
+    operationId: listServiceReverts
+    summary: List Service Reverts
+    tags:
+    - Services
+    x-permission: services.read
+    security:
+    - sessionCookie: []
+    responses:
+      '200':
+        description: List Service Reverts
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
+
+services_reverts_confirm:
+  post:
+    operationId: confirmServiceRevert
+    summary: Confirm Service Revert
+    tags:
+    - Services
+    x-permission: services.write
+    security:
+    - sessionCookie: []
+    responses:
+      '202':
+        description: Confirm Service Revert
+      '4XX':
+        $ref: ../components/responses.yaml#/ClientError
