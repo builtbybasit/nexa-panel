@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"os/exec"
 	"path/filepath"
 	"sort"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 func (o *HostOperator) Discover(ctx context.Context) ([]Instance, error) {

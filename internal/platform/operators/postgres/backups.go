@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 const postgresRestoreRecoveryTimeout = 30 * time.Minute

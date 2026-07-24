@@ -3,9 +3,10 @@ package postgres
 import (
 	"context"
 	"errors"
-	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 // dropRoleDatabase drops a managed database and everything in it. It is named
