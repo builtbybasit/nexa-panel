@@ -103,6 +103,19 @@ func (c *UnixClient) awaitCommittedTransaction(ctx context.Context, before Trans
 		}
 		select {
 		case <-waitCtx.Done():
+			// The wait ends two ways, and they mean opposite things. If the
+			// caller's own context was cancelled, the cause is almost always the
+			// activation restarting this very control plane — the same restart the
+			// new agent is bringing about — so surface the cancellation unwrapped.
+			// The jobs worker only recognises a shutdown when the handler returns
+			// context.Canceled; masking it as a severed apply made the worker
+			// record a false failure for an update that had in fact succeeded, and
+			// left RecoveryRetry with nothing running to resume. Only a genuine
+			// resumeTimeout — the parent still alive, the agent never republishing —
+			// is a real failed update.
+			if err := ctx.Err(); err != nil {
+				return Result{}, err
+			}
 			return Result{}, fmt.Errorf("the node published no update outcome after its agent restarted: %w", severed)
 		case <-ticker.C:
 		}

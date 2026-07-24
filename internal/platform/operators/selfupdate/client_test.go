@@ -128,6 +128,36 @@ func TestApplyStillFailsWhenNoNewTransactionEverCommits(t *testing.T) {
 	}
 }
 
+// The activation that severs the apply also restarts nexa-api, and that restart
+// cancels the job context this Apply runs under before the journal ever reaches a
+// terminal phase. The client must surface that cancellation as context.Canceled,
+// not as a "no update outcome" failure: only context.Canceled tells the jobs
+// worker a shutdown is in progress, so it leaves the row running and RecoveryRetry
+// re-reads the committed outcome after the control plane comes back. Masking it
+// recorded a false failure for a node that had already updated correctly.
+func TestApplyPropagatesTheCancellationWhenActivationRestartsTheControlPlane(t *testing.T) {
+	agent := &restartingAgent{
+		applyErr: severedResponse(),
+		// The journal is still activating and never commits before the API is
+		// bounced, so resuming can only end when the parent context is cancelled.
+		journal: []TransactionStatus{
+			{Present: true, ID: "older", Phase: PhaseSucceeded, Terminal: true},
+			{Present: true, ID: "current", TargetVersion: "0.5.3", Phase: "activating"},
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := testUnixClient(agent).Apply(ctx, Change{Version: "0.5.3"})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled so the jobs worker leaves the row running for retry", err)
+	}
+}
+
 func TestApplyDoesNotResumeWhenTheAgentAnsweredWithAnError(t *testing.T) {
 	agent := &restartingAgent{
 		applyErr: &agentclient.ResponseError{StatusCode: http.StatusConflict, Code: "self_update_failed", Message: "this node already runs version 0.5.3"},

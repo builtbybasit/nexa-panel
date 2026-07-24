@@ -28,6 +28,10 @@ once stable releases begin.
 
 ### Fixed
 
+- Self-update no longer reports a false failure when the activation restarts the
+  control plane: the cancellation that restart raises is now surfaced as such, so
+  the interrupted job is left running and recovered to the committed outcome
+  instead of being recorded as failed on a node that updated correctly.
 - Metrics forwarding through packaged Nginx.
 - Site deletion ownership of schedules and backup references.
 - pgAdmin proxy path/session behavior and destructive UI safety checks.
