@@ -97,8 +97,12 @@ web-build: web-install
 web-deadcode: web-install
 	cd web && $(BUN) run deadcode
 
+# bun audit is a live call to the advisory registry. A registry outage (5xx/429)
+# must not block a tagged release when the code is unchanged, so the gate is run
+# through a wrapper that fails on a reported advisory but downgrades a
+# transport/service failure to a warning. See scripts/web-audit.sh.
 web-audit: web-install
-	cd web && $(BUN) audit
+	BUN="$(BUN)" bash scripts/web-audit.sh
 
 openapi-lint: web-install
 	cd web && $(BUN) run openapi:lint
