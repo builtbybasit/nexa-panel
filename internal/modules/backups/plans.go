@@ -14,6 +14,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 )
@@ -347,25 +348,25 @@ func (m *Module) assertAccountExists(ctx context.Context, accountID string) erro
 func (m *Module) listPlansHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	models, err := m.listPlansForUser(r.Context(), user)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_plans_unavailable", "The backup plans could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_plans_unavailable", "The backup plans could not be loaded.")
 		return
 	}
 	plans := make([]Plan, 0, len(models))
 	for _, model := range models {
 		plans = append(plans, model.toPlan())
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": plans})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": plans})
 }
 
 func (m *Module) createPlanHTTP(w http.ResponseWriter, r *http.Request) {
 	var request PlanRequest
 	if err := decodeJSON(w, r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	plan, err := m.CreatePlan(r.Context(), request)
@@ -373,49 +374,49 @@ func (m *Module) createPlanHTTP(w http.ResponseWriter, r *http.Request) {
 		writePlanError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, plan)
+	httpapi.WriteJSON(w, http.StatusCreated, plan)
 }
 
 func (m *Module) getPlanHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	model, err := m.getPlanForUser(r.Context(), user, r.PathValue("id"))
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_plan_unavailable", "The backup plan could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_plan_unavailable", "The backup plan could not be loaded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, model.toPlan())
+	httpapi.WriteJSON(w, http.StatusOK, model.toPlan())
 }
 
 func (m *Module) updatePlanHTTP(w http.ResponseWriter, r *http.Request) {
 	var request PlanRequest
 	if err := decodeJSON(w, r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	plan, err := m.UpdatePlan(r.Context(), r.PathValue("id"), request)
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
 		return
 	}
 	if err != nil {
 		writePlanError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, plan)
+	httpapi.WriteJSON(w, http.StatusOK, plan)
 }
 
 func (m *Module) togglePlanHTTP(w http.ResponseWriter, r *http.Request) {
 	var request toggleRequest
 	if err := decodeJSON(w, r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	result, err := m.database.NewUpdate().Model((*planModel)(nil)).
@@ -423,11 +424,11 @@ func (m *Module) togglePlanHTTP(w http.ResponseWriter, r *http.Request) {
 		Set("schedule_error = NULL").Set("schedule_synced_at = NULL").Set("updated_at = ?", m.now().UTC()).
 		Where("id = ?", r.PathValue("id")).Exec(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_plan_update_failed", "The backup plan could not be updated.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_plan_update_failed", "The backup plan could not be updated.")
 		return
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
-		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
 		return
 	}
 	// Reflect the new enabled state in the installed timer and preserve any
@@ -447,20 +448,20 @@ func (m *Module) togglePlanHTTP(w http.ResponseWriter, r *http.Request) {
 func (m *Module) deletePlanHTTP(w http.ResponseWriter, r *http.Request) {
 	err := m.DeletePlan(r.Context(), r.PathValue("id"))
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
 		return
 	}
 	if errors.Is(err, errPlanHasCopies) {
-		writeError(w, http.StatusConflict, "backup_plan_has_copies", "Delete every stored copy before deleting this backup plan.")
+		httpapi.WriteError(w, http.StatusConflict, "backup_plan_has_copies", "Delete every stored copy before deleting this backup plan.")
 		return
 	}
 	var removal scheduleRemovalError
 	if errors.As(err, &removal) {
-		writeError(w, http.StatusBadGateway, "backup_schedule_remove_failed", "The backup schedule could not be removed; the plan was kept for a safe retry.")
+		httpapi.WriteError(w, http.StatusBadGateway, "backup_schedule_remove_failed", "The backup schedule could not be removed; the plan was kept for a safe retry.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_plan_delete_failed", "The backup plan could not be removed.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_plan_delete_failed", "The backup plan could not be removed.")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -515,10 +516,10 @@ func (m *Module) DeletePlan(ctx context.Context, id string) error {
 func writePlanError(w http.ResponseWriter, err error) {
 	var invalid validationError
 	if errors.As(err, &invalid) {
-		writeError(w, http.StatusUnprocessableEntity, "backup_plan_invalid", invalid.message)
+		httpapi.WriteError(w, http.StatusUnprocessableEntity, "backup_plan_invalid", invalid.message)
 		return
 	}
-	writeError(w, http.StatusInternalServerError, "backup_plan_failed", "The backup plan could not be saved.")
+	httpapi.WriteError(w, http.StatusInternalServerError, "backup_plan_failed", "The backup plan could not be saved.")
 }
 
 func encodeSlice(values []string) string {

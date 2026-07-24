@@ -15,89 +15,89 @@ import (
 func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	limit := 50
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 200 {
-			writeError(w, http.StatusBadRequest, "invalid_limit", "Limit must be between 1 and 200.")
+			httpapi.WriteError(w, http.StatusBadRequest, "invalid_limit", "Limit must be between 1 and 200.")
 			return
 		}
 		limit = parsed
 	}
 	items, err := m.ListForUser(r.Context(), user, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "jobs_unavailable", "Jobs could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "jobs_unavailable", "Jobs could not be loaded.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": redactJobsForAPI(items)})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": redactJobsForAPI(items)})
 }
 
 func (m *Module) getHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	id, err := parseID(r)
 	if err != nil || id < 1 {
-		writeError(w, http.StatusBadRequest, "invalid_job_id", "A valid job ID is required.")
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_job_id", "A valid job ID is required.")
 		return
 	}
 	job, err := m.GetForUser(r.Context(), user, id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "job_not_found", "The job does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "job_not_found", "The job does not exist.")
 		return
 	}
-	writeJSON(w, http.StatusOK, redactJobForAPI(job))
+	httpapi.WriteJSON(w, http.StatusOK, redactJobForAPI(job))
 }
 
 func (m *Module) diagnosticsHTTP(w http.ResponseWriter, r *http.Request) {
 	input := diagnosticsRequest{DelayMilliseconds: 100}
 	if r.ContentLength != 0 {
 		if err := httpapi.DecodeJSONLimit(w, r, &input, 4*1024); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
 	}
 	if input.DelayMilliseconds < 10 || input.DelayMilliseconds > 2000 {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_delay", "Delay must be between 10 and 2000 milliseconds.")
+		httpapi.WriteError(w, http.StatusUnprocessableEntity, "invalid_delay", "Delay must be between 10 and 2000 milliseconds.")
 		return
 	}
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	job, err := m.SubmitTitled(r.Context(), "platform.diagnostics", "Run diagnostics", input, &user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The diagnostic job could not be queued.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "job_submission_failed", "The diagnostic job could not be queued.")
 		return
 	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, redactJobForAPI(job))
+	httpapi.WriteJSON(w, http.StatusAccepted, redactJobForAPI(job))
 }
 
 func (m *Module) eventsHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	id, err := parseID(r)
 	if err != nil || id < 1 {
-		writeError(w, http.StatusBadRequest, "invalid_job_id", "A valid job ID is required.")
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_job_id", "A valid job ID is required.")
 		return
 	}
 	if _, err := m.GetForUser(r.Context(), user, id); err != nil {
-		writeError(w, http.StatusNotFound, "job_not_found", "The job does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "job_not_found", "The job does not exist.")
 		return
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming_unavailable", "Progress streaming is unavailable.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "streaming_unavailable", "Progress streaming is unavailable.")
 		return
 	}
 	// A job can run for minutes (e.g. an apt/nvm package install), far longer
@@ -110,7 +110,7 @@ func (m *Module) eventsHTTP(w http.ResponseWriter, r *http.Request) {
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || parsed < 0 {
-			writeError(w, http.StatusBadRequest, "invalid_event_id", "Last-Event-ID must be a positive integer.")
+			httpapi.WriteError(w, http.StatusBadRequest, "invalid_event_id", "Last-Event-ID must be a positive integer.")
 			return
 		}
 		sequence = parsed
@@ -158,8 +158,3 @@ func (m *Module) eventsHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-
-var (
-	writeJSON  = httpapi.WriteJSON
-	writeError = httpapi.WriteError
-)

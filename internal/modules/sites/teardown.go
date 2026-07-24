@@ -32,27 +32,27 @@ type deletePayload struct {
 func (m *Module) deleteHTTP(w http.ResponseWriter, r *http.Request) {
 	site, err := m.Get(r.Context(), r.PathValue("id"))
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
 		return
 	}
 	if !siteDeletable(site.Status) {
-		writeError(w, http.StatusConflict, "site_busy", "The site is mid-operation; wait for the current job to finish before deleting it.")
+		httpapi.WriteError(w, http.StatusConflict, "site_busy", "The site is mid-operation; wait for the current job to finish before deleting it.")
 		return
 	}
 	if blocker, err := m.dependentBlocker(r.Context(), site.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "site_unavailable", "The site dependents could not be checked.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "site_unavailable", "The site dependents could not be checked.")
 		return
 	} else if blocker != "" {
-		writeError(w, http.StatusConflict, "site_has_dependents", blocker)
+		httpapi.WriteError(w, http.StatusConflict, "site_has_dependents", blocker)
 		return
 	}
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	payload := deletePayload{SiteID: site.ID, TeardownHost: site.Status == StatusActive}
@@ -69,21 +69,21 @@ func (m *Module) deleteHTTP(w http.ResponseWriter, r *http.Request) {
 			"after":        map[string]any{"status": string(StatusDeleting)},
 		},
 	}); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "audit_unavailable", "The removal was refused because it could not be recorded in the audit log.")
+		httpapi.WriteError(w, http.StatusServiceUnavailable, "audit_unavailable", "The removal was refused because it could not be recorded in the audit log.")
 		return
 	}
 	job, err := m.jobs.SubmitTitled(r.Context(), "site.delete", "Delete site "+site.DisplayName, payload, &user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "job_submission_failed", "Site removal could not be queued.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "job_submission_failed", "Site removal could not be queued.")
 		return
 	}
 	_, err = m.database.NewUpdate().Model((*siteModel)(nil)).Set("status = ?", StatusDeleting).Set("last_job_id = ?", job.ID).Set("failure = NULL").Set("updated_at = ?", m.now().UTC()).Where("id = ?", site.ID).Exec(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "site_update_failed", "The queued removal could not be attached to the site.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "site_update_failed", "The queued removal could not be attached to the site.")
 		return
 	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, job)
+	httpapi.WriteJSON(w, http.StatusAccepted, job)
 }
 
 // siteDeletable rejects a teardown while the site is mid-operation, so a delete

@@ -12,6 +12,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
@@ -232,11 +233,11 @@ func (m *Module) runPlanHTTP(w http.ResponseWriter, r *http.Request) {
 	plan := new(planModel)
 	err := m.database.NewSelect().Model(plan).Where("id = ?", r.PathValue("id")).Scan(r.Context())
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_plan_unavailable", "The backup plan could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_plan_unavailable", "The backup plan could not be loaded.")
 		return
 	}
 	var actor *string
@@ -250,37 +251,37 @@ func (m *Module) runPlanHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	if err != nil {
 		if errors.Is(err, jobs.ErrIdempotencyConflict) {
-			writeError(w, http.StatusConflict, "backup_run_idempotency_conflict", "The idempotency key was already used for a different backup request.")
+			httpapi.WriteError(w, http.StatusConflict, "backup_run_idempotency_conflict", "The idempotency key was already used for a different backup request.")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "backup_run_failed", "The backup could not be queued.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_run_failed", "The backup could not be queued.")
 		return
 	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, job)
+	httpapi.WriteJSON(w, http.StatusAccepted, job)
 }
 
 func (m *Module) listCopiesHTTP(w http.ResponseWriter, r *http.Request) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	if _, err := m.getPlanForUser(r.Context(), user, r.PathValue("id")); errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "backup_plan_not_found", "The requested backup plan does not exist.")
 		return
 	} else if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_plan_unavailable", "The backup plan could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_plan_unavailable", "The backup plan could not be loaded.")
 		return
 	}
 	var models []copyModel
 	if err := m.database.NewSelect().Model(&models).Where("plan_id = ?", r.PathValue("id")).Order("copy_name DESC").Scan(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_copies_unavailable", "The backup copies could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_copies_unavailable", "The backup copies could not be loaded.")
 		return
 	}
 	copies := make([]Copy, 0, len(models))
 	for _, model := range models {
 		copies = append(copies, model.toCopy())
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": copies})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": copies})
 }

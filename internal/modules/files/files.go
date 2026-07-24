@@ -11,6 +11,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 type SiteCatalog interface {
@@ -56,34 +57,29 @@ func (m *Module) Descriptor() module.Descriptor {
 	}
 }
 
+// Register binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract.
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern    string
-		permission string
-		handler    http.Handler
-	}{
-		{"GET /api/v1/sites/{id}/files", "files.read", http.HandlerFunc(m.listHTTP)},
-		{"GET /api/v1/sites/{id}/files/stat", "files.read", http.HandlerFunc(m.statHTTP)},
-		{"GET /api/v1/sites/{id}/files/content", "files.read", http.HandlerFunc(m.readHTTP)},
-		{"PUT /api/v1/sites/{id}/files/content", "files.write", http.HandlerFunc(m.writeHTTP)},
-		{"GET /api/v1/sites/{id}/files/download", "files.read", http.HandlerFunc(m.downloadHTTP)},
-		{"POST /api/v1/sites/{id}/files/mkdir", "files.write", http.HandlerFunc(m.mkdirHTTP)},
-		{"POST /api/v1/sites/{id}/files/move", "files.write", http.HandlerFunc(m.moveHTTP)},
-		{"POST /api/v1/sites/{id}/files/copy", "files.write", http.HandlerFunc(m.copyHTTP)},
-		{"POST /api/v1/sites/{id}/files/chmod", "files.write", http.HandlerFunc(m.chmodHTTP)},
-		{"POST /api/v1/sites/{id}/files/delete", "files.write", http.HandlerFunc(m.deleteHTTP)},
-		{"POST /api/v1/sites/{id}/files/uploads", "files.write", http.HandlerFunc(m.uploadBeginHTTP)},
-		{"PUT /api/v1/sites/{id}/files/uploads/{uploadId}", "files.write", http.HandlerFunc(m.uploadChunkHTTP)},
-		{"POST /api/v1/sites/{id}/files/uploads/{uploadId}/commit", "files.write", http.HandlerFunc(m.uploadCommitHTTP)},
-		{"DELETE /api/v1/sites/{id}/files/uploads/{uploadId}", "files.write", http.HandlerFunc(m.uploadAbortHTTP)},
-		{"POST /api/v1/sites/{id}/files/archive", "files.write", http.HandlerFunc(m.archiveHTTP)},
-		{"POST /api/v1/sites/{id}/files/extract", "files.write", http.HandlerFunc(m.extractHTTP)},
-		{"POST /api/v1/sites/{id}/files/size", "files.read", http.HandlerFunc(m.sizeHTTP)},
-	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"listSiteFiles":            m.listHTTP,
+		"statSiteFile":             m.statHTTP,
+		"readSiteFileContent":      m.readHTTP,
+		"writeSiteFileContent":     m.writeHTTP,
+		"downloadSiteFile":         m.downloadHTTP,
+		"createSiteDirectory":      m.mkdirHTTP,
+		"moveSiteFile":             m.moveHTTP,
+		"copySiteFile":             m.copyHTTP,
+		"chmodSiteFile":            m.chmodHTTP,
+		"deleteSiteFile":           m.deleteHTTP,
+		"beginSiteFileUpload":      m.uploadBeginHTTP,
+		"uploadSiteFileChunk":      m.uploadChunkHTTP,
+		"commitSiteFileUpload":     m.uploadCommitHTTP,
+		"abortSiteFileUpload":      m.uploadAbortHTTP,
+		"archiveSiteFiles":         m.archiveHTTP,
+		"extractSiteArchive":       m.extractHTTP,
+		"measureSiteDirectorySize": m.sizeHTTP,
+	})
 }

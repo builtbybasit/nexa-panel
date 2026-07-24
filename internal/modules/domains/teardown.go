@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
@@ -19,35 +20,35 @@ import (
 func (m *Module) deleteHTTP(w http.ResponseWriter, r *http.Request) {
 	domain, err := m.Get(r.Context(), r.PathValue("id"))
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "domain_not_found", "The domain does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "domain_not_found", "The domain does not exist.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "domain_unavailable", "The domain could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "domain_unavailable", "The domain could not be loaded.")
 		return
 	}
 	if domain.Kind == KindPrimary {
-		writeError(w, http.StatusConflict, "domain_primary_protected", "The primary domain is removed by deleting its site, not on its own.")
+		httpapi.WriteError(w, http.StatusConflict, "domain_primary_protected", "The primary domain is removed by deleting its site, not on its own.")
 		return
 	}
 	if !domainRemovable(domain.Status) {
-		writeError(w, http.StatusConflict, "domain_busy", "The domain is mid-operation; wait for the current job to finish before removing it.")
+		httpapi.WriteError(w, http.StatusConflict, "domain_busy", "The domain is mid-operation; wait for the current job to finish before removing it.")
 		return
 	}
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return
 	}
 	payload := removePayload{DomainID: domain.ID}
 	job, err := m.jobs.SubmitTitled(r.Context(), "domain.remove", "Remove domain "+domain.Hostname, payload, &user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "job_submission_failed", "Domain removal could not be queued.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "job_submission_failed", "Domain removal could not be queued.")
 		return
 	}
 	_, _ = m.database.NewUpdate().Model((*domainModel)(nil)).Set("status = ?", StatusRemoving).Set("last_job_id = ?", job.ID).Set("failure = NULL").Set("updated_at = ?", m.now().UTC()).Where("id = ?", domain.ID).Exec(r.Context())
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, job)
+	httpapi.WriteJSON(w, http.StatusAccepted, job)
 }
 
 // domainRemovable rejects a removal while the domain is mid-operation, so a

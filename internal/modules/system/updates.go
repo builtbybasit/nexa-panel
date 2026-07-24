@@ -11,7 +11,6 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	selfupdateoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/selfupdate"
 )
 
@@ -43,16 +42,6 @@ func WithUpdates(queue *jobs.Module, operator selfupdateoperator.Operator) Optio
 			m.initErr = err
 		}
 	}
-}
-
-func (m *Module) registerUpdates(registry module.Registry) error {
-	if m.updates == nil {
-		return nil
-	}
-	if err := registry.HandleAuthorized("GET /api/v1/system/updates", "system.read", http.HandlerFunc(m.availableUpdateHTTP)); err != nil {
-		return err
-	}
-	return registry.HandleAuthorized("POST /api/v1/system/updates/apply", "system.update", http.HandlerFunc(m.applyUpdateHTTP))
 }
 
 // availableUpdateHTTP reports the installed version and the newest release the

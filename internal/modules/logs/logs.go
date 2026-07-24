@@ -10,6 +10,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	logsoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/logs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 type SiteCatalog interface {
@@ -53,20 +54,16 @@ func (m *Module) Descriptor() module.Descriptor {
 	}
 }
 
+// Register binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract.
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern string
-		handler http.Handler
-	}{
-		{"GET /api/v1/sites/{id}/logs", http.HandlerFunc(m.listHTTP)},
-		{"GET /api/v1/sites/{id}/logs/read", http.HandlerFunc(m.readHTTP)},
-		{"GET /api/v1/sites/{id}/logs/stream", http.HandlerFunc(m.streamHTTP)},
-		{"GET /api/v1/sites/{id}/logs/download", http.HandlerFunc(m.downloadHTTP)},
-	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, "logs.read", route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"listSiteLogs":    m.listHTTP,
+		"readSiteLog":     m.readHTTP,
+		"streamSiteLog":   m.streamHTTP,
+		"downloadSiteLog": m.downloadHTTP,
+	})
 }

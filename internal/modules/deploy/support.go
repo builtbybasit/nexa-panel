@@ -38,21 +38,21 @@ func refuse(status int, code, message string) error {
 func (m *Module) resolveSite(w http.ResponseWriter, r *http.Request) (sites.Site, bool) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return sites.Site{}, false
 	}
 	accessible, err := m.access.SiteAccessible(r.Context(), user, r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
 		return sites.Site{}, false
 	}
 	if !accessible {
-		writeError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
 		return sites.Site{}, false
 	}
 	site, err := m.sites.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
 		return sites.Site{}, false
 	}
 	return site, true
@@ -207,10 +207,4 @@ func authorizedKeysPath(site sites.Site) string {
 const (
 	loginShell   = "/bin/bash"
 	nologinShell = "/usr/sbin/nologin"
-)
-
-var (
-	decodeJSON = httpapi.DecodeJSON
-	writeJSON  = httpapi.WriteJSON
-	writeError = httpapi.WriteError
 )

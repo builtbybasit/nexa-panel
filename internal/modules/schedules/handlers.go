@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
@@ -15,33 +16,33 @@ import (
 func (m *Module) resolveSite(w http.ResponseWriter, r *http.Request, mutation bool) (sites.Site, sitefs.Scope, identity.User, bool) {
 	user, ok := identity.UserFromContext(r.Context())
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
+		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	site, err := m.sites.Get(r.Context(), r.PathValue("id"))
 	if isNoRows(err) {
-		writeError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	accessible, err := m.access.SiteAccessible(r.Context(), user, site.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "site_unavailable", "The site could not be loaded.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	if !accessible {
-		writeError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "site_not_found", "The requested site does not exist.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	if mutation && site.Status != sites.StatusActive {
-		writeError(w, http.StatusConflict, "site_not_active", "Scheduled tasks can only be changed while the site is active.")
+		httpapi.WriteError(w, http.StatusConflict, "site_not_active", "Scheduled tasks can only be changed while the site is active.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	if !mutation && site.Status == sites.StatusDraft {
-		writeError(w, http.StatusConflict, "site_not_active", "Scheduled tasks are not available for draft sites.")
+		httpapi.WriteError(w, http.StatusConflict, "site_not_active", "Scheduled tasks are not available for draft sites.")
 		return sites.Site{}, sitefs.Scope{}, identity.User{}, false
 	}
 	scope := sitefs.Scope{SiteID: site.ID, Slug: site.Slug, RootPath: site.RootPath, UnixUser: site.UnixUser}
@@ -53,11 +54,11 @@ func (m *Module) resolveSite(w http.ResponseWriter, r *http.Request, mutation bo
 func (m *Module) resolveTask(w http.ResponseWriter, r *http.Request, siteID string) (Task, bool) {
 	task, err := m.task(r.Context(), siteID, r.PathValue("taskId"))
 	if isNoRows(err) {
-		writeError(w, http.StatusNotFound, "schedule_not_found", "The requested scheduled task does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "schedule_not_found", "The requested scheduled task does not exist.")
 		return Task{}, false
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "schedule_unavailable", "The scheduled task could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "schedule_unavailable", "The scheduled task could not be loaded.")
 		return Task{}, false
 	}
 	return task, true
@@ -80,14 +81,14 @@ func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	models := make([]taskModel, 0)
 	if err := m.database.NewSelect().Model(&models).Where("site_id = ?", site.ID).OrderExpr("name ASC, created_at ASC").Scan(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "schedules_unavailable", "Scheduled tasks could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "schedules_unavailable", "Scheduled tasks could not be loaded.")
 		return
 	}
 	items := make([]Task, 0, len(models))
 	for index := range models {
 		items = append(items, models[index].toTask())
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (m *Module) getHTTP(w http.ResponseWriter, r *http.Request) {
@@ -106,13 +107,13 @@ func (m *Module) getHTTP(w http.ResponseWriter, r *http.Request) {
 			response["planExpiresAt"] = expiresAt
 		}
 	}
-	writeJSON(w, http.StatusOK, response)
+	httpapi.WriteJSON(w, http.StatusOK, response)
 }
 
 func (m *Module) createHTTP(w http.ResponseWriter, r *http.Request) {
 	var request TaskRequest
-	if err := decodeJSON(w, r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	if err := httpapi.DecodeJSON(w, r, &request); err != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	_, scope, user, ok := m.resolveSite(w, r, true)
@@ -120,7 +121,7 @@ func (m *Module) createHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateRequest(&request); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "schedule_invalid", err.Error())
+		httpapi.WriteError(w, http.StatusUnprocessableEntity, "schedule_invalid", err.Error())
 		return
 	}
 	now := m.now().UTC()
@@ -130,7 +131,7 @@ func (m *Module) createHTTP(w http.ResponseWriter, r *http.Request) {
 		Status: string(StatusPlanning), CreatedAt: now, UpdatedAt: now,
 	}
 	if _, err := m.database.NewInsert().Model(model).Exec(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "schedule_create_failed", "The scheduled task could not be stored.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "schedule_create_failed", "The scheduled task could not be stored.")
 		return
 	}
 	m.submitPlan(w, r, model.toTask(), scope, user, false)
@@ -138,8 +139,8 @@ func (m *Module) createHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (m *Module) updateHTTP(w http.ResponseWriter, r *http.Request) {
 	var request TaskRequest
-	if err := decodeJSON(w, r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	if err := httpapi.DecodeJSON(w, r, &request); err != nil {
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	site, scope, user, ok := m.resolveSite(w, r, true)
@@ -151,11 +152,11 @@ func (m *Module) updateHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if busy(task) || task.PendingRemoval {
-		writeError(w, http.StatusConflict, "schedule_conflict", "The scheduled task has an operation in flight; wait for it to finish.")
+		httpapi.WriteError(w, http.StatusConflict, "schedule_conflict", "The scheduled task has an operation in flight; wait for it to finish.")
 		return
 	}
 	if err := validateRequest(&request); err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "schedule_invalid", err.Error())
+		httpapi.WriteError(w, http.StatusUnprocessableEntity, "schedule_invalid", err.Error())
 		return
 	}
 	task.Name = request.Name
@@ -170,7 +171,7 @@ func (m *Module) updateHTTP(w http.ResponseWriter, r *http.Request) {
 		Set("enabled = ?", task.Enabled).Set("status = ?", StatusPlanning).
 		Set("failure = NULL").Set("updated_at = ?", now).
 		Where("id = ?", task.ID).Exec(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "schedule_update_failed", "The scheduled task could not be updated.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "schedule_update_failed", "The scheduled task could not be updated.")
 		return
 	}
 	task.Status = StatusPlanning
@@ -189,7 +190,7 @@ func (m *Module) deleteHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if busy(task) {
-		writeError(w, http.StatusConflict, "schedule_conflict", "The scheduled task has an operation in flight; wait for it to finish.")
+		httpapi.WriteError(w, http.StatusConflict, "schedule_conflict", "The scheduled task has an operation in flight; wait for it to finish.")
 		return
 	}
 	now := m.now().UTC()
@@ -197,7 +198,7 @@ func (m *Module) deleteHTTP(w http.ResponseWriter, r *http.Request) {
 		Set("pending_removal = ?", true).Set("status = ?", StatusPlanning).
 		Set("failure = NULL").Set("updated_at = ?", now).
 		Where("id = ?", task.ID).Exec(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "schedule_update_failed", "The scheduled task could not be marked for removal.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "schedule_update_failed", "The scheduled task could not be marked for removal.")
 		return
 	}
 	task.PendingRemoval = true
@@ -213,7 +214,7 @@ func (m *Module) submitPlan(w http.ResponseWriter, r *http.Request, task Task, s
 	job, err := m.jobs.SubmitTitled(r.Context(), "schedule.plan", "Update scheduled task", planPayload{Task: task.operatorTask(scope), Removal: removal}, &user.ID)
 	if err != nil {
 		m.markFailed(r.Context(), task.ID, err)
-		writeError(w, http.StatusInternalServerError, "job_submission_failed", "Schedule planning could not be queued.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "job_submission_failed", "Schedule planning could not be queued.")
 		return
 	}
 	now := m.now().UTC()
@@ -221,7 +222,7 @@ func (m *Module) submitPlan(w http.ResponseWriter, r *http.Request, task Task, s
 	task.LastJobID = &job.ID
 	task.UpdatedAt = now
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, map[string]any{"task": task, "job": job})
+	httpapi.WriteJSON(w, http.StatusAccepted, map[string]any{"task": task, "job": job})
 }
 
 func (m *Module) applyHTTP(w http.ResponseWriter, r *http.Request) {
@@ -234,20 +235,20 @@ func (m *Module) applyHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if task.Status != StatusPlanReady {
-		writeError(w, http.StatusConflict, "schedule_not_ready", "Only a reviewed, current schedule plan can be applied.")
+		httpapi.WriteError(w, http.StatusConflict, "schedule_not_ready", "Only a reviewed, current schedule plan can be applied.")
 		return
 	}
 	plan, expiresAt, err := m.plan(r.Context(), task.ID)
 	if isNoRows(err) {
-		writeError(w, http.StatusNotFound, "schedule_plan_not_found", "A signed schedule plan is not ready.")
+		httpapi.WriteError(w, http.StatusNotFound, "schedule_plan_not_found", "A signed schedule plan is not ready.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "schedule_plan_unavailable", "The schedule plan could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "schedule_plan_unavailable", "The schedule plan could not be loaded.")
 		return
 	}
 	if m.now().UTC().After(expiresAt) {
-		writeError(w, http.StatusConflict, "schedule_plan_expired", "The schedule plan has expired; plan the task again.")
+		httpapi.WriteError(w, http.StatusConflict, "schedule_plan_expired", "The schedule plan has expired; plan the task again.")
 		return
 	}
 	m.submitPlanMutation(w, r, "schedule.apply", StatusActivating, task, plan, user)
@@ -263,16 +264,16 @@ func (m *Module) rollbackHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if task.Status != StatusActive {
-		writeError(w, http.StatusConflict, "schedule_not_active", "Only an applied scheduled task can be rolled back.")
+		httpapi.WriteError(w, http.StatusConflict, "schedule_not_active", "Only an applied scheduled task can be rolled back.")
 		return
 	}
 	plan, _, err := m.plan(r.Context(), task.ID)
 	if isNoRows(err) {
-		writeError(w, http.StatusNotFound, "schedule_plan_not_found", "A signed schedule plan is not ready.")
+		httpapi.WriteError(w, http.StatusNotFound, "schedule_plan_not_found", "A signed schedule plan is not ready.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "schedule_plan_unavailable", "The schedule plan could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "schedule_plan_unavailable", "The schedule plan could not be loaded.")
 		return
 	}
 	m.submitPlanMutation(w, r, "schedule.rollback", StatusRollingBack, task, plan, user)
@@ -288,16 +289,16 @@ func (m *Module) runHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if task.Status != StatusActive || !task.Enabled {
-		writeError(w, http.StatusConflict, "schedule_not_runnable", "Only an applied, enabled scheduled task can be run.")
+		httpapi.WriteError(w, http.StatusConflict, "schedule_not_runnable", "Only an applied, enabled scheduled task can be run.")
 		return
 	}
 	job, err := m.jobs.SubmitTitled(r.Context(), "schedule.run", "Run scheduled task", runPayload{Task: task.operatorTask(scope)}, &user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The task run could not be queued.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "job_submission_failed", "The task run could not be queued.")
 		return
 	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, job)
+	httpapi.WriteJSON(w, http.StatusAccepted, job)
 }
 
 func (m *Module) runsHTTP(w http.ResponseWriter, r *http.Request) {
@@ -314,5 +315,5 @@ func (m *Module) runsHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOperatorError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": records})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": records})
 }

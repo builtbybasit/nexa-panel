@@ -115,11 +115,6 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {
 	return httpapi.DecodeJSONLimit(w, r, destination, 32*1024)
 }
 
-var (
-	writeJSON  = httpapi.WriteJSON
-	writeError = httpapi.WriteError
-)
-
 // getAccountModel is shared by the get/update/delete/test handlers.
 func (m *Module) getAccountModel(ctx context.Context, id string) (*accountModel, error) {
 	model := new(accountModel)

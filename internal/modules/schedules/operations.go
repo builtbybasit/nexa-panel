@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	scheduleoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/schedules"
 	"github.com/uptrace/bun"
@@ -32,16 +33,16 @@ type runPayload struct {
 func (m *Module) submitPlanMutation(w http.ResponseWriter, r *http.Request, kind string, status Status, task Task, plan scheduleoperator.Plan, user identity.User) {
 	job, err := m.jobs.Submit(r.Context(), kind, plan, &user.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "job_submission_failed", "The schedule operation could not be queued.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "job_submission_failed", "The schedule operation could not be queued.")
 		return
 	}
 	now := m.now().UTC()
 	if _, err := m.database.NewUpdate().Model((*taskModel)(nil)).Set("status = ?", status).Set("last_job_id = ?", job.ID).Set("updated_at = ?", now).Where("id = ?", task.ID).Exec(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "schedule_update_failed", "The queued operation could not be attached to the task.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "schedule_update_failed", "The queued operation could not be attached to the task.")
 		return
 	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, job)
+	httpapi.WriteJSON(w, http.StatusAccepted, job)
 }
 
 func (m *Module) planJob(ctx context.Context, request json.RawMessage, report func(int, string) error) (any, error) {

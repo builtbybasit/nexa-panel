@@ -17,6 +17,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	sftpoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sftp"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 
 	"github.com/uptrace/bun"
 )
@@ -105,21 +106,16 @@ func (m *Module) AccessEnabled(ctx context.Context, siteID string) (bool, error)
 	return row.Enabled, nil
 }
 
+// Register binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract.
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern    string
-		permission string
-		handler    http.Handler
-	}{
-		{"GET /api/v1/sites/{id}/sftp", "sites.read", http.HandlerFunc(m.statusHTTP)},
-		{"POST /api/v1/sites/{id}/sftp/enable", "operations.apply", http.HandlerFunc(m.enableHTTP)},
-		{"POST /api/v1/sites/{id}/sftp/disable", "operations.apply", http.HandlerFunc(m.disableHTTP)},
-		{"POST /api/v1/sites/{id}/sftp/reset-password", "operations.apply", http.HandlerFunc(m.resetPasswordHTTP)},
-	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"getSiteSftpAccess":     m.statusHTTP,
+		"enableSiteSftpAccess":  m.enableHTTP,
+		"disableSiteSftpAccess": m.disableHTTP,
+		"resetSiteSftpPassword": m.resetPasswordHTTP,
+	})
 }

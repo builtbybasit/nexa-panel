@@ -17,25 +17,20 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) error {
 	return httpapi.DecodeJSONLimit(w, r, destination, 4*1024*1024)
 }
 
-var (
-	writeJSON  = httpapi.WriteJSON
-	writeError = httpapi.WriteError
-)
-
 // writeOperatorError relays the operator's typed failure with its HTTP
 // status; anything else is an agent transport problem and stays generic.
 func writeOperatorError(w http.ResponseWriter, err error) {
 	var operationErr *filesoperator.OperationError
 	if errors.As(err, &operationErr) {
-		writeJSON(w, filesoperator.StatusFor(operationErr.Code), operationErr)
+		httpapi.WriteJSON(w, filesoperator.StatusFor(operationErr.Code), operationErr)
 		return
 	}
-	writeError(w, http.StatusBadGateway, "files_agent_unavailable", "The node agent could not complete the file operation.")
+	httpapi.WriteError(w, http.StatusBadGateway, "files_agent_unavailable", "The node agent could not complete the file operation.")
 }
 
 func (m *Module) recordAudit(w http.ResponseWriter, r *http.Request, user identity.User, action string, site sites.Site, metadata map[string]any) bool {
 	if err := m.audit.RecordSensitive(r.Context(), m.auditEntry(r, user, action, site, metadata)); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "audit_unavailable", "The file change was refused because it could not be recorded in the audit log.")
+		httpapi.WriteError(w, http.StatusServiceUnavailable, "audit_unavailable", "The file change was refused because it could not be recorded in the audit log.")
 		return false
 	}
 	return true

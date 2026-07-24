@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
@@ -116,17 +117,17 @@ func restoreProblem(status int, code, message string, cause ...error) *restorePl
 }
 
 func writeRestoreProblem(w http.ResponseWriter, problem *restorePlanProblem) {
-	writeError(w, problem.status, problem.code, problem.message)
+	httpapi.WriteError(w, problem.status, problem.code, problem.message)
 }
 
 func (m *Module) loadRestoreCopy(w http.ResponseWriter, r *http.Request) (copyModel, bool) {
 	record, err := m.getCopyModel(r.Context(), r.PathValue("copyId"))
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "backup_copy_not_found", "The requested backup copy does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "backup_copy_not_found", "The requested backup copy does not exist.")
 		return copyModel{}, false
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_copy_unavailable", "The backup copy could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_copy_unavailable", "The backup copy could not be loaded.")
 		return copyModel{}, false
 	}
 	return record, true
@@ -139,7 +140,7 @@ func (m *Module) previewRestoreCopyHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 	var choices restoreChoices
 	if err := decodeJSON(w, r, &choices); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	plan, problem := m.buildRestorePlan(r.Context(), record, choices)
@@ -152,7 +153,7 @@ func (m *Module) previewRestoreCopyHTTP(w http.ResponseWriter, r *http.Request) 
 		CopyID: record.ID, ActorID: restoreActorID(r.Context()), Digest: plan.digest, ExpiresAt: expiresAt.Unix(),
 	})
 	plan.preview.ExpiresAt = expiresAt
-	writeJSON(w, http.StatusOK, plan.preview)
+	httpapi.WriteJSON(w, http.StatusOK, plan.preview)
 }
 
 func (m *Module) restoreCopyHTTP(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +163,7 @@ func (m *Module) restoreCopyHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var request restoreRequest
 	if err := decodeJSON(w, r, &request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		httpapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 	plan, problem := m.buildRestorePlan(r.Context(), record, request.choices())
@@ -203,14 +204,14 @@ func (m *Module) restoreCopyHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	if err != nil {
 		if errors.Is(err, jobs.ErrIdempotencyConflict) {
-			writeError(w, http.StatusConflict, "backup_restore_idempotency_conflict", "The idempotency key was already used for a different restore request.")
+			httpapi.WriteError(w, http.StatusConflict, "backup_restore_idempotency_conflict", "The idempotency key was already used for a different restore request.")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "backup_restore_failed", "The restore could not be queued.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_restore_failed", "The restore could not be queued.")
 		return
 	}
 	w.Header().Set("Location", fmt.Sprintf("/api/v1/jobs/%d", job.ID))
-	writeJSON(w, http.StatusAccepted, job)
+	httpapi.WriteJSON(w, http.StatusAccepted, job)
 }
 
 type restorePreviewBinding struct {
@@ -590,31 +591,31 @@ func (m *Module) recordRestoreVerification(ctx context.Context, copyID, state st
 func (m *Module) deleteCopyHTTP(w http.ResponseWriter, r *http.Request) {
 	record, err := m.getCopyModel(r.Context(), r.PathValue("copyId"))
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "backup_copy_not_found", "The requested backup copy does not exist.")
+		httpapi.WriteError(w, http.StatusNotFound, "backup_copy_not_found", "The requested backup copy does not exist.")
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_copy_unavailable", "The backup copy could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_copy_unavailable", "The backup copy could not be loaded.")
 		return
 	}
 	accountModel, err := m.getAccountModel(r.Context(), record.AccountID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_account_unavailable", "The backup account could not be loaded.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_account_unavailable", "The backup account could not be loaded.")
 		return
 	}
 	account, err := m.resolveAccount(*accountModel)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_account_unavailable", "The backup account could not be resolved.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_account_unavailable", "The backup account could not be resolved.")
 		return
 	}
 	if err := m.operator.DeleteCopy(r.Context(), backupoperator.DeleteRequest{
 		Account: account, PlanID: record.PlanID, CopyName: record.CopyName,
 	}); err != nil {
-		writeError(w, http.StatusBadGateway, "backup_copy_delete_failed", "The backup copy could not be removed from storage.")
+		httpapi.WriteError(w, http.StatusBadGateway, "backup_copy_delete_failed", "The backup copy could not be removed from storage.")
 		return
 	}
 	if _, err := m.database.NewDelete().Model((*copyModel)(nil)).Where("id = ?", record.ID).Exec(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "backup_copy_delete_failed", "The backup copy was removed from storage but its record could not be cleared.")
+		httpapi.WriteError(w, http.StatusInternalServerError, "backup_copy_delete_failed", "The backup copy was removed from storage but its record could not be cleared.")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

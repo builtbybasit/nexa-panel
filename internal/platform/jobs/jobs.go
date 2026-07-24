@@ -18,6 +18,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 type State string
@@ -192,22 +193,12 @@ func (m *Module) Descriptor() module.Descriptor {
 }
 
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern    string
-		permission string
-		handler    http.Handler
-	}{
-		{"GET /api/v1/jobs", "jobs.read", http.HandlerFunc(m.listHTTP)},
-		{"GET /api/v1/jobs/{id}", "jobs.read", http.HandlerFunc(m.getHTTP)},
-		{"GET /api/v1/jobs/{id}/events", "jobs.read", http.HandlerFunc(m.eventsHTTP)},
-		{"POST /api/v1/jobs/diagnostics", "operations.apply", http.HandlerFunc(m.diagnosticsHTTP)},
-	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"listJobs":          m.listHTTP,
+		"getJob":            m.getHTTP,
+		"streamJobEvents":   m.eventsHTTP,
+		"submitDiagnostics": m.diagnosticsHTTP,
+	})
 }
 
 func (m *Module) RegisterHandler(kind string, handler Handler) error {

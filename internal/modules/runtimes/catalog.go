@@ -12,6 +12,7 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
 var phpVersionPattern = regexp.MustCompile(`^(?:7\.4|8\.[0-9]{1,2})$`)
@@ -49,7 +50,9 @@ func (m *Module) Descriptor() module.Descriptor {
 }
 
 func (m *Module) Register(registry module.Registry) error {
-	return registry.HandleAuthorized("GET /api/v1/runtimes", "runtimes.read", http.HandlerFunc(m.listHTTP))
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"listRuntimes": m.listHTTP,
+	})
 }
 
 func (m *Module) List(ctx context.Context) ([]Runtime, error) {
@@ -89,10 +92,10 @@ func (m *Module) Allowed(ctx context.Context, version string) (bool, error) {
 func (m *Module) listHTTP(w http.ResponseWriter, r *http.Request) {
 	items, err := m.List(r.Context())
 	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "runtime_discovery_failed", "message": "Installed PHP runtimes could not be discovered."})
+		httpapi.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "runtime_discovery_failed", "message": "Installed PHP runtimes could not be discovered."})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 type FilesystemDiscoverer struct {
@@ -133,5 +136,3 @@ func (d FilesystemDiscoverer) Discover(_ context.Context) ([]Runtime, error) {
 	}
 	return items, nil
 }
-
-var writeJSON = httpapi.WriteJSON

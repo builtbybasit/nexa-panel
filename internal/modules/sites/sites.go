@@ -10,6 +10,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
+	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 
 	"github.com/uptrace/bun"
 
@@ -215,26 +216,21 @@ func (m *Module) Descriptor() module.Descriptor {
 	}
 }
 
+// Register binds every handler to the route and permission its operationId
+// declares in the OpenAPI contract. Method, path, and required permission come
+// from the embedded spec (internal/platform/httpapi/apispec), so this map is the
+// whole routing table and a renamed or missing operation fails startup instead
+// of drifting from the published contract.
 func (m *Module) Register(registry module.Registry) error {
-	routes := []struct {
-		pattern    string
-		permission string
-		handler    http.Handler
-	}{
-		{"GET /api/v1/sites", "sites.read", http.HandlerFunc(m.listHTTP)},
-		{"POST /api/v1/sites", "sites.write", http.HandlerFunc(m.createHTTP)},
-		{"GET /api/v1/sites/{id}", "sites.read", http.HandlerFunc(m.getHTTP)},
-		{"PATCH /api/v1/sites/{id}/settings", "sites.write", http.HandlerFunc(m.updateSettingsHTTP)},
-		{"GET /api/v1/sites/{id}/plan", "sites.read", http.HandlerFunc(m.planHTTP)},
-		{"POST /api/v1/sites/{id}/plan", "sites.write", http.HandlerFunc(m.replanHTTP)},
-		{"POST /api/v1/sites/{id}/activate", "operations.apply", http.HandlerFunc(m.activateHTTP)},
-		{"POST /api/v1/sites/{id}/rollback", "operations.apply", http.HandlerFunc(m.rollbackHTTP)},
-		{"DELETE /api/v1/sites/{id}", "operations.apply", http.HandlerFunc(m.deleteHTTP)},
-	}
-	for _, route := range routes {
-		if err := registry.HandleAuthorized(route.pattern, route.permission, route.handler); err != nil {
-			return err
-		}
-	}
-	return nil
+	return webhandler.Register(registry, map[string]http.HandlerFunc{
+		"listSites":          m.listHTTP,
+		"createSite":         m.createHTTP,
+		"getSite":            m.getHTTP,
+		"updateSiteSettings": m.updateSettingsHTTP,
+		"getSitePlan":        m.planHTTP,
+		"refreshSitePlan":    m.replanHTTP,
+		"activateSite":       m.activateHTTP,
+		"rollbackSite":       m.rollbackHTTP,
+		"deleteSite":         m.deleteHTTP,
+	})
 }
