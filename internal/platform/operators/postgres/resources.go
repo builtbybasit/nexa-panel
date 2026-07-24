@@ -3,11 +3,12 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 func (o *HostOperator) provision(ctx context.Context, change Change) (Observation, error) {

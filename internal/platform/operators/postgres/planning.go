@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 func (o *HostOperator) Plan(ctx context.Context, change Change) (Plan, error) {

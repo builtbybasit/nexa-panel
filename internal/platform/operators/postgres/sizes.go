@@ -3,9 +3,10 @@ package postgres
 import (
 	"context"
 	"errors"
-	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 )
 
 // sizeSeparator delimits a database name from its byte count in psql's
