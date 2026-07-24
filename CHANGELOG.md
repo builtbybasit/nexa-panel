@@ -39,6 +39,24 @@ once stable releases begin.
 The final release entry must be cut from this section only after the complete
 release matrix in `PLAN.md` passes on AMD64 and ARM64.
 
+## v0.5.13 — 2026-07-24
+
+### Fixed
+
+- Uninstall no longer aborts on nodes with the native phpMyAdmin integration:
+  the PHP-FPM session drop-in now carries the Nexa Panel ownership header the
+  uninstaller requires before deleting it. Found testing uninstall on a live
+  node.
+- Purge-mode uninstall dry-run prints its complete plan again: it no longer
+  trips over the panel's own header-less vhosts (`nexa-panel.conf`, the
+  phpMyAdmin gateway), which are removed by exact path rather than by glob.
+- Purge-mode uninstall no longer fails at `userdel` when a managed site's
+  PHP-FPM workers or scheduled tasks are still running: site-owned processes are
+  terminated before the account is deleted.
+- Uninstall clears lingering systemd failed-state for every panel unit (not just
+  the two core services), so a unit that was failed beforehand no longer survives
+  as a phantom in `systemctl --failed` after removal.
+
 ## v0.5.12 — 2026-07-24
 
 ### Added
