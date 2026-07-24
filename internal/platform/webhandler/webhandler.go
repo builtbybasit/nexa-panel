@@ -25,18 +25,21 @@ var (
 	Errorf   = httpapi.Errorf
 )
 
-// Decode, Fail, FailWith, and OK forward to httpapi so a handler file that
-// already imports webhandler (for Actor) reaches them here.
+// Decode forwards to httpapi so a handler file that already imports webhandler
+// (for Actor) reaches it here, alongside Fail, FailWith, and OK.
 func Decode[T any](w http.ResponseWriter, r *http.Request) (T, *httpapi.APIError) {
 	return httpapi.Decode[T](w, r)
 }
 
+// Fail forwards to httpapi.Fail.
 func Fail(w http.ResponseWriter, err error) { httpapi.Fail(w, err) }
 
+// FailWith forwards to httpapi.FailWith.
 func FailWith(w http.ResponseWriter, err error, status int, code string) {
 	httpapi.FailWith(w, err, status, code)
 }
 
+// OK forwards to httpapi.OK.
 func OK(w http.ResponseWriter, status int, value any) { httpapi.OK(w, status, value) }
 
 var errUnauthenticated = httpapi.NewError(http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
