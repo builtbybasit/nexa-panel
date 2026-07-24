@@ -335,6 +335,13 @@ func pgAdminConfig(sessionID string, autoCreate bool) (string, error) {
 		"ALLOW_SAVE_PASSWORD = False\n" +
 		"ALLOW_SAVE_TUNNEL_PASSWORD = False\n" +
 		"CHECK_EMAIL_DELIVERABILITY = False\n" +
+		// The panel gateway sets Referrer-Policy: no-referrer on every response and
+		// forwards X-Scheme: https, so pgAdmin sees a secure request with no Referer
+		// and Flask-WTF's WTF_CSRF_SSL_STRICT referer check rejects every API call
+		// ("The referrer header is missing."). Disable that redundant cross-check:
+		// the token CSRF still runs, and the SameSite=Strict tool session cookie
+		// already prevents any cross-site request from reaching pgAdmin.
+		"WTF_CSRF_SSL_STRICT = False\n" +
 		"ENHANCED_COOKIE_PROTECTION = True\n", nil
 }
 

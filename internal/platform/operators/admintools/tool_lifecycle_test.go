@@ -454,6 +454,16 @@ func TestPGAdminLaunchRotatesSessionBoundRemoteUserHeader(t *testing.T) {
 		t.Fatalf("first pgAdmin config is not bound to a non-plaintext session capability:\n%s", firstConfig)
 	}
 
+	// The panel serves every response with Referrer-Policy: no-referrer and tells
+	// pgAdmin the request is secure via X-Scheme: https. Together those make
+	// Flask-WTF's WTF_CSRF_SSL_STRICT referer check unsatisfiable — pgAdmin would
+	// reject every API call with "The referrer header is missing." The generated
+	// config must disable that redundant cross-check; the token CSRF and the
+	// SameSite=Strict tool session cookie remain the real defenses.
+	if !strings.Contains(firstConfig, "WTF_CSRF_SSL_STRICT = False") {
+		t.Fatalf("pgAdmin config must disable the HTTPS referer CSRF check:\n%s", firstConfig)
+	}
+
 	secondSession := "secondSessionToken5678"
 	secondConfig := launch(secondSession)
 	secondVariable, err := pgAdminRemoteUserVariable(secondSession)
