@@ -105,8 +105,8 @@ function disable() {
     <template #actions>
       <StatusPill
         v-if="access"
-        :tone="access.enabled ? 'accent' : 'info'"
-        :label="access.enabled ? 'Enabled' : 'Disabled'"
+        :tone="access.enabled ? 'accent' : access.pendingActivation ? 'warning' : 'info'"
+        :label="access.enabled ? 'Enabled' : access.pendingActivation ? 'Pending activation' : 'Disabled'"
         :pulse="false"
       />
     </template>
@@ -153,10 +153,14 @@ function disable() {
 
         <!-- Disabled: offer to enable -->
         <template v-else>
+          <AppAlert v-if="access.pendingActivation" tone="info">
+            The credentials chosen when this site was created are staged. SFTP turns on automatically the moment the
+            site is activated — or enable it here to replace them with a freshly generated password.
+          </AppAlert>
           <AppButton v-if="canApply" variant="primary" icon="server" :loading="busy" @click="enable">
             Enable SFTP access
           </AppButton>
-          <AppAlert v-else tone="info">SFTP is disabled. An administrator can enable it.</AppAlert>
+          <AppAlert v-else-if="!access.pendingActivation" tone="info">SFTP is disabled. An administrator can enable it.</AppAlert>
         </template>
       </template>
 

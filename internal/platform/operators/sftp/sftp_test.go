@@ -20,6 +20,7 @@ type fakeSystem struct {
 	ensureErr    error
 	lockErr      error
 	lastPassword string
+	lastHash     string
 }
 
 func newFakeSystem() *fakeSystem { return &fakeSystem{dropIn: map[string]string{}} }
@@ -59,6 +60,12 @@ func (f *fakeSystem) ReloadSSHD(context.Context) error {
 func (f *fakeSystem) SetPassword(_ context.Context, _, password string) error {
 	f.calls = append(f.calls, "setpass")
 	f.lastPassword = password
+	return f.setPassErr
+}
+
+func (f *fakeSystem) SetPasswordHash(_ context.Context, _, hash string) error {
+	f.calls = append(f.calls, "sethash")
+	f.lastHash = hash
 	return f.setPassErr
 }
 
@@ -161,6 +168,53 @@ func TestApplyRejectsRequestWithForgedIdentity(t *testing.T) {
 			}
 			if len(system.calls) != 0 {
 				t.Fatalf("calls = %v, want none; a forged request must never reach the node", system.calls)
+			}
+		})
+	}
+}
+
+func TestApplyEnableInstallsSuppliedHash(t *testing.T) {
+	system := newFakeSystem()
+	request := validRequest
+	request.Password = ""
+	request.PasswordHash = "$2a$10$abcdefghijklmnopqrstuvABCDEFGHIJKLMNOPQRSTUV1234567890"
+	observation, err := operatorWith(system).Apply(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Apply() = %v, want nil", err)
+	}
+	if !observation.PasswordSet {
+		t.Fatal("observation.PasswordSet = false, want true when a hash was installed")
+	}
+	if system.lastHash != request.PasswordHash {
+		t.Fatalf("installed hash = %q, want the request's hash", system.lastHash)
+	}
+	if system.lastPassword != "" {
+		t.Fatal("chpasswd without -e must not run for a hash request")
+	}
+}
+
+func TestApplyRejectsMalformedOrConflictingCredentials(t *testing.T) {
+	cases := map[string]func(r Request) Request{
+		"both password and hash": func(r Request) Request { r.PasswordHash = "$2a$10$abcdefghijk"; return r },
+		"plaintext posing as hash": func(r Request) Request {
+			r.Password = ""
+			r.PasswordHash = "not-a-crypt-hash"
+			return r
+		},
+		"hash smuggling a separator": func(r Request) Request {
+			r.Password = ""
+			r.PasswordHash = "$6$x:injected"
+			return r
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			system := newFakeSystem()
+			if _, err := operatorWith(system).Apply(context.Background(), mutate(validRequest)); err == nil {
+				t.Fatal("Apply() = nil, want a validation failure")
+			}
+			if len(system.calls) != 0 {
+				t.Fatalf("calls = %v, want none; an invalid credential must never reach the node", system.calls)
 			}
 		})
 	}

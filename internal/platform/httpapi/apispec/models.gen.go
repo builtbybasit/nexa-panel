@@ -2447,6 +2447,11 @@ type StreamSiteLogParams struct {
 	LastEventID *int64 `json:"Last-Event-ID,omitempty"`
 }
 
+// StageSiteSftpCredentialsJSONBody defines parameters for StageSiteSftpCredentials.
+type StageSiteSftpCredentialsJSONBody struct {
+	Password string `json:"password"`
+}
+
 // CreateAdminToolLaunchJSONRequestBody defines body for CreateAdminToolLaunch for application/json ContentType.
 type CreateAdminToolLaunchJSONRequestBody CreateAdminToolLaunchJSONBody
 
@@ -2578,6 +2583,9 @@ type BeginSiteFileUploadJSONRequestBody BeginSiteFileUploadJSONBody
 
 // UpdateSiteSettingsJSONRequestBody defines body for UpdateSiteSettings for application/json ContentType.
 type UpdateSiteSettingsJSONRequestBody = SiteSettings
+
+// StageSiteSftpCredentialsJSONRequestBody defines body for StageSiteSftpCredentials for application/json ContentType.
+type StageSiteSftpCredentialsJSONRequestBody StageSiteSftpCredentialsJSONBody
 
 // AddSiteSshKeyJSONRequestBody defines body for AddSiteSshKey for application/json ContentType.
 type AddSiteSshKeyJSONRequestBody = AddSshKey

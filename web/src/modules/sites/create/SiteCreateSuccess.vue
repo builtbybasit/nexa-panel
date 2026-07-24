@@ -13,8 +13,17 @@ export interface CreatedDatabase {
   id: string
   name: string
   username: string
-  password: string
+  /** Only set when the wizard created the user; an existing owner keeps its password. */
+  password?: string
   serverName: string
+}
+
+/** SFTP credentials staged at creation; the password is shown exactly once. */
+export interface StagedSftp {
+  username: string
+  host: string
+  port: number
+  password: string
 }
 
 const props = defineProps<{
@@ -22,6 +31,9 @@ const props = defineProps<{
   database?: CreatedDatabase
   /** The site exists but its database provisioning failed. */
   databaseError?: string
+  sftp?: StagedSftp
+  /** The site exists but its SFTP credentials could not be staged. */
+  sftpError?: string
 }>()
 
 const emit = defineEmits<{ createAnother: [] }>()
@@ -65,7 +77,12 @@ const tiles = computed<ActionTile[]>(() => {
     items.push({ label: 'SSL certificate', icon: 'lock', to: `/certificates?site=${id}&create=1`, description: 'Serve over HTTPS' })
   }
   if (identity.can('operations.apply')) {
-    items.push({ label: 'SFTP access', icon: 'server', to: `/sftp?site=${id}`, description: 'Enable once the site is live' })
+    items.push({
+      label: 'SFTP access',
+      icon: 'server',
+      to: `/sftp?site=${id}`,
+      description: props.sftp ? 'Ready — live after activation' : 'Enable once the site is live',
+    })
   }
   if (identity.can('logs.read')) {
     items.push({ label: 'Logs', icon: 'file-text', to: `/logs?site=${id}`, description: 'Access and error logs' })
@@ -135,12 +152,31 @@ const tiles = computed<ActionTile[]>(() => {
       v-if="database"
       eyebrow="Database"
       :title="`${database.name} on ${database.serverName}`"
-      description="Copy the password now — the panel stores it encrypted and never shows it again."
+      :description="
+        database.password
+          ? 'Copy the password now — the panel stores it encrypted and never shows it again.'
+          : 'Owned by an existing user — its password is unchanged.'
+      "
     >
       <div class="grid gap-4 sm:grid-cols-3">
         <CopyField label="Database" :value="database.name" />
         <CopyField label="User" :value="database.username" />
-        <CopyField label="Password" :value="database.password" />
+        <CopyField v-if="database.password" label="Password" :value="database.password" />
+      </div>
+    </AppCard>
+
+    <AppAlert v-if="sftpError" tone="warning">{{ sftpError }}</AppAlert>
+
+    <AppCard
+      v-if="sftp"
+      eyebrow="SFTP"
+      :title="`${sftp.username} on ${sftp.host}`"
+      description="Copy the password now — only a hash is stored, and it is never shown again. Logins start the moment the site is activated."
+    >
+      <div class="grid gap-4 sm:grid-cols-3">
+        <CopyField label="Username" :value="sftp.username" />
+        <CopyField label="Host · Port" :value="`${sftp.host}:${sftp.port}`" />
+        <CopyField label="Password" :value="sftp.password" />
       </div>
     </AppCard>
 

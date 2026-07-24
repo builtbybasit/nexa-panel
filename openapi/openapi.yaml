@@ -254,6 +254,8 @@ paths:
     $ref: ./paths/services.yaml#/services_reverts_confirm
   /sites/{id}/sftp:
     $ref: ./paths/site-sftp.yaml#/site_sftp
+  /sites/{id}/sftp/credentials:
+    $ref: ./paths/site-sftp.yaml#/site_sftp_credentials
   /sites/{id}/sftp/enable:
     $ref: ./paths/site-sftp.yaml#/site_sftp_enable
   /sites/{id}/sftp/disable:

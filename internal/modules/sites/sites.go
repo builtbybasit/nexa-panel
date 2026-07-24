@@ -109,8 +109,22 @@ type Module struct {
 	// deployTeardown is optional; when unset a teardown simply removes the
 	// sites module's own artifacts, which is the pre-deployer behaviour.
 	deployTeardown DeployTeardown
-	now            func() time.Time
+	// sftp is optional; when set, an activation finishes by applying any SFTP
+	// credentials that were staged when the site was created.
+	sftp SftpProvisioner
+	now  func() time.Time
 }
+
+// SftpProvisioner applies SFTP credentials staged at site creation, at the
+// first moment they can work: right after an activation gives the site its
+// system account. The sftp module satisfies it and is wired in after
+// construction, like the other cross-module links here, because it depends on
+// this module in the other direction.
+type SftpProvisioner interface {
+	ProvisionPendingCredentials(ctx context.Context, siteID string) (bool, error)
+}
+
+func (m *Module) SetSftpProvisioner(provisioner SftpProvisioner) { m.sftp = provisioner }
 
 // DeployTeardown withdraws the node-side grants a deploy-side feature installed
 // for a site — today the deployer layout's narrow PHP-FPM reload permission,

@@ -77,5 +77,6 @@ func (m *Module) currentAccess(ctx context.Context, site sites.Site) (Access, er
 	}
 	access.Enabled = row.Enabled
 	access.PasswordSetAt = row.PasswordSetAt
+	access.PendingActivation = !row.Enabled && row.PendingHash != nil && *row.PendingHash != ""
 	return access, nil
 }

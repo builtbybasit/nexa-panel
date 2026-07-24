@@ -7655,6 +7655,61 @@
         }
       }
     },
+    "/sites/{id}/sftp/credentials": {
+      "post": {
+        "operationId": "stageSiteSftpCredentials",
+        "summary": "Stage Site SFTP Credentials",
+        "description": "Records a caller-chosen SFTP password (stored only as a bcrypt hash) for a site that has not been activated yet; the activation installs it and enables the jail. Refused for active sites.",
+        "tags": [
+          "Site Tools"
+        ],
+        "x-permission": "sites.write",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "minLength": 12,
+                    "maxLength": 72
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stage Site SFTP Credentials"
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      }
+    },
     "/sites/{id}/sftp/enable": {
       "post": {
         "operationId": "enableSiteSftpAccess",

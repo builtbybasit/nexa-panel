@@ -55,18 +55,24 @@ type accessModel struct {
 	Enabled       bool
 	Username      string
 	PasswordSetAt *time.Time
-	UpdatedAt     time.Time
+	// PendingHash is the bcrypt hash of credentials chosen at site creation,
+	// held only until the site's first activation installs them into
+	// /etc/shadow and enables the jail. The plaintext is never stored.
+	PendingHash *string
+	UpdatedAt   time.Time
 }
 
 // Access is the per-site SFTP state returned to the UI. The password itself is
 // never stored, so it is never part of this shape — only whether one is set.
+// PendingActivation reports staged credentials waiting for the site to activate.
 type Access struct {
-	SiteID        string     `json:"siteId"`
-	Enabled       bool       `json:"enabled"`
-	Username      string     `json:"username"`
-	Host          string     `json:"host"`
-	Port          int        `json:"port"`
-	PasswordSetAt *time.Time `json:"passwordSetAt,omitempty"`
+	SiteID            string     `json:"siteId"`
+	Enabled           bool       `json:"enabled"`
+	Username          string     `json:"username"`
+	Host              string     `json:"host"`
+	Port              int        `json:"port"`
+	PasswordSetAt     *time.Time `json:"passwordSetAt,omitempty"`
+	PendingActivation bool       `json:"pendingActivation,omitempty"`
 }
 
 func New(_ context.Context, database *bun.DB, operator sftpoperator.Operator, catalog SiteCatalog, access AccessPolicy) (*Module, error) {
@@ -113,9 +119,10 @@ func (m *Module) AccessEnabled(ctx context.Context, siteID string) (bool, error)
 // of drifting from the published contract.
 func (m *Module) Register(registry module.Registry) error {
 	return webhandler.Register(registry, map[string]http.HandlerFunc{
-		"getSiteSftpAccess":     m.statusHTTP,
-		"enableSiteSftpAccess":  m.enableHTTP,
-		"disableSiteSftpAccess": m.disableHTTP,
-		"resetSiteSftpPassword": m.resetPasswordHTTP,
+		"getSiteSftpAccess":        m.statusHTTP,
+		"enableSiteSftpAccess":     m.enableHTTP,
+		"disableSiteSftpAccess":    m.disableHTTP,
+		"resetSiteSftpPassword":    m.resetPasswordHTTP,
+		"stageSiteSftpCredentials": m.stageCredentialsHTTP,
 	})
 }

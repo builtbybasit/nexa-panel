@@ -26,6 +26,10 @@ type NodeSystem interface {
 	ValidateSSHD(ctx context.Context) error
 	ReloadSSHD(ctx context.Context) error
 	SetPassword(ctx context.Context, user, password string) error
+	// SetPasswordHash installs an already-hashed credential via `chpasswd -e`,
+	// for the staged-at-creation flow where only the crypt hash ever existed
+	// outside the caller's browser.
+	SetPasswordHash(ctx context.Context, user, hash string) error
 	LockPassword(ctx context.Context, user string) error
 }
 
@@ -79,8 +83,14 @@ func (o *HostOperator) enable(ctx context.Context, request Request) (Observation
 		return Observation{}, fmt.Errorf("reload SSH: %w", err)
 	}
 	passwordSet := false
-	if request.Password != "" {
+	switch {
+	case request.Password != "":
 		if err := o.system.SetPassword(ctx, request.UnixUser, request.Password); err != nil {
+			return Observation{}, fmt.Errorf("set SFTP account password: %w", err)
+		}
+		passwordSet = true
+	case request.PasswordHash != "":
+		if err := o.system.SetPasswordHash(ctx, request.UnixUser, request.PasswordHash); err != nil {
 			return Observation{}, fmt.Errorf("set SFTP account password: %w", err)
 		}
 		passwordSet = true

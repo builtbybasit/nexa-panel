@@ -214,6 +214,9 @@ func runAPI(args []string, logger *slog.Logger) error {
 	// refuses while the other is on. The deploy module takes the SFTP state as a
 	// constructor dependency; the reverse link is made here, once both exist.
 	sftpModule.UseSSHAccessState(deployModule)
+	// Activation applies SFTP credentials staged at site creation; the link is
+	// made here because the sftp module already depends on sites the other way.
+	sitesModule.SetSftpProvisioner(sftpModule)
 	// A deployer-mode site holds a sudoers drop-in, which outlives its vhost, so
 	// the sites module's delete job asks this module to withdraw it first.
 	sitesModule.SetDeployTeardown(deployModule)

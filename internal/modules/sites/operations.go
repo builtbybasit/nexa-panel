@@ -90,6 +90,21 @@ func (m *Module) activateJob(ctx context.Context, request json.RawMessage, repor
 	if err != nil {
 		return nil, err
 	}
+	// The activation created the site's system account, so credentials staged
+	// at creation can finally be applied. The site itself is live either way:
+	// a staging failure is reported in the job log, never allowed to fail the
+	// activation, and the staged hash survives for the next activation to retry.
+	if m.sftp != nil {
+		if applied, sftpErr := m.sftp.ProvisionPendingCredentials(ctx, plan.Site.ID); sftpErr != nil {
+			if err := report(95, "SFTP credentials staged at creation could not be applied: "+sftpErr.Error()); err != nil {
+				return nil, err
+			}
+		} else if applied {
+			if err := report(95, "SFTP access enabled with the credentials chosen at creation."); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return observation, nil
 }
 

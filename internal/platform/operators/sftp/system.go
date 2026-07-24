@@ -100,6 +100,18 @@ func (s *HostSystem) SetPassword(ctx context.Context, user, password string) err
 	return nil
 }
 
+// SetPasswordHash feeds "user:hash" to `chpasswd -e`, which installs the
+// crypt(3) hash into /etc/shadow verbatim. The hash format was validated by the
+// request before it reached the node, so it cannot carry a field separator.
+func (s *HostSystem) SetPasswordHash(ctx context.Context, user, hash string) error {
+	output, err := s.command(ctx, user+":"+hash+"\n", "chpasswd", "-e")
+	if err != nil {
+		scrubbed := strings.ReplaceAll(string(output), hash, "[redacted]")
+		return commandError([]byte(scrubbed), err)
+	}
+	return nil
+}
+
 func (s *HostSystem) LockPassword(ctx context.Context, user string) error {
 	if output, err := s.command(ctx, "", "passwd", "-l", user); err != nil {
 		return commandError(output, err)

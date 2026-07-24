@@ -4,8 +4,9 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { createDatabase, createUser, listDatabases, listServers, listUsers } from '@/modules/databases/api'
-import { ENGINES, serverLabel } from '@/modules/databases/lib/engines'
+import { ENGINES, serverLabel, userLabel } from '@/modules/databases/lib/engines'
 import { useIdentityStore } from '@/modules/identity/store'
+import { stageSftpCredentials } from '@/modules/sftp/api'
 import { useJobRunner } from '@/shared/composables/useJobRunner'
 import { generatePassword } from '@/shared/lib/password'
 import {
@@ -36,7 +37,7 @@ import {
 import { createSite, listRuntimes, listSites, type Runtime, type Site } from '../api'
 import ConfigSection from '../create/ConfigSection.vue'
 import { DB_NAME_RULE, deriveDbIdentifier, deriveSlug, sitePreviews, validateDomain } from '../create/lib'
-import SiteCreateSuccess, { type CreatedDatabase } from '../create/SiteCreateSuccess.vue'
+import SiteCreateSuccess, { type CreatedDatabase, type StagedSftp } from '../create/SiteCreateSuccess.vue'
 import TemplateCard from '../create/TemplateCard.vue'
 import { SITE_TEMPLATES, type SiteTemplate } from '../create/templates'
 import WizardStepper from '../create/WizardStepper.vue'
@@ -111,13 +112,20 @@ function runtimeLabel(version: string): string {
 }
 
 // ── Database (optional, orchestrated after the site) ─────────────────────
+/** Sentinel option in the owner picker, FastPanel-style. */
+const CREATE_NEW_DB_USER = '__new__'
+
 const dbEnabled = ref(false)
 const dbOpen = ref(false)
 const dbServerId = ref('')
+const dbOwner = ref(CREATE_NEW_DB_USER)
 const dbName = ref('')
 const dbUserName = ref('')
 const dbHost = ref('localhost')
+// Pre-generated so the default path is zero-click; confirmation starts in
+// agreement and only diverges once someone types a password by hand.
 const dbPassword = ref(generatePassword(20))
+const dbPasswordConfirm = ref(dbPassword.value)
 // One-shot: default the section on the first time servers become known, then
 // leave the choice alone — including across refetches.
 const dbDefaulted = ref(false)
@@ -144,7 +152,31 @@ function setDbEnabled(enabled: boolean) {
 }
 
 const selectedServer = computed(() => activeServers.value.find((server) => server.id === dbServerId.value))
-const dbHostVisible = computed(() => !!selectedServer.value && ENGINES[selectedServer.value.engine].userHostScopes)
+
+/** Existing active users on the chosen server, offered as ready-made owners. */
+const dbOwnerOptions = computed(() =>
+  (dbUsersQuery.data.value ?? []).filter((user) => user.status === 'active' && user.serverId === dbServerId.value),
+)
+const creatingDbUser = computed(() => dbOwner.value === CREATE_NEW_DB_USER)
+const selectedDbOwner = computed(() => dbOwnerOptions.value.find((user) => user.id === dbOwner.value))
+
+// The chosen server decides which users are valid, so changing it resets an
+// owner that no longer fits.
+watch(dbServerId, () => {
+  if (!creatingDbUser.value && !dbOwnerOptions.value.some((user) => user.id === dbOwner.value)) {
+    dbOwner.value = CREATE_NEW_DB_USER
+  }
+})
+
+function dbOwnerLabel(id: string): string {
+  if (id === CREATE_NEW_DB_USER) return 'Create a new user'
+  const user = dbOwnerOptions.value.find((candidate) => candidate.id === id)
+  return user ? userLabel(user) : ''
+}
+
+const dbHostVisible = computed(
+  () => creatingDbUser.value && !!selectedServer.value && ENGINES[selectedServer.value.engine].userHostScopes,
+)
 
 // Auto-derived identifiers follow the site name until the user edits them;
 // clearing a field hands it back to the derivation.
@@ -173,7 +205,9 @@ const dbNameError = computed(() =>
   dbActive.value && (attempted.value || dbNameTouched.value) && !DB_NAME_RULE.test(dbName.value) ? DB_NAME_ERROR : '',
 )
 const dbUserError = computed(() =>
-  dbActive.value && (attempted.value || dbUserTouched.value) && !DB_NAME_RULE.test(dbUserName.value) ? DB_NAME_ERROR : '',
+  dbActive.value && creatingDbUser.value && (attempted.value || dbUserTouched.value) && !DB_NAME_RULE.test(dbUserName.value)
+    ? DB_NAME_ERROR
+    : '',
 )
 const dbHostError = computed(() =>
   attempted.value && dbActive.value && dbHostVisible.value && !dbHost.value.trim()
@@ -181,49 +215,98 @@ const dbHostError = computed(() =>
     : '',
 )
 const dbPasswordError = computed(() =>
-  dbActive.value && attempted.value && dbPassword.value.length < 8 ? 'Use at least 8 characters — or generate one.' : '',
+  dbActive.value && creatingDbUser.value && attempted.value && dbPassword.value.length < 8
+    ? 'Use at least 8 characters — or generate one.'
+    : '',
 )
+// Live mismatch feedback lives inside PasswordField; this only catches an
+// empty confirmation at submit time.
+const dbConfirmError = computed(() =>
+  dbActive.value && creatingDbUser.value && attempted.value && !dbPasswordConfirm.value
+    ? 'Re-enter the password to confirm it.'
+    : '',
+)
+const dbPasswordsAgree = computed(() => dbPassword.value === dbPasswordConfirm.value)
 
 const dbSummary = computed(() => {
   if (!canDatabase.value) return 'Your account cannot create databases.'
   if (activeServers.value.length === 0) return 'No database server is available on this node yet.'
   if (!dbEnabled.value) return 'Skipped — you can add one from the site later.'
   const server = selectedServer.value
-  return server ? `${dbName.value} on ${serverLabel(server)}` : dbName.value
+  const where = server ? `${dbName.value} on ${serverLabel(server)}` : dbName.value
+  const owner = selectedDbOwner.value
+  return owner ? `${where} · owned by ${userLabel(owner)}` : where
 })
 
+// ── SFTP credentials (staged; applied when the site activates) ───────────
+const sftpEnabled = ref(false)
+const sftpOpen = ref(false)
+const sftpPassword = ref('')
+const sftpPasswordConfirm = ref('')
+
+function setSftpEnabled(enabled: boolean) {
+  sftpEnabled.value = enabled
+  sftpOpen.value = enabled
+  if (enabled && !sftpPassword.value) {
+    sftpPassword.value = generatePassword(20)
+    sftpPasswordConfirm.value = sftpPassword.value
+  }
+}
+
+const sftpPasswordError = computed(() =>
+  sftpEnabled.value && attempted.value && (sftpPassword.value.length < 12 || sftpPassword.value.length > 72)
+    ? 'Use 12-72 characters — or generate one.'
+    : '',
+)
+const sftpConfirmError = computed(() =>
+  sftpEnabled.value && attempted.value && !sftpPasswordConfirm.value ? 'Re-enter the password to confirm it.' : '',
+)
+const sftpPasswordsAgree = computed(() => sftpPassword.value === sftpPasswordConfirm.value)
+
+const sftpSummary = computed(() =>
+  sftpEnabled.value
+    ? `${previews.value.unixUser}@${primaryDomain.value.trim() || 'your domain'} — live once the site is activated`
+    : 'Off — you can enable it from the site page any time.',
+)
+
 // ── Provisioning orchestration ───────────────────────────────────────────
-// Three jobs at most, run back-to-back and narrated as one checklist: the
-// site (plan job), then the database user and database when requested.
+// Three jobs at most (site plan, database user, database) plus one synchronous
+// staging call for SFTP, run back-to-back and narrated as one checklist.
 const siteRunner = useJobRunner()
 const dbUserRunner = useJobRunner()
 const dbRunner = useJobRunner()
 
-type StageKey = 'site' | 'db-user' | 'database'
-const STAGE_ORDER: StageKey[] = ['site', 'db-user', 'database']
-const stageRunners = { site: siteRunner, 'db-user': dbUserRunner, database: dbRunner }
+type StageKey = 'site' | 'db-user' | 'database' | 'sftp'
+const STAGE_ORDER: StageKey[] = ['site', 'db-user', 'database', 'sftp']
+const stageRunners: Partial<Record<StageKey, ReturnType<typeof useJobRunner>>> = {
+  site: siteRunner,
+  'db-user': dbUserRunner,
+  database: dbRunner,
+}
 
 const submitted = ref(false)
 const stage = ref<StageKey>()
 const createdSite = ref<Site>()
 const createdDatabase = ref<CreatedDatabase>()
 const databaseFailure = ref('')
+const stagedSftp = ref<StagedSftp>()
+const sftpFailure = ref('')
 
 const stageList = computed<{ key: StageKey; label: string }[]>(() => {
   const items: { key: StageKey; label: string }[] = [
     { key: 'site', label: `Create ${primaryDomain.value.trim() || 'the site'} and plan its configuration` },
   ]
   if (dbActive.value) {
-    items.push(
-      { key: 'db-user', label: `Create database user ${dbUserName.value}` },
-      { key: 'database', label: `Create database ${dbName.value}` },
-    )
+    if (creatingDbUser.value) items.push({ key: 'db-user', label: `Create database user ${dbUserName.value}` })
+    items.push({ key: 'database', label: `Create database ${dbName.value}` })
   }
+  if (sftpEnabled.value) items.push({ key: 'sftp', label: 'Stage SFTP credentials for activation' })
   return items
 })
 
 function stageState(key: StageKey): 'pending' | 'running' | 'done' | 'failed' {
-  if (stageRunners[key].error.value) return 'failed'
+  if (stageRunners[key]?.error.value) return 'failed'
+  if (key === 'sftp' && sftpFailure.value) return 'failed'
   if (stage.value === key) return 'running'
   const current = stage.value ? STAGE_ORDER.indexOf(stage.value) : createdSite.value ? STAGE_ORDER.length : -1
   return STAGE_ORDER.indexOf(key) < current ? 'done' : 'pending'
@@ -271,8 +354,20 @@ const createDisabled = computed(() => !canCreate.value || runtimes.value.length 
 
 function formValid(): boolean {
   if (nameError.value || domainError.value) return false
-  if (dbActive.value && (dbServerError.value || dbNameError.value || dbUserError.value || dbHostError.value || dbPasswordError.value)) {
+  const dbInvalid =
+    dbServerError.value ||
+    dbNameError.value ||
+    dbUserError.value ||
+    dbHostError.value ||
+    dbPasswordError.value ||
+    dbConfirmError.value ||
+    (creatingDbUser.value && !dbPasswordsAgree.value)
+  if (dbActive.value && dbInvalid) {
     dbOpen.value = true
+    return false
+  }
+  if (sftpEnabled.value && (sftpPasswordError.value || sftpConfirmError.value || !sftpPasswordsAgree.value)) {
+    sftpOpen.value = true
     return false
   }
   return true
@@ -312,22 +407,25 @@ async function submit() {
 
   const server = selectedServer.value
   if (dbActive.value && server) {
-    stage.value = 'db-user'
-    let ownerUserId = ''
-    let dbOk = await runStage(
-      dbUserRunner,
-      async () => {
-        const result = await createUser({
-          serverId: server.id,
-          name: dbUserName.value,
-          password: dbPassword.value,
-          ...(ENGINES[server.engine].userHostScopes ? { host: dbHost.value } : {}),
-        })
-        ownerUserId = result.user.id
-        return result.job.id
-      },
-      'Creating the database user failed',
-    )
+    let ownerUserId = creatingDbUser.value ? '' : dbOwner.value
+    let dbOk = true
+    if (creatingDbUser.value) {
+      stage.value = 'db-user'
+      dbOk = await runStage(
+        dbUserRunner,
+        async () => {
+          const result = await createUser({
+            serverId: server.id,
+            name: dbUserName.value,
+            password: dbPassword.value,
+            ...(ENGINES[server.engine].userHostScopes ? { host: dbHost.value } : {}),
+          })
+          ownerUserId = result.user.id
+          return result.job.id
+        },
+        'Creating the database user failed',
+      )
+    }
     if (dbOk && ownerUserId) {
       stage.value = 'database'
       let databaseId = ''
@@ -346,11 +444,12 @@ async function submit() {
         'Creating the database failed',
       )
       if (dbOk) {
+        const owner = selectedDbOwner.value
         createdDatabase.value = {
           id: databaseId,
           name: dbName.value,
-          username: dbUserName.value,
-          password: dbPassword.value,
+          username: owner ? owner.name : dbUserName.value,
+          ...(creatingDbUser.value ? { password: dbPassword.value } : {}),
           serverName: serverLabel(server),
         }
       }
@@ -360,6 +459,25 @@ async function submit() {
         'The site was created, but its database could not be provisioned. The details are below — you can retry from the Databases page.'
     }
     await Promise.all([dbUsersQuery.refetch(), databasesQuery.refetch()])
+  }
+
+  // Staging is synchronous — no job to follow. Only a bcrypt hash of the
+  // password leaves the browser; activation installs it and enables the jail.
+  if (sftpEnabled.value && createdSite.value) {
+    stage.value = 'sftp'
+    try {
+      const staged = await stageSftpCredentials(createdSite.value.id, sftpPassword.value)
+      stagedSftp.value = {
+        username: staged.username,
+        host: staged.host,
+        port: staged.port,
+        password: sftpPassword.value,
+      }
+    } catch (caught) {
+      sftpFailure.value =
+        (caught instanceof Error ? caught.message + ' — ' : '') +
+        'The site was created, but the SFTP credentials could not be staged. You can enable SFTP from the site page once it is active.'
+    }
   }
 
   stage.value = undefined
@@ -374,9 +492,17 @@ function createAnother() {
   attempted.value = false
   dbNameTouched.value = false
   dbUserTouched.value = false
+  dbOwner.value = CREATE_NEW_DB_USER
   dbHost.value = 'localhost'
   dbPassword.value = generatePassword(20)
+  dbPasswordConfirm.value = dbPassword.value
   dbOpen.value = false
+  sftpEnabled.value = false
+  sftpOpen.value = false
+  sftpPassword.value = ''
+  sftpPasswordConfirm.value = ''
+  stagedSftp.value = undefined
+  sftpFailure.value = ''
   createdSite.value = undefined
   createdDatabase.value = undefined
   databaseFailure.value = ''
@@ -396,6 +522,8 @@ function cancel() {
 const successProps = computed(() => ({
   ...(createdDatabase.value ? { database: createdDatabase.value } : {}),
   ...(databaseFailure.value ? { databaseError: databaseFailure.value } : {}),
+  ...(stagedSftp.value ? { sftp: stagedSftp.value } : {}),
+  ...(sftpFailure.value ? { sftpError: sftpFailure.value } : {}),
 }))
 </script>
 
@@ -524,7 +652,8 @@ const successProps = computed(() => ({
             </dl>
             <p class="mt-3 text-[12px] leading-relaxed text-ink-muted">
               A dedicated system user isolates this site from every other one on the node. It is derived from the site
-              name and created during activation.
+              name and created during activation — reusing an existing user is not supported, because one user per
+              site is what keeps sites isolated from each other.
             </p>
           </ConfigSection>
 
@@ -601,18 +730,42 @@ const successProps = computed(() => ({
                   </ComboboxList>
                 </Combobox>
               </FormField>
-              <div class="grid gap-4 sm:grid-cols-2">
-                <FormField label="Database name" :hint="DB_NAME_HINT" :error="dbNameError">
-                  <AppInput
-                    :model-value="dbName"
-                    autocomplete="off"
-                    :spellcheck="false"
-                    :invalid="!!dbNameError"
-                    :disabled="submitted"
-                    @update:model-value="setDbName"
-                  />
-                </FormField>
-                <FormField label="User login" hint="Cleared fields fall back to the suggested value." :error="dbUserError">
+              <FormField label="Database name" :hint="DB_NAME_HINT" :error="dbNameError">
+                <AppInput
+                  :model-value="dbName"
+                  autocomplete="off"
+                  :spellcheck="false"
+                  :invalid="!!dbNameError"
+                  :disabled="submitted"
+                  @update:model-value="setDbName"
+                />
+              </FormField>
+              <FormField label="User" hint="The login that owns the new database.">
+                <Combobox v-model="dbOwner" :disabled="submitted">
+                  <ComboboxAnchor as-child>
+                    <ComboboxTrigger placeholder="Select user" :label="dbOwnerLabel(dbOwner)" />
+                  </ComboboxAnchor>
+                  <ComboboxList>
+                    <ComboboxInput placeholder="Search users…" />
+                    <ComboboxEmpty>No users on this server yet</ComboboxEmpty>
+                    <ComboboxGroup>
+                      <ComboboxItem :value="CREATE_NEW_DB_USER" text-value="Create a new user">
+                        Create a new user<ComboboxItemIndicator />
+                      </ComboboxItem>
+                      <ComboboxItem
+                        v-for="user in dbOwnerOptions"
+                        :key="user.id"
+                        :value="user.id"
+                        :text-value="userLabel(user)"
+                      >
+                        {{ userLabel(user) }}<ComboboxItemIndicator />
+                      </ComboboxItem>
+                    </ComboboxGroup>
+                  </ComboboxList>
+                </Combobox>
+              </FormField>
+              <template v-if="creatingDbUser">
+                <FormField label="Login" hint="Cleared fields fall back to the suggested value." :error="dbUserError">
                   <AppInput
                     :model-value="dbUserName"
                     autocomplete="off"
@@ -622,29 +775,32 @@ const successProps = computed(() => ({
                     @update:model-value="setDbUserName"
                   />
                 </FormField>
-              </div>
-              <FormField
-                v-if="dbHostVisible"
-                label="Host"
-                hint="Where this user may connect from: localhost, %, or a specific address."
-                :error="dbHostError"
-              >
-                <AppInput
-                  v-model="dbHost"
-                  autocomplete="off"
-                  :spellcheck="false"
-                  :invalid="!!dbHostError"
-                  :disabled="submitted"
+                <FormField
+                  v-if="dbHostVisible"
+                  label="Host"
+                  hint="Where this user may connect from: localhost, %, or a specific address."
+                  :error="dbHostError"
+                >
+                  <AppInput
+                    v-model="dbHost"
+                    autocomplete="off"
+                    :spellcheck="false"
+                    :invalid="!!dbHostError"
+                    :disabled="submitted"
+                  />
+                </FormField>
+                <PasswordField
+                  v-model="dbPassword"
+                  v-model:confirmation="dbPasswordConfirm"
+                  label="Password"
+                  with-confirmation
+                  :confirm-error="dbConfirmError"
+                  :minimum-length="8"
+                  :maximum-length="128"
+                  :error="dbPasswordError"
+                  hint="Generated for you — it is shown once more on the final screen so you can copy it."
                 />
-              </FormField>
-              <PasswordField
-                v-model="dbPassword"
-                label="Password"
-                :minimum-length="8"
-                :maximum-length="128"
-                :error="dbPasswordError"
-                hint="Generated for you — it is shown once more on the final screen so you can copy it."
-              />
+              </template>
             </div>
             <p v-else class="text-[13px] leading-relaxed text-ink-secondary">
               No database will be created. If your app needs one later, add it from the Databases page and link it to
@@ -653,12 +809,49 @@ const successProps = computed(() => ({
           </ConfigSection>
 
           <ConfigSection
+            v-model:open="sftpOpen"
             icon="server"
             title="SFTP access"
-            pill-label="After activation"
-            summary="Enable it from the site page once the site is live — it uses the site's own system user."
-            static
-          />
+            :pill-label="sftpEnabled ? 'Will be enabled' : 'Optional'"
+            :pill-tone="sftpEnabled ? 'success' : 'neutral'"
+            :summary="sftpSummary"
+          >
+            <template #control>
+              <Switch
+                :model-value="sftpEnabled"
+                :disabled="submitted"
+                aria-label="Enable SFTP access"
+                @update:model-value="setSftpEnabled"
+              />
+            </template>
+            <div v-if="sftpEnabled" class="space-y-4">
+              <dl class="space-y-2 text-[12px]">
+                <div class="flex items-center justify-between gap-3">
+                  <dt class="text-ink-muted">Username</dt>
+                  <dd class="truncate font-mono text-accent-200">{{ previews.unixUser }}</dd>
+                </div>
+                <div class="flex items-center justify-between gap-3">
+                  <dt class="text-ink-muted">Host · Port</dt>
+                  <dd class="truncate font-mono text-accent-200">{{ primaryDomain.trim() || 'your domain' }} · 22</dd>
+                </div>
+              </dl>
+              <PasswordField
+                v-model="sftpPassword"
+                v-model:confirmation="sftpPasswordConfirm"
+                label="Password"
+                with-confirmation
+                :confirm-error="sftpConfirmError"
+                :minimum-length="12"
+                :maximum-length="72"
+                :error="sftpPasswordError"
+                hint="Only a hash is stored. Logins start the moment the site is activated — jailed to this site's own directory."
+              />
+            </div>
+            <p v-else class="text-[13px] leading-relaxed text-ink-secondary">
+              SFTP stays off. It uses the site's own system user and can be enabled from the site page once the site is
+              live.
+            </p>
+          </ConfigSection>
 
           <ConfigSection
             icon="archive"

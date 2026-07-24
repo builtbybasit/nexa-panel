@@ -20,6 +20,10 @@ const props = withDefaults(
     autocomplete?: string
     placeholder?: string
     required?: boolean
+    /** Renders a FastPanel-style "Confirm the password" input bound to v-model:confirmation. */
+    withConfirmation?: boolean
+    /** Parent-driven error under the confirmation input (e.g. empty on submit). */
+    confirmError?: string
   }>(),
   {
     label: 'Password',
@@ -32,19 +36,30 @@ const props = withDefaults(
 )
 
 const model = defineModel<string>({ required: true })
+const confirmation = defineModel<string>('confirmation', { default: '' })
 
 const fieldId = useId()
+const confirmId = useId()
 const visible = ref(false)
 const copied = ref(false)
 const notice = ref<{ text: string; tone: 'info' | 'error' }>()
 
 function fillGenerated() {
   // Revealing is the point of generating: nobody can use a password they
-  // cannot see, and it is already on screen for them to copy.
+  // cannot see, and it is already on screen for them to copy. The confirmation
+  // is filled too — retyping a visible generated password would be busywork.
   model.value = generatePassword(Math.max(20, props.minimumLength))
+  if (props.withConfirmation) confirmation.value = model.value
   visible.value = true
   notice.value = undefined
 }
+
+// Mismatch is announced as soon as there is a confirmation to compare, not
+// only on submit — that is the whole point of confirming.
+const mismatch = computed(
+  () => props.withConfirmation && confirmation.value !== '' && confirmation.value !== model.value,
+)
+const confirmMessage = computed(() => props.confirmError || (mismatch.value ? 'The passwords do not match.' : ''))
 
 watch(model, (value) => {
   copied.value = false
@@ -171,5 +186,18 @@ const verdict = computed(() => {
     >
       {{ notice.text }}
     </p>
+    <div v-if="withConfirmation" class="mt-3">
+      <label :for="confirmId" class="mb-1.5 block text-[13px] font-medium text-ink-secondary">Confirm the password</label>
+      <AppInput
+        :id="confirmId"
+        v-model="confirmation"
+        :type="visible ? 'text' : 'password'"
+        :maxlength="maximumLength"
+        :autocomplete="autocomplete"
+        :required="required"
+        :invalid="!!confirmMessage"
+      />
+      <p v-if="confirmMessage" role="alert" class="mt-1.5 text-xs leading-relaxed text-rose-300">{{ confirmMessage }}</p>
+    </div>
   </div>
 </template>
