@@ -2,7 +2,6 @@ package databases
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -251,13 +250,4 @@ func waitJob(t *testing.T, queue *jobs.Module, id int64, expected jobs.State) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("job timeout")
-}
-
-func mustJSON(t *testing.T, value any) []byte {
-	t.Helper()
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return encoded
 }

@@ -2,7 +2,7 @@ import { apiRequest } from '@/shared/api/request'
 
 import type { Job } from '../jobs/api'
 
-export type DatabaseStatus =
+type DatabaseStatus =
   | 'planning'
   | 'plan_ready'
   | 'applying'
@@ -17,7 +17,7 @@ export type DatabaseStatus =
 /** Engine family key — how the backend routes a resource to its adapter. */
 export type DatabaseEngine = 'mysql' | 'postgresql'
 /** Concrete server flavor, shown to people. */
-export type ServerKind = 'mysql' | 'mariadb' | 'postgresql'
+type ServerKind = 'mysql' | 'mariadb' | 'postgresql'
 export type AccessLevel = 'connect' | 'read_only' | 'read_write'
 
 export interface DatabaseServer {
