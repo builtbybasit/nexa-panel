@@ -92,28 +92,10 @@ func (m *Module) Descriptor() module.Descriptor {
 // webhandler imports identity, which imports this package, so importing it here
 // would form a cycle. The apispec lookup has no such dependency.
 func (m *Module) Register(registry module.Registry) error {
-	handlers := map[string]http.HandlerFunc{
+	return apispec.Register(registry, map[string]http.HandlerFunc{
 		"listAuditEvents":  m.listHTTP,
 		"verifyAuditChain": m.verifyHTTP,
-	}
-	for operationID, handler := range handlers {
-		op, err := apispec.Lookup(operationID)
-		if err != nil {
-			return err
-		}
-		switch {
-		case op.Permission != "":
-			err = registry.HandleAuthorized(op.Pattern(), op.Permission, handler)
-		case op.Secured:
-			err = registry.HandleAuthenticated(op.Pattern(), handler)
-		default:
-			err = registry.Handle(op.Pattern(), handler)
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	})
 }
 
 func (m *Module) Record(ctx context.Context, entry Entry) error {

@@ -263,21 +263,19 @@ func (m *Module) Register(registry module.Registry) error {
 		"recoverMFA": true, "logout": true,
 	}
 	for operationID, handler := range handlers {
-		op, err := apispec.Lookup(operationID)
-		if err != nil {
-			return err
+		// A self-authenticating endpoint is bound open regardless of the contract's
+		// security marking; every other operation routes by the spec via HandleOp.
+		if selfAuthed[operationID] {
+			op, err := apispec.Lookup(operationID)
+			if err != nil {
+				return err
+			}
+			if err := registry.Handle(op.Pattern(), handler); err != nil {
+				return err
+			}
+			continue
 		}
-		switch {
-		case selfAuthed[operationID]:
-			err = registry.Handle(op.Pattern(), handler)
-		case op.Permission != "":
-			err = registry.HandleAuthorized(op.Pattern(), op.Permission, handler)
-		case op.Secured:
-			err = registry.HandleAuthenticated(op.Pattern(), handler)
-		default:
-			err = registry.Handle(op.Pattern(), handler)
-		}
-		if err != nil {
+		if err := apispec.HandleOp(registry, operationID, handler); err != nil {
 			return err
 		}
 	}
