@@ -171,7 +171,10 @@ func (o *HostOperator) grantPHPFPMSessionAccess(ctx context.Context) error {
 func (o *HostOperator) renderPHPFPMSessionDropIn() string {
 	// The leading '-' keeps php-fpm bootable if the session directory has not yet
 	// been created (e.g. after a config reset before the next phpMyAdmin deploy).
+	// The ownership header lets uninstall.sh confirm this drop-in is panel-owned
+	// before deleting it; without it, uninstallation refuses to proceed.
 	return strings.Join([]string{
+		"# Managed by Nexa Panel. phpMyAdmin PHP-FPM session write access — do not edit.",
 		"[Service]",
 		"ReadWritePaths=-" + o.phpMyAdminSessionRoot(),
 		"",

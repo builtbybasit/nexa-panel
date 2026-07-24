@@ -172,6 +172,9 @@ func TestDeploysNativePHPMyAdminBehindLoopbackNginx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.HasPrefix(string(dropIn), "# Managed by Nexa Panel.") {
+		t.Fatalf("php-fpm drop-in lacks the ownership header uninstall.sh requires:\n%s", dropIn)
+	}
 	if !strings.Contains(string(dropIn), "[Service]") || !strings.Contains(string(dropIn), "ReadWritePaths=-"+filepath.Join(root, "config", "phpmyadmin", "sessions")) {
 		t.Fatalf("php-fpm drop-in does not grant session write access:\n%s", dropIn)
 	}

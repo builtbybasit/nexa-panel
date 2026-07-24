@@ -272,6 +272,23 @@ else
   for account in "${MANAGED_SITE_ACCOUNTS[@]}"; do
     say "REMOVE_MANAGED_SITE_ACCOUNT $account"
     if [[ "$DRY_RUN" -eq 0 ]]; then
+      # Terminate anything the account still owns before deleting it. On-demand
+      # PHP-FPM workers and in-flight scheduled tasks run as the site user, and
+      # userdel refuses while a live PID exists. The site's FPM pool, Nginx route,
+      # and cron entries are all removed below, so these processes are transient;
+      # an on-demand worker can spawn at any instant, so stop them first rather
+      # than racing the deletion. TERM, settle, then KILL as a last resort.
+      if command -v pkill >/dev/null 2>&1; then
+        pkill -TERM -u "$account" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+          pgrep -u "$account" >/dev/null 2>&1 || break
+          sleep 0.5
+        done
+        if pgrep -u "$account" >/dev/null 2>&1; then
+          pkill -KILL -u "$account" 2>/dev/null || true
+          sleep 0.5
+        fi
+      fi
       userdel "$account" || die "could not delete managed site account $account (it may still own a running process)"
       if getent passwd "$account" >/dev/null 2>&1; then
         die "managed site account $account still exists after userdel"
@@ -284,12 +301,20 @@ else
 
   # Remove generated host configuration by narrow, independently checked path
   # families. Package and operator-owned neighbours are never glob-deleted.
+  # These globs also match the panel's own vhosts (nexa-panel.conf and the
+  # phpMyAdmin gateway), which are removed by exact path above and — unlike
+  # hosted-site vhosts — carry no ownership header. In a real run they are
+  # already gone; in a dry-run nothing is removed, so without this skip the glob
+  # re-encounters them and the header check aborts the purge dry-run before it
+  # can print the rest of the plan.
   for path in /etc/nginx/sites-available/nexa-*.conf; do
     [[ -e "$path" || -L "$path" ]] || continue
+    case "$(basename "$path")" in nexa-panel.conf|nexa-phpmyadmin.conf) continue ;; esac
     remove_generated_file "$path" '^/etc/nginx/sites-available/nexa-[a-z0-9-]+\.conf$'
   done
   for path in /etc/nginx/sites-enabled/nexa-*.conf; do
     [[ -e "$path" || -L "$path" ]] || continue
+    case "$(basename "$path")" in nexa-panel.conf|nexa-phpmyadmin.conf) continue ;; esac
     remove_generated_file "$path" '^/etc/nginx/sites-enabled/nexa-[a-z0-9-]+\.conf$'
   done
   for path in /etc/nginx/conf.d/nexa-*-ratelimit.conf; do
@@ -371,7 +396,16 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
   fi
   if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
     systemctl daemon-reload || die "systemd could not reload its unit index"
-    systemctl reset-failed nexa-agent.service nexa-api.service >/dev/null 2>&1 || true
+    # Clear lingering failed state for every panel unit, not just the two core
+    # services: a unit that was failed before uninstall (e.g. nexa-pgadmin.service)
+    # otherwise survives in `systemctl --failed` as a phantom after its unit file
+    # is gone, until the next reboot or manual reset-failed.
+    systemctl reset-failed \
+      nexa-pgadmin-idle-stop.timer nexa-pgadmin-idle-stop.service \
+      nexa-pgadmin.service nexa-phpmyadmin.service \
+      nexa-panel-system-backup.timer nexa-panel-system-backup.service \
+      nexa-update-recovery.service nexa-api.service nexa-agent.service \
+      >/dev/null 2>&1 || true
   fi
   if command -v nginx >/dev/null 2>&1; then
     nginx -t || die "Nginx validation failed after removing panel configuration"
