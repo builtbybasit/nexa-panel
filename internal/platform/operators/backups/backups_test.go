@@ -539,6 +539,72 @@ func TestInstallScheduleWritesUnitsAndEnables(t *testing.T) {
 	}
 }
 
+// The control panel reinstalls every plan's schedule on each full
+// reconciliation pass, so an already-converged plan must cost one status read
+// and nothing else — while a unit edited outside the panel is still repaired.
+func TestInstallScheduleSkipsConvergedUnitsButRepairsEditedOnes(t *testing.T) {
+	runner := &fakeRunner{}
+	root := t.TempDir()
+	operator := &HostOperator{runner: runner, binary: "rclone", nexaBinary: "/usr/bin/nexa", systemdRoot: root}
+	spec := ScheduleSpec{PlanID: "bkplan_1", PlanName: "nightly", Cron: "0 3 * * *", StateDBPath: "/var/lib/nexa-panel/control.db"}
+	if err := operator.InstallSchedule(context.Background(), spec); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	installed := len(runner.calls)
+	runner.output = "ActiveState=active\nUnitFileState=enabled\n"
+	if err := operator.InstallSchedule(context.Background(), spec); err != nil {
+		t.Fatalf("reinstall: %v", err)
+	}
+	repeat := runner.calls[installed:]
+	if len(repeat) != 1 || repeat[0][1] != "show" {
+		t.Fatalf("converged reinstall ran %v", repeat)
+	}
+
+	timerPath := filepath.Join(root, unitBase(spec.PlanID)+".timer")
+	if err := os.WriteFile(timerPath, []byte("[Timer]\nOnCalendar=hourly\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edited := len(runner.calls)
+	if err := operator.InstallSchedule(context.Background(), spec); err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+	repair := runner.calls[edited:]
+	if len(repair) != 2 || repair[0][1] != "daemon-reload" || repair[1][1] != "enable" {
+		t.Fatalf("repair calls = %v", repair)
+	}
+	restored, err := os.ReadFile(timerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(restored), "OnCalendar=*-*-* 3:0:00") {
+		t.Fatalf("edited timer was not repaired: %s", restored)
+	}
+}
+
+// A timer whose units are intact but which is stopped or disabled is not
+// converged: the schedule would silently never fire.
+func TestInstallScheduleReinstallsWhenTimerIsNotRunning(t *testing.T) {
+	runner := &fakeRunner{}
+	root := t.TempDir()
+	operator := &HostOperator{runner: runner, binary: "rclone", nexaBinary: "/usr/bin/nexa", systemdRoot: root}
+	spec := ScheduleSpec{PlanID: "bkplan_1", PlanName: "nightly", Cron: "0 3 * * *", StateDBPath: "/var/lib/nexa-panel/control.db"}
+	if err := operator.InstallSchedule(context.Background(), spec); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	for _, state := range []string{"ActiveState=inactive\nUnitFileState=enabled\n", "ActiveState=active\nUnitFileState=disabled\n"} {
+		runner.output = state
+		before := len(runner.calls)
+		if err := operator.InstallSchedule(context.Background(), spec); err != nil {
+			t.Fatalf("reinstall for %q: %v", state, err)
+		}
+		calls := runner.calls[before:]
+		if len(calls) != 3 || calls[1][1] != "daemon-reload" || calls[2][1] != "enable" {
+			t.Fatalf("calls for %q = %v", state, calls)
+		}
+	}
+}
+
 func TestSafeEntryRejectsTraversal(t *testing.T) {
 	for _, bad := range []string{"../evil", "a/b", "", ".."} {
 		if _, err := safeEntry("/stage", bad); err == nil {

@@ -69,11 +69,36 @@ type Module struct {
 	// port-22 warning — the rest of the run is unaffected.
 	firewall FirewallInspector
 	now      func() time.Time
-	// sshChanges serializes SSH state changes. The node is driven outside the
-	// database transaction that records the change, so this — rather than
-	// SQLite's write lock — is what stops two concurrent changes from racing
-	// each other's key lists onto the node.
-	sshChanges sync.Mutex
+	// sshChanges serializes SSH state changes per site. The node is driven
+	// outside the database transaction that records the change, so this —
+	// rather than SQLite's write lock — is what stops two concurrent changes
+	// from racing each other's key lists onto the node. The race it guards is
+	// between two changes to the *same* site's key list; a single lock for the
+	// whole panel also made an unrelated site's key edit wait behind a
+	// multi-minute agent round trip, so the lock is keyed by site.
+	sshChanges siteLocks
+}
+
+// siteLocks hands out one mutex per site id. Entries are never evicted: a panel
+// has a bounded number of sites and a mutex is a few bytes, which is cheaper
+// than reference-counting the removals.
+type siteLocks struct {
+	guard sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+func (l *siteLocks) get(siteID string) *sync.Mutex {
+	l.guard.Lock()
+	defer l.guard.Unlock()
+	if l.locks == nil {
+		l.locks = make(map[string]*sync.Mutex)
+	}
+	lock, ok := l.locks[siteID]
+	if !ok {
+		lock = new(sync.Mutex)
+		l.locks[siteID] = lock
+	}
+	return lock
 }
 
 func New(_ context.Context, database *bun.DB, operator deployoperator.Operator, queue *jobs.Module, catalog SiteCatalog, access AccessPolicy, sftp SFTPState) (*Module, error) {

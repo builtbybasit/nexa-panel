@@ -1,6 +1,7 @@
 package backups
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -45,16 +46,27 @@ var (
 // InstallSchedule writes (or overwrites) a plan's .service + .timer, reloads
 // systemd, and enables the timer. Overwriting makes it idempotent: editing a
 // plan's schedule just rewrites the units.
+//
+// A plan already installed exactly as specified is left alone. The control
+// panel's periodic full reconciliation calls this for every plan on every pass
+// purely to repair units edited or removed outside the panel; without the
+// converged check that pass rewrote every unit file and ran a daemon-reload per
+// plan, which is work proportional to the plan count for a node where nothing
+// had changed.
 func (h *HostOperator) InstallSchedule(ctx context.Context, spec ScheduleSpec) error {
 	onCalendar, err := validateScheduleSpec(spec, h.nexaBinary)
 	if err != nil {
 		return err
 	}
 	base := unitBase(spec.PlanID)
-	if err := writeUnitAtomically(filepath.Join(h.hostSystemdRoot(), base+".service"), []byte(h.renderService(spec))); err != nil {
+	service, timer := []byte(h.renderService(spec)), []byte(renderTimer(spec, onCalendar))
+	if h.scheduleConverged(ctx, base, service, timer) {
+		return nil
+	}
+	if err := writeUnitAtomically(filepath.Join(h.hostSystemdRoot(), base+".service"), service); err != nil {
 		return fmt.Errorf("write backup service unit: %w", err)
 	}
-	if err := writeUnitAtomically(filepath.Join(h.hostSystemdRoot(), base+".timer"), []byte(renderTimer(spec, onCalendar))); err != nil {
+	if err := writeUnitAtomically(filepath.Join(h.hostSystemdRoot(), base+".timer"), timer); err != nil {
 		return fmt.Errorf("write backup timer unit: %w", err)
 	}
 	if _, err := h.runner.Run(ctx, "systemctl", []string{"daemon-reload"}, nil); err != nil {
@@ -64,6 +76,37 @@ func (h *HostOperator) InstallSchedule(ctx context.Context, spec ScheduleSpec) e
 		return fmt.Errorf("enable backup timer: %w", err)
 	}
 	return nil
+}
+
+// scheduleConverged reports whether the node already holds exactly this
+// schedule: both unit files byte-identical to what would be written, and the
+// timer both enabled and running. Anything else — a missing file, an edited
+// one, a masked or stopped timer, or a systemctl that will not answer — counts
+// as diverged, so the doubtful case is always the one that reinstalls.
+func (h *HostOperator) scheduleConverged(ctx context.Context, base string, service, timer []byte) bool {
+	root := h.hostSystemdRoot()
+	if !unitFileMatches(filepath.Join(root, base+".service"), service) {
+		return false
+	}
+	if !unitFileMatches(filepath.Join(root, base+".timer"), timer) {
+		return false
+	}
+	output, err := h.runner.Run(ctx, "systemctl", []string{"show", base + ".timer", "--property=ActiveState", "--property=UnitFileState"}, nil)
+	if err != nil {
+		return false
+	}
+	properties := map[string]string{}
+	for _, line := range strings.Split(output, "\n") {
+		if key, value, found := strings.Cut(strings.TrimSpace(line), "="); found {
+			properties[key] = value
+		}
+	}
+	return properties["ActiveState"] == "active" && properties["UnitFileState"] == "enabled"
+}
+
+func unitFileMatches(path string, content []byte) bool {
+	existing, err := os.ReadFile(path)
+	return err == nil && bytes.Equal(existing, content)
 }
 
 // RemoveSchedule is idempotent, but reports real disable/delete/reload failures

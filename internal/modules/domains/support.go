@@ -8,7 +8,20 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
+// ensurePrimaryDomains backfills the implicit primary-domain row every site
+// owns. It runs on the read path, so it asks first: the INSERT is skipped
+// unless a site is actually missing its row. Without the probe every domain
+// listing took the database's write lock to insert nothing.
 func (m *Module) ensurePrimaryDomains(ctx context.Context) error {
+	missing := 0
+	if err := m.database.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM sites WHERE NOT EXISTS (
+			SELECT 1 FROM domains WHERE domains.id = 'domain_primary_' || sites.id))`).Scan(&missing); err != nil {
+		return err
+	}
+	if missing == 0 {
+		return nil
+	}
 	now := m.now().UTC()
 	_, err := m.database.ExecContext(ctx, `INSERT OR IGNORE INTO domains
 		(id, site_id, hostname, kind, status, resolved_addresses, created_at, updated_at)

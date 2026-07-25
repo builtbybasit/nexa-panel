@@ -23,11 +23,18 @@ type Runner interface {
 
 type execRunner struct{}
 
+// maxOutputBytes bounds what a single ufw invocation may return. It is a
+// runaway-output guard, not a display limit: `ufw status verbose` is parsed
+// into the rule list the UI shows, so a cap tight enough to cut a real
+// firewall's output would silently drop rules from the panel. Failure text is
+// truncated separately, at 500 bytes, by commandError.
+const maxOutputBytes = 1 << 20
+
 func (execRunner) Run(ctx context.Context, command Command) ([]byte, error) {
 	process := exec.CommandContext(ctx, command.Name, command.Args...)
 	output, err := process.CombinedOutput()
-	if len(output) > 8*1024 {
-		output = output[:8*1024]
+	if len(output) > maxOutputBytes {
+		output = output[:maxOutputBytes]
 	}
 	return output, err
 }

@@ -69,13 +69,26 @@ func (m *Module) List(ctx context.Context) ([]Application, error) {
 	if err != nil {
 		return nil, err
 	}
+	// One read for the whole workflow table rather than one per catalog entry:
+	// the catalog enumerates every PHP/PostgreSQL/Node series the node's repos
+	// offer, so a per-entry SELECT made a plain page load an N-query fan-out.
+	// getOrCreate is still the fallback, but only for an entry seen for the
+	// first time — which is an insert the row genuinely needs.
+	stored, err := m.allByID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	now := m.now().UTC()
 	apps := []Application{}
 	for _, entry := range catalog {
 		id := catalogID(entry.App, entry.Version)
-		model, err := m.getOrCreate(ctx, id, entry, now)
-		if err != nil {
-			return nil, err
+		model, known := stored[id]
+		if !known {
+			created, err := m.getOrCreate(ctx, id, entry, now)
+			if err != nil {
+				return nil, err
+			}
+			model = created
 		}
 		// Join on the operator's identity, not the first package name: MySQL and
 		// MariaDB ship one package name across every series, so a name-based join
@@ -189,6 +202,20 @@ func (m *Module) ApplyPlan(ctx context.Context, id string, actor *string) (jobs.
 		Set("status = ?", status).Set("last_job_id = ?", job.ID).
 		Set("updated_at = ?", m.now().UTC()).Where("id = ?", id).Exec(ctx)
 	return job, err
+}
+
+// allByID reads the whole workflow table into a lookup. The table holds one row
+// per catalog entry ever touched, so it stays small enough to read at once.
+func (m *Module) allByID(ctx context.Context) (map[string]applicationModel, error) {
+	models := make([]applicationModel, 0)
+	if err := m.database.NewSelect().Model(&models).Scan(ctx); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]applicationModel, len(models))
+	for _, model := range models {
+		byID[model.ID] = model
+	}
+	return byID, nil
 }
 
 func (m *Module) get(ctx context.Context, id string) (applicationModel, error) {

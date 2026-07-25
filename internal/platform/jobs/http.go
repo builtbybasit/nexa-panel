@@ -126,8 +126,14 @@ func (m *Module) eventsHTTP(w http.ResponseWriter, r *http.Request) {
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer poll.Stop()
 	defer heartbeat.Stop()
+	// The loop reads with the unscoped accessors on purpose. Authorization was
+	// settled above, and neither input to it changes while the stream is open:
+	// a job's persisted site scope is fixed at submission, and the grants the
+	// scope is checked against are the ones the connection was opened with.
+	// Re-running the scoped variants would re-query the grant set — and re-read
+	// the job — twice per 400ms tick for one job's progress.
 	for {
-		events, err := m.EventsAfterForUser(r.Context(), user, id, sequence)
+		events, err := m.EventsAfter(r.Context(), id, sequence)
 		if err != nil {
 			return
 		}
@@ -143,7 +149,7 @@ func (m *Module) eventsHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = controller.SetWriteDeadline(time.Now().Add(time.Minute))
 			flusher.Flush()
 		}
-		job, err := m.GetForUser(r.Context(), user, id)
+		job, err := m.Get(r.Context(), id)
 		if err != nil || (job.State.Terminal() && len(events) == 0) {
 			return
 		}

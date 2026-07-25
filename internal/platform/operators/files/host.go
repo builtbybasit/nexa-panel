@@ -24,7 +24,12 @@ import (
 )
 
 const (
-	listMaxEntries    = 5000
+	listMaxEntries = 5000
+	// listMaxScan bounds what a single listing pulls off disk. The sort that
+	// picks the displayed page needs more than one page in hand, but not a
+	// whole directory: a site with a million-file upload folder would otherwise
+	// read every entry into memory to render 5000 of them.
+	listMaxScan       = 50_000
 	readMaxBytes      = 1 << 20
 	writeMaxBytes     = 1 << 20
 	uploadMaxBytes    = int64(2) << 30
@@ -82,7 +87,7 @@ func (o *HostOperator) List(_ context.Context, scope sitefs.Scope, rawPath strin
 	if !info.IsDir() {
 		return Listing{}, invalid("The requested path is not a directory.")
 	}
-	children, err := directory.ReadDir(-1)
+	children, unread, err := readDirLimited(directory, listMaxScan)
 	if err != nil {
 		return Listing{}, err
 	}
@@ -92,7 +97,7 @@ func (o *HostOperator) List(_ context.Context, scope sitefs.Scope, rawPath strin
 		}
 		return children[i].Name() < children[j].Name()
 	})
-	listing := Listing{Entries: make([]Entry, 0, min(len(children), listMaxEntries))}
+	listing := Listing{Entries: make([]Entry, 0, min(len(children), listMaxEntries)), Truncated: unread}
 	for _, child := range children {
 		if len(listing.Entries) == listMaxEntries {
 			listing.Truncated = true
@@ -105,6 +110,22 @@ func (o *HostOperator) List(_ context.Context, scope sitefs.Scope, rawPath strin
 		listing.Entries = append(listing.Entries, entryFor(child.Name(), childInfo))
 	}
 	return listing, nil
+}
+
+// readDirLimited reads at most limit entries from an open directory and reports
+// whether the directory held more. Every caller here works to a cap, and
+// ReadDir(-1) would materialise the whole directory before any cap could apply.
+func readDirLimited(directory *os.File, limit int) ([]fs.DirEntry, bool, error) {
+	// An empty or fully-consumed directory answers a bounded read with io.EOF;
+	// that is the end of the listing, not a failure.
+	children, err := directory.ReadDir(limit + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, false, err
+	}
+	if len(children) > limit {
+		return children[:limit], true, nil
+	}
+	return children, false, nil
 }
 
 func (o *HostOperator) Stat(_ context.Context, scope sitefs.Scope, rawPath string) (Entry, error) {
@@ -442,11 +463,18 @@ func (o *HostOperator) DirectorySize(_ context.Context, scope sitefs.Scope, rawP
 		if err != nil {
 			return
 		}
-		children, err := directory.ReadDir(-1)
+		// The walk can never account for more entries than the budget allows, so
+		// the budget is also the right bound on how much of one directory to read.
+		children, unread, err := readDirLimited(directory, remaining)
 		directory.Close()
 		if err != nil {
 			return
 		}
+		defer func() {
+			if unread {
+				result.Truncated = true
+			}
+		}()
 		for _, child := range children {
 			if result.Truncated {
 				return
