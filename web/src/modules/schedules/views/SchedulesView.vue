@@ -108,7 +108,7 @@ const collection = useCollection(() => tasks.value, {
 
 const runner = useJobRunner()
 
-// Mirrors the control plane's busy() guard: a lifecycle job is in flight in
+// Mirrors the control panel's busy() guard: a lifecycle job is in flight in
 // each of these states, so a mutation would 409. rolling_back must be here or
 // Edit/Delete stay enabled through a rollback and fail on submit.
 const inFlightStatuses = new Set(['planning', 'activating', 'rolling_back'])

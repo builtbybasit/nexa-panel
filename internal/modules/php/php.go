@@ -1,4 +1,4 @@
-// Package php is the control-plane feature module behind the PHP page. It
+// Package php is the control-panel feature module behind the PHP page. It
 // surfaces, per installed PHP branch, the loadable extension (module) catalog
 // and the php.ini directive set, and orchestrates extension install/remove and
 // directive saves as durable jobs through the privileged PHP operator. Each

@@ -86,7 +86,7 @@ function onGlobalKeydown(event: KeyboardEvent) {
         N
       </span>
       <p class="text-sm text-ink-secondary">
-        {{ identity.loading ? 'Starting secure control plane…' : 'Loading Nexa Panel…' }}
+        {{ identity.loading ? 'Starting secure control panel…' : 'Loading Nexa Panel…' }}
       </p>
     </div>
   </main>

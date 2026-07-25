@@ -1,4 +1,4 @@
-// Package apispec is the single source of truth for the control-plane HTTP
+// Package apispec is the single source of truth for the control-panel HTTP
 // surface. The typed request and response models in models.gen.go are generated
 // from the OpenAPI contract by oapi-codegen; the contract itself is embedded as
 // JSON so route patterns and their required permission are read from the spec at

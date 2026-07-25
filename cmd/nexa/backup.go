@@ -20,11 +20,11 @@ import (
 const backupUsage = "usage: nexa backup <trigger|system|system-restore> ..."
 
 // runBackup dispatches the backup subcommands. `trigger` and `system` enqueue a
-// durable job into the same control-plane state database the API serves from
+// durable job into the same control-panel state database the API serves from
 // (the running API worker claims and executes it), which keeps scheduled, manual,
 // and CLI runs on one execution path with no extra network or auth surface.
 // `system-restore` is self-contained: it extracts a LOCAL archive onto a fresh
-// node and never touches the (encrypted) control plane, which is exactly what is
+// node and never touches the (encrypted) control panel, which is exactly what is
 // being restored.
 func runBackup(args []string, logger *slog.Logger) error {
 	if len(args) == 0 {
@@ -47,7 +47,7 @@ func runBackup(args []string, logger *slog.Logger) error {
 func runBackupTrigger(args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet("backup trigger", flag.ContinueOnError)
 	planID := flags.String("plan", "", "backup plan ID to run")
-	statePath := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/var/lib/nexa-panel/control.db"), "control-plane state database path")
+	statePath := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/var/lib/nexa-panel/control.db"), "control-panel state database path")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func runBackupTrigger(args []string, logger *slog.Logger) error {
 func runBackupSystem(args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet("backup system", flag.ContinueOnError)
 	account := flags.String("account", "", "backup storage account ID or name to store the panel-state backup")
-	statePath := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/var/lib/nexa-panel/control.db"), "control-plane state database path")
+	statePath := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/var/lib/nexa-panel/control.db"), "control-panel state database path")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -151,7 +151,7 @@ func runBackupSystem(args []string, logger *slog.Logger) error {
 
 // runBackupSystemRestore implements `nexa backup system-restore`: it extracts a
 // LOCAL panel-state archive onto a fresh node. It is deliberately self-contained
-// (no control-plane access) because control.db is exactly what is being restored;
+// (no control-panel access) because control.db is exactly what is being restored;
 // fetching the archive from the remote is a documented one-line `rclone copy`
 // step (see docs/runbooks/panel-state-restore.md). It refuses to clobber an
 // existing non-empty control.db unless --force is given.

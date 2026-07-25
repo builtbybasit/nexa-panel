@@ -120,7 +120,7 @@ func TestEnsureDeployKeyGeneratesTheKeyAndReturnsOnlyItsPublicHalf(t *testing.T)
 		t.Fatalf("modes = %v, want a readable known_hosts and a private config", system.modes)
 	}
 	// Nothing that could carry the private half may appear in the observation,
-	// which is the value the control plane persists.
+	// which is the value the control panel persists.
 	for _, field := range []string{observation.PublicKey, observation.Fingerprint, observation.Path} {
 		if strings.Contains(field, "PRIVATE KEY") {
 			t.Fatalf("observation field %q carries private key material", field)

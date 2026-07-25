@@ -228,7 +228,7 @@ func (s *Server) filesUploadChunkHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The agent's 15s read timeout is too tight for an 8 MiB chunk over a
-	// slow control-plane connection.
+	// slow control-panel connection.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(5 * time.Minute))
 	body := http.MaxBytesReader(w, r.Body, filesoperator.ChunkMaxBytes+1)
 	if err := s.files.UploadChunk(r.Context(), filesScope(r), r.PathValue("id"), offset, body); err != nil {

@@ -3,7 +3,7 @@ Description=Nexa Panel privileged node agent
 Documentation=https://github.com/nexa-panel/nexa-panel
 After=local-fs.target network.target
 Before=nexa-api.service
-# Same budget as the control plane: ten restarts at RestartSec=3s ride out a
+# Same budget as the control panel: ten restarts at RestartSec=3s ride out a
 # transient boot-order or socket-teardown flap, and a genuine crash loop stops
 # rather than restarting the privileged agent forever.
 StartLimitIntervalSec=300s
@@ -35,7 +35,7 @@ RestartSec=3s
 # real peaks: an unpack plus a container image pull sits in the low hundreds of
 # megabytes. 1G soft-throttles into reclaim before the node starts swapping,
 # 1536M leaves a 2 GiB host (capacity.ProfileCompact, the advertised minimum)
-# room for the kernel and the control plane while still killing a runaway.
+# room for the kernel and the control panel while still killing a runaway.
 MemoryHigh=1G
 MemoryMax=1536M
 # Two cores' worth: dpkg unpacking and image builds stay responsive on a

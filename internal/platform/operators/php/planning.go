@@ -12,7 +12,7 @@ import (
 
 // planExpiry bounds how long a reviewed PHP plan may sit before it must be
 // regenerated, matching the other operators' short windows. PHP plans are
-// planned and applied back-to-back within one control-plane job, so this is a
+// planned and applied back-to-back within one control-panel job, so this is a
 // safety bound rather than a review budget.
 const planExpiry = 10 * time.Minute
 

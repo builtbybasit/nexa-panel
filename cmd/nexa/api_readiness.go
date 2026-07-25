@@ -12,7 +12,7 @@ import (
 )
 
 // apiReadiness checks the local dependencies required for safe request
-// handling: a reachable control-plane database, a schema this binary's
+// handling: a reachable control-panel database, a schema this binary's
 // migrations have actually been applied to, and an authenticated
 // privileged-agent request. Opening the socket alone is insufficient because a
 // missing or stale credential makes every agent-backed feature unavailable, and
@@ -23,10 +23,10 @@ import (
 func apiReadiness(database *bun.DB, agentCheck func(context.Context) error) func(context.Context) error {
 	return func(ctx context.Context) error {
 		if err := database.PingContext(ctx); err != nil {
-			return fmt.Errorf("control-plane database: %w", err)
+			return fmt.Errorf("control-panel database: %w", err)
 		}
 		if err := persistence.AssertMigrationsCurrent(ctx, database); err != nil {
-			return fmt.Errorf("control-plane schema: %w", err)
+			return fmt.Errorf("control-panel schema: %w", err)
 		}
 		if err := agentCheck(ctx); err != nil {
 			return fmt.Errorf("privileged agent: %w", err)

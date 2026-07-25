@@ -143,7 +143,7 @@ func TestActivationFailureRestoresBinaryAndPackaging(t *testing.T) {
 	if state.Phase != phaseFailed || state.Failure == "" || state.Result.Activated || !state.Result.RolledBack || state.Result.Swapped {
 		t.Fatalf("failed activation journal = %+v", state)
 	}
-	// The restored control plane is health-checked against the version it was
+	// The restored control panel is health-checked against the version it was
 	// rolled back to, not the target that failed.
 	if restoreExpected != "0.1.0" {
 		t.Fatalf("rollback readiness was asked for version %q", restoreExpected)
@@ -209,7 +209,7 @@ func TestWaitAPIReadyRequiresTheExpectedVersion(t *testing.T) {
 	defer server.Close()
 
 	if err := waitAPIReady(context.Background(), socket, "0.2.0", 750*time.Millisecond); err == nil || !strings.Contains(err.Error(), "0.1.0") {
-		t.Fatalf("a ready old control plane must fail the new version's gate, got %v", err)
+		t.Fatalf("a ready old control panel must fail the new version's gate, got %v", err)
 	}
 	if err := waitAPIReady(context.Background(), socket, "0.1.0", 5*time.Second); err != nil {
 		t.Fatalf("the expected version must pass: %v", err)

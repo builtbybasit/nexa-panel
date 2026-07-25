@@ -27,7 +27,7 @@ func runAudit(args []string) error {
 }
 
 // runAuditVerify implements `nexa audit verify`: it walks the audit hash chain in
-// the control-plane state database and prints the verdict. The chain has been
+// the control-panel state database and prints the verdict. The chain has been
 // verifiable over HTTP since it shipped, but nothing consumed that endpoint, so
 // the evidence was invisible to the operator who most needs it — one on a node
 // they suspect, with a shell and no working panel. It deliberately reads the
@@ -38,7 +38,7 @@ func runAudit(args []string) error {
 // check can alert on it.
 func runAuditVerify(args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("audit verify", flag.ContinueOnError)
-	statePath := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/var/lib/nexa-panel/control.db"), "control-plane state database path")
+	statePath := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/var/lib/nexa-panel/control.db"), "control-panel state database path")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}

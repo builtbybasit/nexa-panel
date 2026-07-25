@@ -78,7 +78,7 @@ const (
 	ActionDelete  = "delete"
 )
 
-// Operator is the node-side surface the control plane drives over the agent
+// Operator is the node-side surface the control panel drives over the agent
 // socket. HostOperator is the real implementation; UnixClient is the proxy.
 type Operator interface {
 	// Discover reports the current firewall status and rule table.

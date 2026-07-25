@@ -74,7 +74,7 @@ type Observation struct {
 	Verified  bool               `json:"verified"`
 }
 
-// Operator is the interface the control plane depends on (via a Unix-socket
+// Operator is the interface the control panel depends on (via a Unix-socket
 // client) and the agent serves.
 type Operator interface {
 	// Catalog reports what this node's repositories can install. It is a node

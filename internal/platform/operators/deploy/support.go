@@ -13,7 +13,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/fsutil"
 )
 
-// UnixClient is the control-plane-side Operator. It talks to the privileged
+// UnixClient is the control-panel-side Operator. It talks to the privileged
 // agent over its Unix socket, authenticating with the shared token. The timeout
 // is generous because the deploy endpoints reach the network — a repository
 // probe against a slow forge should not be reported as a node failure.
@@ -43,7 +43,7 @@ func (c *UnixClient) ApplySSHAccess(ctx context.Context, request SSHAccessReques
 
 // restoreSentinel turns the agent's flattened error code back into the sentinel
 // the node raised. The socket carries a code and a message, not a Go error, so
-// without this the control plane could only match on message text.
+// without this the control panel could only match on message text.
 func restoreSentinel(err error) error {
 	var responseError *agentclient.ResponseError
 	if errors.As(err, &responseError) && responseError.Code == "sftp_jail_present" {

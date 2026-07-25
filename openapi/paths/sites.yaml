@@ -9,7 +9,7 @@ sites:
     - sessionCookie: []
     responses:
       '200':
-        description: Desired sites managed by the control plane.
+        description: Desired sites managed by the control panel.
         content:
           application/json:
             schema:

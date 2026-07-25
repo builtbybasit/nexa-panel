@@ -157,7 +157,7 @@ func TestLaunchTokenExchangesOnceForScopedHttpOnlySession(t *testing.T) {
 	}
 }
 
-// newLaunchGatewayModule builds a launch-capable module on a real control-plane
+// newLaunchGatewayModule builds a launch-capable module on a real control-panel
 // database with a clock the test drives, so session lifetime is exercised
 // without sleeping.
 func newLaunchGatewayModule(t *testing.T, clock *time.Time) *Module {

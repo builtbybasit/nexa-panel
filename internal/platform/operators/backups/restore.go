@@ -92,7 +92,7 @@ func (h *HostOperator) Restore(ctx context.Context, request RestoreRequest) erro
 	// Verify every requested artifact before touching a live destination. New
 	// copies carry a trusted SHA-256 recorded immediately after creation;
 	// checksum-less legacy copies are still confined to regular files and can
-	// only reach this boundary after explicit control-plane confirmation.
+	// only reach this boundary after explicit control-panel confirmation.
 	for _, site := range request.Sites {
 		if err := verifyStagedEntry(staging, site.Entry, site.SHA256); err != nil {
 			return fmt.Errorf("verify site artifact %s: %w", site.Entry, err)
@@ -262,7 +262,7 @@ func (h *HostOperator) DeleteCopy(ctx context.Context, request DeleteRequest) er
 }
 
 // safeEntry resolves a copy entry name to a path inside staging, rejecting any
-// name that tries to escape the directory (defence in depth; the control plane
+// name that tries to escape the directory (defence in depth; the control panel
 // already checks the entry belongs to the copy).
 func safeEntry(staging, entry string) (string, error) {
 	if entry == "" || strings.ContainsAny(entry, "/\\") || entry == ".." {

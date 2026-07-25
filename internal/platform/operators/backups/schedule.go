@@ -67,7 +67,7 @@ func (h *HostOperator) InstallSchedule(ctx context.Context, spec ScheduleSpec) e
 }
 
 // RemoveSchedule is idempotent, but reports real disable/delete/reload failures
-// so the control plane can retain and reconcile the desired state.
+// so the control panel can retain and reconcile the desired state.
 func (h *HostOperator) RemoveSchedule(ctx context.Context, planID string) error {
 	if !safePlanIDPattern.MatchString(planID) {
 		return errors.New("backup plan ID contains unsafe characters")

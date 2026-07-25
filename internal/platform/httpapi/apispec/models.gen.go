@@ -1268,7 +1268,7 @@ type DatabaseUser struct {
 	Status    DatabaseStatus `json:"status"`
 }
 
-// DeployKey The site's Git deploy key. The pair is minted on the node and only the public half ever reaches the control plane, so `present` rather than a non-empty publicKey is what says a key exists.
+// DeployKey The site's Git deploy key. The pair is minted on the node and only the public half ever reaches the control panel, so `present` rather than a non-empty publicKey is what says a key exists.
 type DeployKey struct {
 	Algorithm   *string    `json:"algorithm,omitempty"`
 	CreatedAt   *time.Time `json:"createdAt,omitempty"`

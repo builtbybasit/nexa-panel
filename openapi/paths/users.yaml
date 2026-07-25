@@ -184,7 +184,7 @@ users_id_sites:
             schema:
               $ref: ../components/schemas/common.yaml#/Error
       '503':
-        description: Site grants are not configured on this control plane.
+        description: Site grants are not configured on this control panel.
         content:
           application/json:
             schema:

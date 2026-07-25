@@ -198,7 +198,7 @@ type BasicAuth struct {
 	Username string `json:"username,omitempty"` // htpasswd account name
 	// PasswordHash is a bcrypt/apr1 hash ("$2y$..."), never plaintext. It is a
 	// hash, so it is safe to persist and re-emit byte-identically on every
-	// re-plan; the control plane hashes the plaintext at the HTTP boundary and
+	// re-plan; the control panel hashes the plaintext at the HTTP boundary and
 	// only ever stores this. Blanked before the site is returned to a browser.
 	PasswordHash string `json:"passwordHash,omitempty"`
 }
@@ -292,7 +292,7 @@ type Operator interface {
 	// back removes every managed file and disables the vhost.
 	//
 	// It exists as its own operator call because the plan is signed by the agent
-	// and the signature covers the whole plan. The control plane used to build
+	// and the signature covers the whole plan. The control panel used to build
 	// this shape by mutating an already-signed activation plan, which invalidated
 	// that signature and made every teardown fail with "The site plan was not
 	// issued by this agent." The agent must therefore issue the exact plan it will
@@ -485,7 +485,7 @@ func (r Renderer) validate(site Site) error {
 	return validateSettings(site.Settings)
 }
 
-// ValidateSettings lets the control plane reject a malformed settings payload
+// ValidateSettings lets the control panel reject a malformed settings payload
 // synchronously (HTTP 422) before it is ever persisted or enqueued, applying the
 // exact same bounds the renderer enforces at plan time.
 func ValidateSettings(s Settings) error { return validateSettings(s) }

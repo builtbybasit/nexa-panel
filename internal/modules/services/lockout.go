@@ -26,7 +26,7 @@ var irreversibleCriticalUnits = map[string]string{
 }
 
 // assessLockout decides whether one service change can cut the operator off. The
-// judgement is the control plane's, not the browser's: a direct API call must
+// judgement is the control panel's, not the browser's: a direct API call must
 // meet the same guard as the Services page.
 //
 // The second return value marks a refusal no acknowledgement can lift.

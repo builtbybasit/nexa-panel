@@ -15,7 +15,7 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/authorization"
-	"github.com/nexa-panel/nexa-panel/internal/platform/controlplane"
+	"github.com/nexa-panel/nexa-panel/internal/platform/controlpanel"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
@@ -44,10 +44,10 @@ func TestViewerCannotReadAuditButAdminCan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create identity module: %v", err)
 	}
-	server, err := controlplane.New("test", []module.Module{auditLog, identityModule, sensitiveActionModule{}}, logger,
-		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(authorization.New()))
+	server, err := controlpanel.New("test", []module.Module{auditLog, identityModule, sensitiveActionModule{}}, logger,
+		controlpanel.WithAuthentication(identityModule), controlpanel.WithAuthorization(authorization.New()))
 	if err != nil {
-		t.Fatalf("create control plane: %v", err)
+		t.Fatalf("create control panel: %v", err)
 	}
 
 	bootstrap := httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap",
@@ -116,10 +116,10 @@ func TestUnenrolledAccountIsNotAskedToStepUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create identity module: %v", err)
 	}
-	server, err := controlplane.New("test", []module.Module{auditLog, identityModule, sensitiveActionModule{}}, logger,
-		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(authorization.New()))
+	server, err := controlpanel.New("test", []module.Module{auditLog, identityModule, sensitiveActionModule{}}, logger,
+		controlpanel.WithAuthentication(identityModule), controlpanel.WithAuthorization(authorization.New()))
 	if err != nil {
-		t.Fatalf("create control plane: %v", err)
+		t.Fatalf("create control panel: %v", err)
 	}
 
 	bootstrap := httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap",

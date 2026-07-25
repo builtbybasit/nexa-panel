@@ -23,7 +23,7 @@ var (
 	sha256Pattern          = regexp.MustCompile(`^[a-fA-F0-9]{64}$`)
 )
 
-// ValidateRunRequest validates the untrusted control-plane payload before the
+// ValidateRunRequest validates the untrusted control-panel payload before the
 // privileged agent creates files or invokes a command.
 func ValidateRunRequest(request RunRequest) error {
 	return validateRunRequest(request, defaultSiteRoot)

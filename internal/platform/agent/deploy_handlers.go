@@ -19,7 +19,7 @@ func (s *Server) deploySSHApplyHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	observation, err := s.deploy.ApplySSHAccess(r.Context(), request)
-	// The control plane refuses this pairing before it ever calls the node, so
+	// The control panel refuses this pairing before it ever calls the node, so
 	// reaching here means the two enables raced; the node's answer is the
 	// authoritative one and the code carries the reason back intact.
 	if errors.Is(err, deployoperator.ErrSFTPJailPresent) {
@@ -124,7 +124,7 @@ func writeEnvFailure(w http.ResponseWriter, err error) {
 
 // deployPrepareHTTP verifies the node's deployment tooling and installs what is
 // missing. It can run for tens of minutes on a cold apt index, which is why the
-// control plane calls it on its own long-timeout client; a tool that could not
+// control panel calls it on its own long-timeout client; a tool that could not
 // be installed comes back as a warning in the observation, not as an error.
 func (s *Server) deployPrepareHTTP(w http.ResponseWriter, r *http.Request) {
 	var request deployoperator.PrepareRequest

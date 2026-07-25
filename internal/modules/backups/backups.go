@@ -1,6 +1,6 @@
 // Package backups owns storage accounts, schedules, backup execution, copy
 // health, retention, and restore orchestration. Credentials remain encrypted in
-// the control plane; privileged filesystem and database work runs in the agent.
+// the control panel; privileged filesystem and database work runs in the agent.
 package backups
 
 import (
@@ -50,7 +50,7 @@ type Dependencies struct {
 	Postgres     DatabaseResolver
 	Mysql        DatabaseResolver
 	AccessPolicy SiteAccessPolicy
-	// StateDBPath is the control-plane database path; it is baked into each
+	// StateDBPath is the control-panel database path; it is baked into each
 	// plan's generated systemd service so `nexa backup trigger` finds the queue.
 	StateDBPath string
 	Logger      *slog.Logger

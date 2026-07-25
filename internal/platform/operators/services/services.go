@@ -1,7 +1,7 @@
 // Package services is the privileged node operator behind the Services page: it
 // lists the systemd service units nexa manages and starts, stops, restarts, and
 // toggles the boot-time enablement of them. Like the other operators it follows
-// the plan -> sign -> apply -> verify model. The control plane may only name a
+// the plan -> sign -> apply -> verify model. The control panel may only name a
 // unit and one of a fixed set of actions; the unit is re-validated against the
 // node's actually-discovered service list on both plan and apply, so an
 // arbitrary string can never reach a systemctl command line, and the panel's own
@@ -74,7 +74,7 @@ type Observation struct {
 	Verified bool    `json:"verified"`
 }
 
-// Operator is the interface the control plane depends on (via a Unix-socket
+// Operator is the interface the control panel depends on (via a Unix-socket
 // client) and the agent serves.
 type Operator interface {
 	// Discover reports the managed service units present on the node, each with

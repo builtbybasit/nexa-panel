@@ -362,7 +362,7 @@ func TestDisableDrivesTheNodeToRemoveTheLogin(t *testing.T) {
 	findEvent(t, auditLog, "deploy.ssh_disabled")
 }
 
-// A node that refuses the disable must leave the control plane still reporting
+// A node that refuses the disable must leave the control panel still reporting
 // the login it cannot yet prove is gone, otherwise the teardown guard would let
 // the site be deleted around a live shell account.
 func TestDisableKeepsTheRecordedStateWhenTheNodeRefuses(t *testing.T) {

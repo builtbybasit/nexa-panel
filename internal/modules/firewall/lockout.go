@@ -11,7 +11,7 @@ import (
 
 // accessPorts are the ports an operator gets back into the server through: SSH
 // and the panel's HTTP/HTTPS ingress. They mirror the survival ports the
-// operator re-asserts before it enables UFW, and are the set the control plane
+// operator re-asserts before it enables UFW, and are the set the control panel
 // refuses to let the last rule for disappear.
 //
 // A node whose sshd listens somewhere unusual is covered by the second guard
@@ -27,13 +27,13 @@ type accessPort struct {
 	number int
 	label  string
 	// panel marks the ports this very request could have arrived on. A request
-	// reaching the control plane came through the panel's ingress, never over
+	// reaching the control panel came through the panel's ingress, never over
 	// SSH, so only these ports can be carrying the caller's session.
 	panel bool
 }
 
 // assessLockout decides whether a change can cut the operator off, and says why
-// in operator-facing language. The control plane decides this, not the browser:
+// in operator-facing language. The control panel decides this, not the browser:
 // only the server knows the caller's peer address and the node's whole rule
 // table, and a UI-only guard is bypassed by any direct API call.
 //

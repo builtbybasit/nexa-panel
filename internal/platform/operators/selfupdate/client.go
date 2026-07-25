@@ -20,7 +20,7 @@ type agentTransport interface {
 	JSON(ctx context.Context, method, path string, input, output any) error
 }
 
-// UnixClient is the control-plane-side Operator implementation. It talks to the
+// UnixClient is the control-panel-side Operator implementation. It talks to the
 // privileged agent over its unix socket, authenticating with the shared token.
 type UnixClient struct {
 	client agentTransport
@@ -105,7 +105,7 @@ func (c *UnixClient) awaitCommittedTransaction(ctx context.Context, before Trans
 		case <-waitCtx.Done():
 			// The wait ends two ways, and they mean opposite things. If the
 			// caller's own context was cancelled, the cause is almost always the
-			// activation restarting this very control plane — the same restart the
+			// activation restarting this very control panel — the same restart the
 			// new agent is bringing about — so surface the cancellation unwrapped.
 			// The jobs worker only recognises a shutdown when the handler returns
 			// context.Canceled; masking it as a severed apply made the worker

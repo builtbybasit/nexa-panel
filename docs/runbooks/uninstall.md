@@ -6,7 +6,7 @@ Inspect the exact plan first:
 sudo nexa-uninstall --dry-run
 ```
 
-The default operation stops and removes the panel control plane, agent, admin
+The default operation stops and removes the panel control panel, agent, admin
 tool units, generated backup timers, packaged units, and panel ingress. It
 retains hosted sites, database servers/data, panel state, backups, encryption
 keys, release credentials, TLS material, and site-serving Nginx/PHP

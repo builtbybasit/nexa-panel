@@ -11,7 +11,7 @@ import (
 type SSHNodeSystem interface {
 	// SFTPDropInExists reports whether the sftp operator already owns a jail for
 	// this site. Both drop-ins present would leave the jail unenforced, so this
-	// is the node-side half of the mutual exclusion the control plane declares.
+	// is the node-side half of the mutual exclusion the control panel declares.
 	SFTPDropInExists(ctx context.Context, slug string) (bool, error)
 	// EnsureHomeSSHDir creates {root}/.ssh owned by the site account. Root can
 	// create a child of the root-owned site root; the account still cannot

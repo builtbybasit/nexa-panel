@@ -92,7 +92,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/health", s.healthHTTP)
 	// Registered on the mux so it inherits the bearer-token auth; the socket is
 	// only reachable by the unprivileged API process, so there is no separate
-	// local-surface gate as on the control plane's /metrics.
+	// local-surface gate as on the control panel's /metrics.
 	mux.HandleFunc("GET /v1/metrics", s.metricsHTTP)
 	if s.sites != nil {
 		mux.HandleFunc("POST /v1/sites/plan", s.sitePlanHTTP)
@@ -263,7 +263,7 @@ func (s *Server) healthHTTP(w http.ResponseWriter, _ *http.Request) {
 }
 
 // recoverPanic turns a handler panic into a clean JSON 500 with a stack logged
-// via slog, and bumps the panic counter — mirroring the control plane so the
+// via slog, and bumps the panic counter — mirroring the control panel so the
 // root agent process is no less observable than the API. The 500 is only
 // written when the response is still uncommitted, so a partially-streamed
 // download or log tail is not corrupted with a trailing error body.

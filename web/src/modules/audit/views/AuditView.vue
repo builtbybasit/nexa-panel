@@ -124,7 +124,7 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', tim
                   <small class="block truncate text-xs text-ink-muted">{{ event.subject }}</small>
                 </div>
                 <div class="hidden min-w-0 text-right sm:block">
-                  <span class="block text-xs text-ink-secondary">{{ event.remoteAddress || 'Local control plane' }}</span>
+                  <span class="block text-xs text-ink-secondary">{{ event.remoteAddress || 'Local control panel' }}</span>
                   <small class="block text-[11px] text-ink-muted">{{ actorLabel(event) }}</small>
                 </div>
                 <time :datetime="event.occurredAt" class="shrink-0 pt-0.5 font-mono text-[11px] whitespace-nowrap text-ink-muted">

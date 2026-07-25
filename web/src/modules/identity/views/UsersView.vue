@@ -58,7 +58,7 @@ const usersErrorMessage = computed(() => {
   const error = usersQuery.error.value
   if (error instanceof IdentityRequestError && error.status === 403)
     return 'Your account does not have permission to manage users.'
-  return 'The user list could not be loaded. Check that the control plane is reachable, then retry.'
+  return 'The user list could not be loaded. Check that the control panel is reachable, then retry.'
 })
 
 const {

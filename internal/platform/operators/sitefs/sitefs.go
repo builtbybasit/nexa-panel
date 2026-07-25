@@ -13,7 +13,7 @@ import (
 )
 
 // Scope identifies one managed site's confinement root. It is sent by the
-// control plane and independently re-validated by the agent before any
+// control panel and independently re-validated by the agent before any
 // filesystem access.
 type Scope struct {
 	SiteID   string `json:"siteId"`

@@ -154,7 +154,7 @@ type Guard struct {
 type Option func(*Guard)
 
 // WithWindow overrides the confirmation window. Tests use a short one; the
-// control plane uses DefaultWindow.
+// control panel uses DefaultWindow.
 func WithWindow(window time.Duration) Option {
 	return func(g *Guard) {
 		if window > 0 {

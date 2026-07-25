@@ -16,13 +16,13 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
-	"github.com/nexa-panel/nexa-panel/internal/platform/controlplane"
+	"github.com/nexa-panel/nexa-panel/internal/platform/controlpanel"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 )
 
-// hardenTestEnv wires a fresh identity module and control plane for the
+// hardenTestEnv wires a fresh identity module and control panel for the
 // security-hardening tests, returning the module, its HTTP handler, and a
 // pointer to the mutable clock the module reads.
 func hardenTestEnv(t *testing.T, config Config) (*Module, http.Handler, audit.Recorder, *time.Time) {
@@ -51,16 +51,16 @@ func hardenTestEnv(t *testing.T, config Config) (*Module, http.Handler, audit.Re
 	}
 	clock := time.Unix(1_700_000_000, 0).UTC()
 	identityModule.now = func() time.Time { return clock }
-	server, err := controlplane.New("test", []module.Module{identityModule, auditModule}, logger,
-		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(testAuthorization{}))
+	server, err := controlpanel.New("test", []module.Module{identityModule, auditModule}, logger,
+		controlpanel.WithAuthentication(identityModule), controlpanel.WithAuthorization(testAuthorization{}))
 	if err != nil {
-		t.Fatalf("create control plane: %v", err)
+		t.Fatalf("create control panel: %v", err)
 	}
 	return identityModule, server.Handler(), auditModule, &clock
 }
 
 // remoteRequest simulates a genuinely remote client: a public peer address over
-// TLS (so the control plane's secure-transport guard admits it), which is the
+// TLS (so the control panel's secure-transport guard admits it), which is the
 // exact shape the bootstrap land-grab defence must withstand.
 func remoteRequest(handler http.Handler, method, path, body, bootstrapToken string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))

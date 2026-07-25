@@ -8,7 +8,7 @@ import (
 	"github.com/uptrace/bun"
 )
 
-// Status is the control-plane workflow state of an installable application.
+// Status is the control-panel workflow state of an installable application.
 type Status string
 
 const (

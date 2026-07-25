@@ -1,7 +1,7 @@
 # Nexa Panel
 
 Nexa Panel is a self-hosted server-management platform for Ubuntu 24.04 LTS.
-It combines a Go control plane, a separate privileged node agent, and a Vue 3
+It combines a Go control panel, a separate privileged node agent, and a Vue 3
 web application for managing sites, databases, certificates, deployments,
 backups, scheduled work, and selected host services.
 
@@ -36,7 +36,7 @@ The packaged system runs two instances of the same Go binary:
   API reaches it through an authenticated Unix socket.
 
 Nginx is the public ingress and proxies to `/run/nexa-panel/api.sock`. The agent
-listens on `/run/nexa-panel/agent.sock`. SQLite stores control-plane state in
+listens on `/run/nexa-panel/agent.sock`. SQLite stores control-panel state in
 `/var/lib/nexa-panel/control.db`; `/etc/nexa-panel/master.key` encrypts stored
 credentials.
 

@@ -1,6 +1,6 @@
 # Nexa Panel Context
 
-This glossary defines the language used by the control plane, privileged agent,
+This glossary defines the language used by the control panel, privileged agent,
 and feature modules of Nexa Panel.
 
 ## Managed Web Hosting
@@ -42,7 +42,7 @@ The operating-system identity that exclusively owns a site's files and runs its 
 _Avoid_: Panel user, administrator
 
 **Desired State**:
-The persisted configuration that the control plane has approved for a managed resource.
+The persisted configuration that the control panel has approved for a managed resource.
 _Avoid_: Current state, configuration file
 
 **Observed State**:
@@ -138,7 +138,7 @@ Interactive shell login to a site delivered through the site's own Unix Owner, a
 _Avoid_: SFTP access, shell account, root login
 
 **Deploy Key**:
-The site-scoped keypair generated on the node so the site's Unix Owner can read one Git repository; only the public half and its fingerprint ever reach the control plane.
+The site-scoped keypair generated on the node so the site's Unix Owner can read one Git repository; only the public half and its fingerprint ever reach the control panel.
 _Avoid_: Access token, credential, private key
 
 **Deployer Mode**:

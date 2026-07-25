@@ -1,12 +1,12 @@
-// Package firewall is the control-plane feature module behind the Firewall
+// Package firewall is the control-panel feature module behind the Firewall
 // page. It surfaces the node's UFW status and rule table and orchestrates
 // enable/disable and per-rule allow/deny/delete changes as durable, audited
 // jobs through the privileged firewall operator. UFW on the node is the single
 // source of truth for the rule table, so the module keeps no copy of it.
 //
-// The one piece of control-plane state it does keep is the armed automatic
+// The one piece of control-panel state it does keep is the armed automatic
 // revert. A rule change can strand the operator outside their own server, and
-// only the control plane can judge that: it knows the caller's peer address and
+// only the control panel can judge that: it knows the caller's peer address and
 // the whole rule table. A change judged lockout-capable is refused unless the
 // caller acknowledges the risk, and then it is applied with a timed revert armed
 // behind it — undone automatically unless a still-working session confirms

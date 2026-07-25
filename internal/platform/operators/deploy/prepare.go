@@ -78,7 +78,7 @@ type ToolStatus struct {
 
 // PrepareObservation is what the node settled into. The firewall check is
 // deliberately not here: it is read-only, it needs the firewall operator rather
-// than this one, and the control plane runs it — see the deploy module's
+// than this one, and the control panel runs it — see the deploy module's
 // prepare job.
 type PrepareObservation struct {
 	Tools    []ToolStatus `json:"tools"`

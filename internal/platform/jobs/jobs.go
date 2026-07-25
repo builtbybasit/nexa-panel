@@ -124,7 +124,7 @@ type Module struct {
 }
 
 // PanicCount reports how many job handler panics have been recovered by the
-// worker. It mirrors the control-plane HTTP panic counter and is exposed for
+// worker. It mirrors the control-panel HTTP panic counter and is exposed for
 // observability and tests.
 func (m *Module) PanicCount() uint64 { return m.panics.Load() }
 

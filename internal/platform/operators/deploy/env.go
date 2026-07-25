@@ -37,7 +37,7 @@ const (
 	// widest that still excludes every other account on the node.
 	sharedEnvMode = os.FileMode(0o640)
 	// MaxSharedEnvBytes bounds the document in both directions. It is exported
-	// because the control plane refuses an oversized body in the request that
+	// because the control panel refuses an oversized body in the request that
 	// typed it, rather than letting the node discover it a round trip later.
 	MaxSharedEnvBytes = 64 * 1024
 )
@@ -89,7 +89,7 @@ type envSystem interface {
 var _ envSystem = (*SSHHostSystem)(nil)
 
 // ErrSharedEnvMissing is returned when the site has no release tree to hold a
-// shared .env. It is exported so the control plane can tell "this site is not
+// shared .env. It is exported so the control panel can tell "this site is not
 // in deployer mode yet" from a genuine node failure and say so.
 var ErrSharedEnvMissing = errors.New("this site has no shared release directory")
 
@@ -117,7 +117,7 @@ func (o *SSHHostOperator) ReadSharedEnv(ctx context.Context, request EnvRequest)
 }
 
 // WriteSharedEnv replaces the site's shared .env. The document is validated
-// here as well as in the control plane, because this operator is reachable from
+// here as well as in the control panel, because this operator is reachable from
 // the agent socket and its own boundary is the one that has to hold.
 func (o *SSHHostOperator) WriteSharedEnv(ctx context.Context, request EnvRequest, content string) (EnvDocument, error) {
 	if err := request.validate(); err != nil {
@@ -138,7 +138,7 @@ func (o *SSHHostOperator) WriteSharedEnv(ctx context.Context, request EnvRequest
 }
 
 // ValidateSharedEnv is the whole content boundary: a size cap and a NUL
-// refusal. It is exported so the control plane applies exactly this rule to the
+// refusal. It is exported so the control panel applies exactly this rule to the
 // request body, and the node applies it again to what arrives.
 //
 // NUL is rejected rather than stripped because a `.env` parser splits on lines

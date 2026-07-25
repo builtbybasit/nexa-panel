@@ -26,7 +26,7 @@ const (
 )
 
 // Account is the resolved view of a backup account handed to the agent. The
-// control plane decrypts the account's secrets and merges them into Params
+// control panel decrypts the account's secrets and merges them into Params
 // before calling, so the operator never touches ciphertext.
 type Account struct {
 	Name   string            `json:"name"`
@@ -44,7 +44,7 @@ type TestResult struct {
 	Message string `json:"message"`
 }
 
-// Operator is the agent-side contract the control plane calls over the Unix
+// Operator is the agent-side contract the control panel calls over the Unix
 // socket. It grows one method per phase (TestAccount now; Run/Restore/List/
 // Delete/InstallSchedule later).
 type Operator interface {
@@ -184,7 +184,7 @@ func NewHostOperator(runner Runner, configs ...HostConfig) (*HostOperator, error
 	}
 	if len(configs) == 1 && configs[0].StateDBPath != "" {
 		if !filepath.IsAbs(configs[0].StateDBPath) {
-			return nil, errors.New("control-plane state database path must be absolute")
+			return nil, errors.New("control-panel state database path must be absolute")
 		}
 		stateDBPath = filepath.Clean(configs[0].StateDBPath)
 	}

@@ -1,5 +1,5 @@
 // Package agentclient owns the authenticated HTTP-over-Unix-socket transport
-// shared by control-plane operator adapters. Feature packages only describe
+// shared by control-panel operator adapters. Feature packages only describe
 // their request and response types; token rotation, bounded JSON decoding, and
 // agent error handling stay consistent in this one transport seam.
 package agentclient

@@ -60,7 +60,7 @@ export const useIdentityStore = defineStore('identity', {
         else if (status.authenticated) this.phase = 'authenticated'
         else this.phase = 'login'
       } catch (error) {
-        this.error = error instanceof Error ? error.message : 'The control plane is unavailable.'
+        this.error = error instanceof Error ? error.message : 'The control panel is unavailable.'
       } finally {
         this.initialized = true
         this.loading = false

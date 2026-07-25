@@ -54,7 +54,7 @@ func TestAPIReadinessRequiresACurrentSchema(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 
 	check := apiReadiness(database, func(context.Context) error { return nil })
-	if err := check(context.Background()); err == nil || !strings.Contains(err.Error(), "control-plane schema") {
+	if err := check(context.Background()); err == nil || !strings.Contains(err.Error(), "control-panel schema") {
 		t.Fatalf("an unmigrated database must not be ready, got %v", err)
 	}
 	if err := persistence.RunMigrations(context.Background(), database); err != nil {

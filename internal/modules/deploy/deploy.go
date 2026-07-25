@@ -1,4 +1,4 @@
-// Package deploy is the control-plane feature module behind per-site
+// Package deploy is the control-panel feature module behind per-site
 // deployment access. Its first surface is SSH: it owns the panel-managed key
 // list for a site's own Unix account and drives the privileged deploy operator
 // to install it.

@@ -9,7 +9,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/agentclient"
 )
 
-// UnixClient is the control-plane-side Operator implementation. It talks to the
+// UnixClient is the control-panel-side Operator implementation. It talks to the
 // privileged agent over its Unix socket, authenticating with the shared token.
 type UnixClient struct {
 	client *agentclient.Client
