@@ -170,13 +170,6 @@ function domainSubtitle(domain: Domain): string {
 const storedFailureLink = computed(() =>
   site.value?.lastJobId !== undefined ? { jobId: site.value.lastJobId } : {},
 )
-const runnerFailureLink = computed(() =>
-  runner.progress.value?.state === 'failed' && runner.jobId.value !== undefined ? { jobId: runner.jobId.value } : {},
-)
-const progressExtras = computed(() => ({
-  messages: runner.messages.value,
-  ...(runner.startedAtMs.value !== undefined ? { startedAtMs: runner.startedAtMs.value } : {}),
-}))
 
 const expiryToneClasses = {
   default: 'text-ink-secondary',
@@ -425,8 +418,8 @@ watch(siteId, () => {
         :message="site.failure"
         v-bind="storedFailureLink"
       />
-      <JobFailureNotice v-else-if="runner.error.value" :message="runner.error.value" v-bind="runnerFailureLink" />
-      <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="progressExtras" />
+      <JobFailureNotice v-else-if="runner.error.value" v-bind="runner.failureProps.value" />
+      <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="runner.progressProps.value" />
 
       <div class="rounded-2xl border border-outline bg-surface/80 p-5 sm:p-6">
         <div class="flex items-center gap-3.5">

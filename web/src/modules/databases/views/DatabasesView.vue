@@ -30,7 +30,6 @@ import { useToolLaunch } from '@/modules/admintools/composables/useToolLaunch'
 import { useIdentityStore } from '@/modules/identity/store'
 
 import { createBackup, dropDatabase, dropUser, type DatabaseUser, type ManagedDatabase } from '../api'
-import { failureProps, progressProps } from '../composables/runnerProps'
 import { useDatabasesData } from '../composables/useDatabasesData'
 import { ENGINES, serverLabel, userLabel } from '../lib/engines'
 
@@ -155,11 +154,11 @@ watch(
     <AppAlert v-if="!canWrite" tone="info">Your account has read-only access to databases.</AppAlert>
 
     <div v-if="dropRunner.error.value || dropRunner.progress.value" class="space-y-2">
-      <JobFailureNotice v-if="dropRunner.error.value" v-bind="failureProps(dropRunner)" />
+      <JobFailureNotice v-if="dropRunner.error.value" v-bind="dropRunner.failureProps.value" />
       <JobProgress
         v-if="dropRunner.progress.value"
         :event="dropRunner.progress.value"
-        v-bind="progressProps(dropRunner)"
+        v-bind="dropRunner.progressProps.value"
       />
     </div>
 
@@ -214,11 +213,11 @@ watch(
       </template>
       <div class="space-y-3 px-3 pb-3 sm:px-4 sm:pb-4">
         <div v-if="backupRunner.error.value || backupRunner.progress.value" class="space-y-2">
-          <JobFailureNotice v-if="backupRunner.error.value" v-bind="failureProps(backupRunner)" />
+          <JobFailureNotice v-if="backupRunner.error.value" v-bind="backupRunner.failureProps.value" />
           <JobProgress
             v-if="backupRunner.progress.value"
             :event="backupRunner.progress.value"
-            v-bind="progressProps(backupRunner)"
+            v-bind="backupRunner.progressProps.value"
           />
         </div>
         <AppAlert v-if="toolLaunch.toolsQuery.isError.value" tone="danger">

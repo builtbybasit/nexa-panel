@@ -283,10 +283,10 @@ async function approveTool() {
       <StatusPill tone="accent" label="apt · reviewed installs" :pulse="false" />
     </PageHeader>
 
-    <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" :job-id="runner.jobId.value" />
-    <JobFailureNotice v-if="applyRunner.error.value" :message="applyRunner.error.value" :job-id="applyRunner.jobId.value" />
-    <JobProgress v-if="runner.progress.value" :event="runner.progress.value" :messages="runner.messages.value" :started-at-ms="runner.startedAtMs.value" />
-    <JobProgress v-if="applyRunner.progress.value" :event="applyRunner.progress.value" :messages="applyRunner.messages.value" :started-at-ms="applyRunner.startedAtMs.value" />
+    <JobFailureNotice v-if="runner.error.value" v-bind="runner.failureProps.value" />
+    <JobFailureNotice v-if="applyRunner.error.value" v-bind="applyRunner.failureProps.value" />
+    <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="runner.progressProps.value" />
+    <JobProgress v-if="applyRunner.progress.value" :event="applyRunner.progress.value" v-bind="applyRunner.progressProps.value" />
     <AppAlert v-if="planError" tone="danger">{{ planError }}</AppAlert>
 
     <ListToolbar

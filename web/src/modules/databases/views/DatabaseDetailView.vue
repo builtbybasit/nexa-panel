@@ -49,7 +49,6 @@ import {
   type DatabaseUser,
   type RestorePoint,
 } from '../api'
-import { failureProps, progressProps } from '../composables/runnerProps'
 import { useDatabasesData } from '../composables/useDatabasesData'
 import { connectionEngine, ENGINES, serverLabel, userLabel } from '../lib/engines'
 
@@ -299,11 +298,11 @@ watch(missing, (gone) => {
       <AppAlert v-if="!canWrite" tone="info">Your account has read-only access to this database.</AppAlert>
 
       <div v-if="dropRunner.error.value || dropRunner.progress.value" class="space-y-2">
-        <JobFailureNotice v-if="dropRunner.error.value" v-bind="failureProps(dropRunner)" />
+        <JobFailureNotice v-if="dropRunner.error.value" v-bind="dropRunner.failureProps.value" />
         <JobProgress
           v-if="dropRunner.progress.value"
           :event="dropRunner.progress.value"
-          v-bind="progressProps(dropRunner)"
+          v-bind="dropRunner.progressProps.value"
         />
       </div>
       <AppAlert v-if="toolLaunch.error.value" tone="danger">{{ toolLaunch.error.value }}</AppAlert>
@@ -430,11 +429,11 @@ watch(missing, (gone) => {
               Grant access
             </AppButton>
           </form>
-          <JobFailureNotice v-if="grantRunner.error.value" v-bind="failureProps(grantRunner)" />
+          <JobFailureNotice v-if="grantRunner.error.value" v-bind="grantRunner.failureProps.value" />
           <JobProgress
             v-if="grantRunner.progress.value"
             :event="grantRunner.progress.value"
-            v-bind="progressProps(grantRunner)"
+            v-bind="grantRunner.progressProps.value"
           />
         </div>
       </AppCard>
@@ -450,17 +449,17 @@ watch(missing, (gone) => {
             "
             class="space-y-2"
           >
-            <JobFailureNotice v-if="backupRunner.error.value" v-bind="failureProps(backupRunner)" />
+            <JobFailureNotice v-if="backupRunner.error.value" v-bind="backupRunner.failureProps.value" />
             <JobProgress
               v-if="backupRunner.progress.value"
               :event="backupRunner.progress.value"
-              v-bind="progressProps(backupRunner)"
+              v-bind="backupRunner.progressProps.value"
             />
-            <JobFailureNotice v-if="restoreRunner.error.value" v-bind="failureProps(restoreRunner)" />
+            <JobFailureNotice v-if="restoreRunner.error.value" v-bind="restoreRunner.failureProps.value" />
             <JobProgress
               v-if="restoreRunner.progress.value"
               :event="restoreRunner.progress.value"
-              v-bind="progressProps(restoreRunner)"
+              v-bind="restoreRunner.progressProps.value"
             />
           </div>
           <div v-if="restorePointsQuery.isPending.value" class="space-y-1">

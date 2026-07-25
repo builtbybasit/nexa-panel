@@ -106,8 +106,7 @@ async function doDelete() {
     <JobProgress
       v-if="restoreRunner.progress.value"
       :event="restoreRunner.progress.value"
-      :messages="restoreRunner.messages.value"
-      :started-at-ms="restoreRunner.startedAtMs.value"
+      v-bind="restoreRunner.progressProps.value"
     />
 
     <div v-if="copiesQuery.isPending.value" class="space-y-2">

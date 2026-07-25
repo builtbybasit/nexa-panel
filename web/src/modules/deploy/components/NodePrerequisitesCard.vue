@@ -100,8 +100,7 @@ const warnings = computed(() => {
       <JobProgress
         v-if="runner.progress.value"
         :event="runner.progress.value"
-        :messages="runner.messages.value"
-        :started-at-ms="runner.startedAtMs.value"
+        v-bind="runner.progressProps.value"
       />
 
       <template v-if="preparation">

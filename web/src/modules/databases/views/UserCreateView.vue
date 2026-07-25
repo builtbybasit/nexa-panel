@@ -29,7 +29,6 @@ import {
 import { useIdentityStore } from '@/modules/identity/store'
 
 import { createUser } from '../api'
-import { failureProps, progressProps } from '../composables/runnerProps'
 import { useDatabasesData } from '../composables/useDatabasesData'
 import { ENGINES, serverLabel } from '../lib/engines'
 
@@ -168,8 +167,8 @@ async function submit() {
           hint="Copy it now — the panel stores it encrypted and never shows it again."
         />
 
-        <JobFailureNotice v-if="runner.error.value" v-bind="failureProps(runner)" />
-        <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="progressProps(runner)" />
+        <JobFailureNotice v-if="runner.error.value" v-bind="runner.failureProps.value" />
+        <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="runner.progressProps.value" />
 
         <div class="flex flex-wrap justify-end gap-2 pt-1">
           <RouterLink to="/databases"><AppButton :disabled="runner.busy.value">Cancel</AppButton></RouterLink>

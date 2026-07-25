@@ -1,4 +1,4 @@
-import { onScopeDispose, ref } from 'vue'
+import { computed, onScopeDispose, ref } from 'vue'
 
 import { subscribeToJob, type JobEvent } from '@/modules/jobs/api'
 import { useToasts } from '@/shared/composables/useToasts'
@@ -140,7 +140,47 @@ export function useJobRunner() {
     }
   }
 
+  /**
+   * Props for `<JobProgress>` — the live message stream and its start time.
+   * `startedAtMs` is omitted while undefined so it satisfies the component's
+   * optional prop under `exactOptionalPropertyTypes`. Bind alongside the
+   * separately-guarded `:event`: `<JobProgress :event="runner.progress.value"
+   * v-bind="runner.progressProps.value" />`.
+   */
+  const progressProps = computed<{ messages: JobMessage[]; startedAtMs?: number }>(() =>
+    startedAtMs.value === undefined
+      ? { messages: messages.value }
+      : { messages: messages.value, startedAtMs: startedAtMs.value },
+  )
+
+  /**
+   * Props for `<JobFailureNotice>` — the error text plus a link to the job when
+   * one actually exists. `beginRun` clears `jobId` at the start of every run and
+   * it is only set once a job is genuinely queued, so `jobId !== undefined` means
+   * "a real current job to link to" — the correct guard for every failure mode,
+   * including a stream disconnect where the job keeps running.
+   */
+  const failureProps = computed<{ message: string; jobId?: number }>(() =>
+    jobId.value === undefined
+      ? { message: error.value }
+      : { message: error.value, jobId: jobId.value },
+  )
+
   onScopeDispose(stop)
 
-  return { busy, error, progress, jobId, messages, startedAtMs, reconnecting, run, follow, stop, reset }
+  return {
+    busy,
+    error,
+    progress,
+    jobId,
+    messages,
+    startedAtMs,
+    reconnecting,
+    progressProps,
+    failureProps,
+    run,
+    follow,
+    stop,
+    reset,
+  }
 }

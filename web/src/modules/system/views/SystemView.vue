@@ -112,8 +112,7 @@ async function update() {
       <JobProgress
         v-if="runner.progress.value && !restarting"
         :event="runner.progress.value"
-        :messages="runner.messages.value"
-        :started-at-ms="runner.startedAtMs.value"
+        v-bind="runner.progressProps.value"
       />
     </template>
   </section>

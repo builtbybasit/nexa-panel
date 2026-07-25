@@ -239,8 +239,7 @@ async function test() {
         <JobProgress
           v-if="testRunner.progress.value"
           :event="testRunner.progress.value"
-          :messages="testRunner.messages.value"
-          :started-at-ms="testRunner.startedAtMs.value"
+          v-bind="testRunner.progressProps.value"
         />
 
         <div v-if="testResult" class="space-y-3 rounded-xl border border-outline p-4">

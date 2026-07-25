@@ -184,14 +184,12 @@ async function save() {
     <JobProgress
       v-if="extRunner.progress.value"
       :event="extRunner.progress.value"
-      :messages="extRunner.messages.value"
-      :started-at-ms="extRunner.startedAtMs.value"
+      v-bind="extRunner.progressProps.value"
     />
     <JobProgress
       v-if="saveRunner.progress.value"
       :event="saveRunner.progress.value"
-      :messages="saveRunner.messages.value"
-      :started-at-ms="saveRunner.startedAtMs.value"
+      v-bind="saveRunner.progressProps.value"
     />
 
     <AppAlert v-if="versionsQuery.isError.value" tone="danger">
