@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 )
 
 // Versions reports the PHP branches installed on the node: config directories
@@ -26,7 +28,7 @@ func (o *HostOperator) Versions(_ context.Context) ([]string, error) {
 	versions := []string{}
 	for _, entry := range entries {
 		name := strings.TrimSpace(entry.Name())
-		if !entry.IsDir() || !versionPattern.MatchString(name) {
+		if !entry.IsDir() || !naming.ValidPHPVersionShape(name) {
 			continue
 		}
 		info, statErr := os.Stat(o.fpmConfigDir(name))
@@ -44,7 +46,7 @@ func (o *HostOperator) Versions(_ context.Context) ([]string, error) {
 // that keeps an arbitrary string out of package names and file paths.
 func (o *HostOperator) normalizeVersion(ctx context.Context, version string) (string, error) {
 	version = strings.TrimSpace(version)
-	if !versionPattern.MatchString(version) {
+	if !naming.ValidPHPVersionShape(version) {
 		return "", fmt.Errorf("PHP version %q is not a supported branch", version)
 	}
 	installed, err := o.Versions(ctx)

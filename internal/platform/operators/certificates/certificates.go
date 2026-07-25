@@ -10,17 +10,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
 const PlanKind = "nexa.certificate.v1"
-
-var hostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
 type Request struct {
 	CertificateID string   `json:"certificateId"`
@@ -162,7 +160,7 @@ func (o *HostOperator) inspect(plan Plan) (Observation, error) {
 }
 
 func validate(request Request) error {
-	if request.CertificateID == "" || !hostnamePattern.MatchString(request.PrimaryDomain) {
+	if request.CertificateID == "" || !naming.ValidHostname(request.PrimaryDomain) {
 		return errors.New("certificate identity and primary domain are required")
 	}
 	if request.Operation != "issue" && request.Operation != "renew" && request.Operation != "revoke" {
@@ -178,7 +176,7 @@ func validate(request Request) error {
 		return errors.New("certificate domains must include the primary domain")
 	}
 	for _, domain := range request.Domains {
-		if !hostnamePattern.MatchString(domain) || strings.HasPrefix(domain, "*.") {
+		if !naming.ValidHostname(domain) || strings.HasPrefix(domain, "*.") {
 			return errors.New("HTTP-01 certificate domains must be non-wildcard hostnames")
 		}
 	}

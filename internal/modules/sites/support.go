@@ -10,6 +10,7 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 
@@ -272,13 +273,13 @@ func (m *Module) submitPlanMutation(w http.ResponseWriter, r *http.Request, kind
 }
 
 func validateCreate(request CreateRequest) error {
-	if !slugPattern.MatchString(request.Slug) {
+	if !naming.ValidSiteSlug(request.Slug) {
 		return errors.New("slug must start with a letter and contain 2-32 lowercase letters, numbers, or hyphens")
 	}
 	if request.DisplayName == "" || len(request.DisplayName) > 80 {
 		return errors.New("display name must contain 1-80 characters")
 	}
-	if !domainPattern.MatchString(request.PrimaryDomain) || len(request.PrimaryDomain) > 253 {
+	if !naming.ValidHostname(request.PrimaryDomain) || len(request.PrimaryDomain) > 253 {
 		return errors.New("primary domain must be a valid fully-qualified ASCII hostname")
 	}
 	return nil

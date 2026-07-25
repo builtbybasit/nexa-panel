@@ -213,7 +213,6 @@ func NewHostOperator(runner Runner, config HostConfig) (*HostOperator, error) {
 var (
 	// versionPattern gates the shape only; a branch is trusted only after
 	// Versions confirms the node actually has it installed.
-	versionPattern = regexp.MustCompile(`^[0-9]{1,2}\.[0-9]{1,2}$`)
 	// extensionPattern is the bare module suffix: a single lowercase token, which
 	// is also why multi-hyphen apt packages (php8.3-all-dev) never enumerate.
 	extensionPattern = regexp.MustCompile(`^[a-z0-9]{1,40}$`)

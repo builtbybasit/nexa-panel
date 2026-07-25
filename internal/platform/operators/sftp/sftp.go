@@ -16,9 +16,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-)
 
-var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
+)
 
 // hashPattern accepts a crypt(3) settings string: `$id$...` built from the
 // crypt base64 alphabet. It exists so the value fed to `chpasswd -e` can never
@@ -73,10 +73,10 @@ type Operator interface {
 // module would have, so the agent never chroots into or repoints an
 // attacker-chosen path even if a request reaches it from a compromised caller.
 func (r Request) validate() error {
-	if !slugPattern.MatchString(r.Slug) {
+	if !naming.ValidSiteSlug(r.Slug) {
 		return errors.New("sftp site slug is invalid")
 	}
-	if r.UnixUser != "nexa_"+strings.ReplaceAll(r.Slug, "-", "_") {
+	if r.UnixUser != naming.SiteUnixUser(r.Slug) {
 		return errors.New("sftp unix user must be derived from the site slug")
 	}
 	if filepath.Clean(r.RootPath) != filepath.Join(siteRootBase, r.Slug) {

@@ -6,9 +6,10 @@ import (
 	"os/user"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 )
 
 // Scope identifies one managed site's confinement root. It is sent by the
@@ -21,19 +22,17 @@ type Scope struct {
 	UnixUser string `json:"unixUser"`
 }
 
-var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
-
 func Validate(scope Scope, siteRoot string) error {
 	if scope.SiteID == "" {
 		return errors.New("site scope requires a site ID")
 	}
-	if !slugPattern.MatchString(scope.Slug) {
+	if !naming.ValidSiteSlug(scope.Slug) {
 		return errors.New("site scope slug is not a managed site slug")
 	}
 	if scope.RootPath != filepath.Join(siteRoot, scope.Slug) {
 		return errors.New("site scope root path does not match the managed site layout")
 	}
-	if scope.UnixUser != "nexa_"+strings.ReplaceAll(scope.Slug, "-", "_") {
+	if scope.UnixUser != naming.SiteUnixUser(scope.Slug) {
 		return errors.New("site scope unix user does not match the managed site layout")
 	}
 	return nil

@@ -88,12 +88,9 @@ func (s *Server) phpApplyHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) signPHPPlan(plan phpoperator.Plan) string {
-	plan.Signature = ""
-	return signPayload(s.token, "php.plan.v1", plan)
+	return s.signPlan("php.plan.v1", &plan.Signature, &plan)
 }
 
 func (s *Server) verifyPHPPlan(plan phpoperator.Plan) bool {
-	provided := plan.Signature
-	plan.Signature = ""
-	return verifyPayload(s.token, "php.plan.v1", plan, provided)
+	return s.verifyPlan("php.plan.v1", &plan.Signature, &plan)
 }

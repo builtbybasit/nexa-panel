@@ -65,12 +65,9 @@ func (s *Server) postgresApplyHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) signPostgresPlan(plan postgresoperator.Plan) string {
-	plan.Signature = ""
-	return signPayload(s.token, "postgresql.plan.v1", plan)
+	return s.signPlan("postgresql.plan.v1", &plan.Signature, &plan)
 }
 
 func (s *Server) verifyPostgresPlan(plan postgresoperator.Plan) bool {
-	provided := plan.Signature
-	plan.Signature = ""
-	return verifyPayload(s.token, "postgresql.plan.v1", plan, provided)
+	return s.verifyPlan("postgresql.plan.v1", &plan.Signature, &plan)
 }

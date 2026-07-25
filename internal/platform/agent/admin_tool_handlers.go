@@ -68,12 +68,9 @@ func (s *Server) adminToolsKeepAliveHTTP(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) signAdminToolPlan(plan admintooloperator.Plan) string {
-	plan.Signature = ""
-	return signPayload(s.token, "admin-tool.plan.v1", plan)
+	return s.signPlan("admin-tool.plan.v1", &plan.Signature, &plan)
 }
 
 func (s *Server) verifyAdminToolPlan(plan admintooloperator.Plan) bool {
-	provided := plan.Signature
-	plan.Signature = ""
-	return verifyPayload(s.token, "admin-tool.plan.v1", plan, provided)
+	return s.verifyPlan("admin-tool.plan.v1", &plan.Signature, &plan)
 }

@@ -449,13 +449,7 @@ func (m *Module) preAuthentication(w http.ResponseWriter, r *http.Request) (prin
 		httpapi.WriteError(w, http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 		return principal{}, false
 	}
-	if !validRequestOrigin(r) {
-		httpapi.WriteError(w, http.StatusForbidden, "invalid_origin", "The request origin is not allowed.")
-		return principal{}, false
-	}
-	if !validCSRFToken(r, person) {
-		m.logger.Warn("rejected request without a valid CSRF token", "user", person.Username, "path", r.URL.Path, "remote", remoteAddress(r))
-		httpapi.WriteError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
+	if !m.enforceOriginAndCSRF(w, r, person, false) {
 		return principal{}, false
 	}
 	return person, true

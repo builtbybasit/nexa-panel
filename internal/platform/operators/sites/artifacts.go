@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/fsutil"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
 
@@ -231,38 +232,11 @@ func atomicWrite(path string, content []byte, mode os.FileMode) error {
 // publishing it. This avoids a privileged path-based chown after rename in
 // directories writable by managed site accounts.
 func atomicWriteOwned(path string, content []byte, mode os.FileMode, uid, gid int) error {
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(directory, ".nexa-stage-*")
-	if err != nil {
-		return err
-	}
-	name := temporary.Name()
-	defer os.Remove(name)
-	if _, err := temporary.Write(content); err != nil {
-		_ = temporary.Close()
-		return err
-	}
+	opts := []fsutil.Option{fsutil.WithMkdirAll(0o755)}
 	if uid >= 0 && gid >= 0 {
-		if err := temporary.Chown(uid, gid); err != nil {
-			_ = temporary.Close()
-			return err
-		}
+		opts = append(opts, fsutil.WithOwner(uid, gid))
 	}
-	if err := temporary.Chmod(mode); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return fsutil.Write(path, content, mode, opts...)
 }
 
 func digestBytes(content []byte) string {

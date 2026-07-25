@@ -111,12 +111,9 @@ func (s *Server) scheduleRunsHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) signSchedulePlan(plan scheduleoperator.Plan) string {
-	plan.Signature = ""
-	return signPayload(s.token, "schedule.plan.v1", plan)
+	return s.signPlan("schedule.plan.v1", &plan.Signature, &plan)
 }
 
 func (s *Server) verifySchedulePlan(plan scheduleoperator.Plan) bool {
-	provided := plan.Signature
-	plan.Signature = ""
-	return verifyPayload(s.token, "schedule.plan.v1", plan, provided)
+	return s.verifyPlan("schedule.plan.v1", &plan.Signature, &plan)
 }

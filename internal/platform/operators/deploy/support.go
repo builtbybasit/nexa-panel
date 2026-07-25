@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/agentclient"
+	"github.com/nexa-panel/nexa-panel/internal/platform/fsutil"
 )
 
 // UnixClient is the control-plane-side Operator. It talks to the privileged
@@ -56,29 +56,7 @@ func restoreSentinel(err error) error {
 // so a reader (sshd re-reading a drop-in, or an in-flight login reading
 // authorized_keys) never sees a half-written file.
 func atomicWrite(path string, content []byte, mode os.FileMode) error {
-	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".nexa-deploy-*")
-	if err != nil {
-		return err
-	}
-	name := temporary.Name()
-	defer os.Remove(name)
-	if _, err := temporary.Write(content); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Chmod(mode); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return fsutil.Write(path, content, mode)
 }
 
 func commandError(output []byte, err error) error {

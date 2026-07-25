@@ -11,6 +11,7 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
 
@@ -34,7 +35,7 @@ func (m *Module) Create(ctx context.Context, request CreateRequest, actorUserID 
 	model := &siteModel{
 		ID: randomID(), Slug: request.Slug, DisplayName: request.DisplayName,
 		PrimaryDomain: request.PrimaryDomain, PHPVersion: request.PHPVersion,
-		UnixUser:   "nexa_" + strings.ReplaceAll(request.Slug, "-", "_"),
+		UnixUser:   naming.SiteUnixUser(request.Slug),
 		RootPath:   filepath.Join("/srv/nexa/sites", request.Slug),
 		SocketPath: filepath.Join("/run/php", "nexa-"+request.Slug+".sock"),
 		Status:     string(StatusPlanning), DeploymentMode: DeploymentModeStandard,

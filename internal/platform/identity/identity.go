@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
@@ -298,19 +297,7 @@ func (m *Module) Middleware(next http.Handler) http.Handler {
 			httpapi.WriteError(w, http.StatusUnauthorized, "mfa_required", "Complete multi-factor authentication to continue.")
 			return
 		}
-		if !validRequestOrigin(r) {
-			httpapi.WriteError(w, http.StatusForbidden, "invalid_origin", "The request origin is not allowed.")
-			return
-		}
-		// Admin tools are same-origin reverse-proxied applications with their own
-		// CSRF tokens. Requiring the panel's private double-submit header here would
-		// reject every pgAdmin/phpMyAdmin POST before it reached that application.
-		// The strict Origin check above and SameSite tool-session cookie still block
-		// cross-site requests at the gateway.
-		toolProxy := strings.HasPrefix(r.URL.Path, "/tools/")
-		if !toolProxy && !validCSRFToken(r, person) {
-			m.logger.Warn("rejected request without a valid CSRF token", "user", person.Username, "path", r.URL.Path, "remote", remoteAddress(r))
-			httpapi.WriteError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
+		if !m.enforceOriginAndCSRF(w, r, person, true) {
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, person)))

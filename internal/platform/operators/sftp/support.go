@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/agentclient"
+	"github.com/nexa-panel/nexa-panel/internal/platform/fsutil"
 )
 
 // UnixClient is the control-plane-side Operator. It talks to the privileged
@@ -31,29 +31,7 @@ func (c *UnixClient) Apply(ctx context.Context, request Request) (Observation, e
 // atomicWrite publishes a file by writing a sibling temp file and renaming it,
 // so a reader (or sshd re-reading the drop-in) never sees a half-written config.
 func atomicWrite(path string, content []byte, mode os.FileMode) error {
-	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".nexa-sftp-*")
-	if err != nil {
-		return err
-	}
-	name := temporary.Name()
-	defer os.Remove(name)
-	if _, err := temporary.Write(content); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Chmod(mode); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return fsutil.Write(path, content, mode)
 }
 
 func commandError(output []byte, err error) error {

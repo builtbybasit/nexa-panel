@@ -64,12 +64,9 @@ func (s *Server) mysqlApplyHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) signMySQLPlan(plan mysqloperator.Plan) string {
-	plan.Signature = ""
-	return signPayload(s.token, "mysql-family.plan.v1", plan)
+	return s.signPlan("mysql-family.plan.v1", &plan.Signature, &plan)
 }
 
 func (s *Server) verifyMySQLPlan(plan mysqloperator.Plan) bool {
-	provided := plan.Signature
-	plan.Signature = ""
-	return verifyPayload(s.token, "mysql-family.plan.v1", plan, provided)
+	return s.verifyPlan("mysql-family.plan.v1", &plan.Signature, &plan)
 }
