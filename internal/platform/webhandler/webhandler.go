@@ -47,16 +47,10 @@ func ActorID(r *http.Request) (*string, bool) {
 	return &user.ID, true
 }
 
-// HandleOp binds handler to the route and permission the OpenAPI contract
-// declares for operationID. The routing itself lives in apispec (cycle-free);
-// this is the convenience re-export for modules that already depend on
-// webhandler.
-func HandleOp(registry module.Registry, operationID string, handler http.HandlerFunc) error {
-	return apispec.HandleOp(registry, operationID, handler)
-}
-
-// Register binds every operationID to its handler via HandleOp, replacing the
-// per-module route table and its loop.
+// Register binds every operationID to the route and permission the OpenAPI
+// contract declares for it, replacing the per-module route table and its loop.
+// The routing itself lives in apispec (cycle-free); this is the re-export for
+// modules that already depend on webhandler.
 func Register(registry module.Registry, handlers map[string]http.HandlerFunc) error {
 	return apispec.Register(registry, handlers)
 }
