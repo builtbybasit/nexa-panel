@@ -659,14 +659,7 @@ func (o *HostOperator) recoverStalledActivation(statePath string, cause error) e
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), restoreTimeout)
 	defer cancel()
 	restoreErr := o.restoreTransaction(ctx, state)
-	state.Phase = phaseFailed
-	state.Failure = cause.Error()
-	state.FailureReported = true
-	state.Result.RolledBack = restoreErr == nil
-	if restoreErr != nil {
-		state.Failure += "; restore previous state: " + restoreErr.Error()
-	}
-	_ = writeTransaction(statePath, state)
+	o.failTransaction(statePath, &state, cause, restoreErr, true)
 	if restoreErr != nil {
 		return errors.Join(cause, restoreErr)
 	}

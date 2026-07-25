@@ -152,19 +152,7 @@ func (o *HostOperator) applyRelease(ctx context.Context, change Change, lifecycl
 	if err := verifyReleaseAgreement(release, manifest, o.arch, reported, expected, archive); err != nil {
 		return Result{}, "", err
 	}
-	transactionID, err := newTransactionID()
-	if err != nil {
-		return Result{}, "", err
-	}
-	snapshotDir, err := o.createHostSnapshot(transactionID)
-	if err != nil {
-		return Result{}, "", err
-	}
-	preservedBinary, err := o.preserveTransactionBinary(transactionID)
-	if err != nil {
-		return Result{}, "", err
-	}
-	databaseSnapshot, err := o.createControlDatabaseSnapshot(ctx, transactionID)
+	transactionID, snapshotDir, preservedBinary, databaseSnapshot, err := o.prepareTransaction(ctx)
 	if err != nil {
 		return Result{}, "", err
 	}
@@ -203,11 +191,7 @@ func (o *HostOperator) applyRelease(ctx context.Context, change Change, lifecycl
 			}
 		}
 		restoreErr := restoreHostSnapshot(snapshotDir)
-		state.Phase = phaseFailed
-		state.Failure = err.Error()
-		state.FailureReported = true
-		state.Result.RolledBack = restoreErr == nil
-		_ = writeTransaction(statePath, state)
+		o.failTransaction(statePath, &state, err, restoreErr, false)
 		if restoreErr != nil {
 			return Result{}, "", fmt.Errorf("%w; restore previous packaging: %v", err, restoreErr)
 		}
@@ -215,11 +199,7 @@ func (o *HostOperator) applyRelease(ctx context.Context, change Change, lifecycl
 	}
 	if _, err := o.installStagedBinary(ctx, binary, release.Version); err != nil {
 		restoreErr := o.restorePreparedTransaction(ctx, state)
-		state.Phase = phaseFailed
-		state.Failure = err.Error()
-		state.FailureReported = true
-		state.Result.RolledBack = restoreErr == nil
-		_ = writeTransaction(statePath, state)
+		o.failTransaction(statePath, &state, err, restoreErr, false)
 		if restoreErr != nil {
 			return Result{}, "", fmt.Errorf("%w; restore previous packaging: %v", err, restoreErr)
 		}
@@ -227,22 +207,8 @@ func (o *HostOperator) applyRelease(ctx context.Context, change Change, lifecycl
 	}
 	result.Swapped = true
 	result.PackagingSynced = true
-	state.Phase = phaseActivating
 	state.Result = result
-	if err := writeTransaction(statePath, state); err != nil {
-		_ = o.restorePreparedTransaction(ctx, state)
-		return Result{}, "", err
-	}
-	if err := o.launchActivation(ctx, statePath, transactionID); err != nil {
-		restoreErr := o.restorePreparedTransaction(ctx, state)
-		state.Phase = phaseFailed
-		state.Failure = err.Error()
-		state.FailureReported = true
-		state.Result.RolledBack = restoreErr == nil
-		if restoreErr != nil {
-			state.Failure += "; restore previous state: " + restoreErr.Error()
-		}
-		_ = writeTransaction(statePath, state)
+	if err := o.beginActivation(ctx, statePath, transactionID, &state); err != nil {
 		return Result{}, "", err
 	}
 	return result, statePath, nil
@@ -289,19 +255,7 @@ func (o *HostOperator) ApplyLocalBinary(ctx context.Context, path string) (Resul
 	if err != nil {
 		return Result{}, fmt.Errorf("the binary at %s could not be read: %w", path, err)
 	}
-	transactionID, err := newTransactionID()
-	if err != nil {
-		return Result{}, err
-	}
-	snapshotDir, err := o.createHostSnapshot(transactionID)
-	if err != nil {
-		return Result{}, err
-	}
-	preservedBinary, err := o.preserveTransactionBinary(transactionID)
-	if err != nil {
-		return Result{}, err
-	}
-	databaseSnapshot, err := o.createControlDatabaseSnapshot(ctx, transactionID)
+	transactionID, snapshotDir, preservedBinary, databaseSnapshot, err := o.prepareTransaction(ctx)
 	if err != nil {
 		return Result{}, err
 	}
@@ -321,33 +275,12 @@ func (o *HostOperator) ApplyLocalBinary(ctx context.Context, path string) (Resul
 	}
 	if _, err := o.installStagedBinary(ctx, binary, ""); err != nil {
 		restoreErr := o.restorePreparedTransaction(ctx, state)
-		state.Phase = phaseFailed
-		state.Failure = err.Error()
-		state.FailureReported = true
-		state.Result.RolledBack = restoreErr == nil
-		if restoreErr != nil {
-			state.Failure += "; restore previous state: " + restoreErr.Error()
-		}
-		_ = writeTransaction(statePath, state)
+		o.failTransaction(statePath, &state, err, restoreErr, true)
 		return Result{}, err
 	}
 	result.Swapped = true
-	state.Phase = phaseActivating
 	state.Result = result
-	if err := writeTransaction(statePath, state); err != nil {
-		_ = o.restorePreparedTransaction(ctx, state)
-		return Result{}, err
-	}
-	if err := o.launchActivation(ctx, statePath, transactionID); err != nil {
-		restoreErr := o.restorePreparedTransaction(ctx, state)
-		state.Phase = phaseFailed
-		state.Failure = err.Error()
-		state.FailureReported = true
-		state.Result.RolledBack = restoreErr == nil
-		if restoreErr != nil {
-			state.Failure += "; restore previous state: " + restoreErr.Error()
-		}
-		_ = writeTransaction(statePath, state)
+	if err := o.beginActivation(ctx, statePath, transactionID, &state); err != nil {
 		return Result{}, err
 	}
 	hostUnlock()
@@ -402,19 +335,7 @@ func (o *HostOperator) Rollback(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("the previous binary at %s could not be read: %w", previous, err)
 	}
-	transactionID, err := newTransactionID()
-	if err != nil {
-		return Result{}, err
-	}
-	undoSnapshot, err := o.createHostSnapshot(transactionID)
-	if err != nil {
-		return Result{}, err
-	}
-	preservedCurrentBinary, err := o.preserveTransactionBinary(transactionID)
-	if err != nil {
-		return Result{}, err
-	}
-	databaseSnapshot, err := o.createControlDatabaseSnapshot(ctx, transactionID)
+	transactionID, undoSnapshot, preservedCurrentBinary, databaseSnapshot, err := o.prepareTransaction(ctx)
 	if err != nil {
 		return Result{}, err
 	}
@@ -432,11 +353,7 @@ func (o *HostOperator) Rollback(ctx context.Context) (Result, error) {
 	reported, err := o.installStagedBinary(ctx, binary, "")
 	if err != nil {
 		restoreErr := o.restorePreparedTransaction(ctx, state)
-		state.Phase = phaseFailed
-		state.Failure = err.Error()
-		state.FailureReported = true
-		state.Result.RolledBack = restoreErr == nil
-		_ = writeTransaction(statePath, state)
+		o.failTransaction(statePath, &state, err, restoreErr, false)
 		if restoreErr != nil {
 			return Result{}, fmt.Errorf("%w; restore current state: %v", err, restoreErr)
 		}
@@ -447,11 +364,7 @@ func (o *HostOperator) Rollback(ctx context.Context) (Result, error) {
 	}
 	if err := restoreHostSnapshot(current.SnapshotDir); err != nil {
 		restoreErr := o.restorePreparedTransaction(ctx, state)
-		state.Phase = phaseFailed
-		state.Failure = err.Error()
-		state.FailureReported = true
-		state.Result.RolledBack = restoreErr == nil
-		_ = writeTransaction(statePath, state)
+		o.failTransaction(statePath, &state, err, restoreErr, false)
 		if restoreErr != nil {
 			return Result{}, fmt.Errorf("restore previous packaging: %w; restore current state: %v", err, restoreErr)
 		}
@@ -463,19 +376,8 @@ func (o *HostOperator) Rollback(ctx context.Context) (Result, error) {
 	result.TargetVersion = reported
 	result.Swapped = true
 	state.TargetVersion = reported
-	state.Phase = phaseActivating
 	state.Result = result
-	if err := writeTransaction(statePath, state); err != nil {
-		_ = o.restorePreparedTransaction(ctx, state)
-		return Result{}, err
-	}
-	if err := o.launchActivation(ctx, statePath, transactionID); err != nil {
-		restoreErr := o.restorePreparedTransaction(ctx, state)
-		state.Phase = phaseFailed
-		state.Failure = err.Error()
-		state.FailureReported = true
-		state.Result.RolledBack = restoreErr == nil
-		_ = writeTransaction(statePath, state)
+	if err := o.beginActivation(ctx, statePath, transactionID, &state); err != nil {
 		return Result{}, err
 	}
 	hostUnlock()
@@ -483,6 +385,69 @@ func (o *HostOperator) Rollback(ctx context.Context) (Result, error) {
 	o.applyMu.Unlock()
 	unlocked = true
 	return o.waitForActivation(ctx, statePath)
+}
+
+// prepareTransaction captures everything a rollback will need before the live
+// host is touched: a fresh transaction id, an exact snapshot of every managed
+// packaging file, a preserved copy of the current binary, and a consistent
+// control database snapshot. Every apply, local push and rollback opens with
+// it, in this order, so the caller only assembles and journals the state.
+func (o *HostOperator) prepareTransaction(ctx context.Context) (id, snapshotDir, preservedBinary string, databaseSnapshot controlDatabaseSnapshot, err error) {
+	id, err = newTransactionID()
+	if err != nil {
+		return "", "", "", controlDatabaseSnapshot{}, err
+	}
+	snapshotDir, err = o.createHostSnapshot(id)
+	if err != nil {
+		return "", "", "", controlDatabaseSnapshot{}, err
+	}
+	preservedBinary, err = o.preserveTransactionBinary(id)
+	if err != nil {
+		return "", "", "", controlDatabaseSnapshot{}, err
+	}
+	databaseSnapshot, err = o.createControlDatabaseSnapshot(ctx, id)
+	if err != nil {
+		return "", "", "", controlDatabaseSnapshot{}, err
+	}
+	return id, snapshotDir, preservedBinary, databaseSnapshot, nil
+}
+
+// failTransaction stamps a prepared or activating transaction as failed and
+// persists the journal. cause is the error that triggered the failure and
+// restoreErr the outcome of the restore that followed it: a nil restoreErr
+// records a completed rollback, a non-nil one clears RolledBack and, when
+// appendRestore is set, appends its detail to the journalled message. A
+// caller that instead surfaces restoreErr in its returned error passes false.
+// Swapped is intentionally left as the caller set it; the pre-activation
+// failures never reach a swapped-in state a restore has to unwind here.
+func (o *HostOperator) failTransaction(statePath string, state *updateTransaction, cause, restoreErr error, appendRestore bool) {
+	state.Phase = phaseFailed
+	state.Failure = cause.Error()
+	if restoreErr != nil && appendRestore {
+		state.Failure += "; restore previous state: " + restoreErr.Error()
+	}
+	state.FailureReported = true
+	state.Result.RolledBack = restoreErr == nil
+	_ = writeTransaction(statePath, *state)
+}
+
+// beginActivation moves a prepared transaction into its activating phase and
+// launches the detached activation helper. state.Result must already hold the
+// outcome to publish. On a journal-write or launch failure it restores the
+// prepared transaction and stamps the journal failed, so the caller only has to
+// surface the returned error.
+func (o *HostOperator) beginActivation(ctx context.Context, statePath, id string, state *updateTransaction) error {
+	state.Phase = phaseActivating
+	if err := writeTransaction(statePath, *state); err != nil {
+		_ = o.restorePreparedTransaction(ctx, *state)
+		return err
+	}
+	if err := o.launchActivation(ctx, statePath, id); err != nil {
+		restoreErr := o.restorePreparedTransaction(ctx, *state)
+		o.failTransaction(statePath, state, err, restoreErr, true)
+		return err
+	}
+	return nil
 }
 
 // resolve turns a change into a concrete release, gating an explicit version
