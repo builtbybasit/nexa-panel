@@ -1,11 +1,9 @@
 package agent
 
 import (
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	backupoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/backups"
 )
 
@@ -130,14 +128,5 @@ func (s *Server) backupRemoveScheduleHTTP(w http.ResponseWriter, r *http.Request
 // decodeBackupRunJSON permits a larger body than the default: a run request
 // carries the account's params plus every resolved site and database target.
 func decodeBackupRunJSON(w http.ResponseWriter, r *http.Request, destination any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return errors.New("request body must be valid JSON")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("request body must contain one JSON object")
-	}
-	return nil
+	return httpapi.DecodeJSONLimit(w, r, destination, 256*1024)
 }

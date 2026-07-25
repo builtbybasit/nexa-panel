@@ -25,11 +25,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/fsutil"
 )
 
 // DefaultStatePath is where the record lives. It sits beside the other
@@ -189,35 +190,10 @@ func Save(path string, state State) error {
 	}
 	encoded = append(encoded, '\n')
 
-	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".publishing-*.json")
-	if err != nil {
-		return fmt.Errorf("stage publishing record: %w", err)
-	}
-	staged := temporary.Name()
-	defer os.Remove(staged)
-	if _, err := temporary.Write(encoded); err != nil {
-		temporary.Close()
-		return fmt.Errorf("write publishing record: %w", err)
-	}
-	if err := temporary.Sync(); err != nil {
-		temporary.Close()
-		return fmt.Errorf("flush publishing record: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close publishing record: %w", err)
-	}
 	// Readable by anyone, writable only by root: an operator reading how their
 	// node is published needs no privilege, changing it needs all of it.
-	if err := os.Chmod(staged, 0o644); err != nil {
-		return fmt.Errorf("set publishing record mode: %w", err)
-	}
-	if err := os.Rename(staged, path); err != nil {
+	if err := fsutil.Write(path, encoded, 0o644); err != nil {
 		return fmt.Errorf("activate publishing record: %w", err)
-	}
-	if handle, err := os.Open(directory); err == nil {
-		_ = handle.Sync()
-		_ = handle.Close()
 	}
 	return nil
 }

@@ -44,12 +44,9 @@ func (s *Server) certificateExecuteHTTP(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) signCertificatePlan(plan certificateoperator.Plan) string {
-	plan.Signature = ""
-	return signPayload(s.token, "certificate.plan.v1", plan)
+	return s.signPlan("certificate.plan.v1", &plan.Signature, &plan)
 }
 
 func (s *Server) verifyCertificatePlan(plan certificateoperator.Plan) bool {
-	provided := plan.Signature
-	plan.Signature = ""
-	return verifyPayload(s.token, "certificate.plan.v1", plan, provided)
+	return s.verifyPlan("certificate.plan.v1", &plan.Signature, &plan)
 }

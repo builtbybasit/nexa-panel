@@ -3,11 +3,11 @@ package agent
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	filesoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/files"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
@@ -19,16 +19,7 @@ func WithFilesOperator(operator filesoperator.Operator) Option {
 // decodeFilesJSON allows larger bodies than decodeJSON: a file write carries
 // up to 1 MiB of content inside the JSON envelope.
 func decodeFilesJSON(w http.ResponseWriter, r *http.Request, destination any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 4*1024*1024)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return errors.New("request body must be valid JSON")
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("request body must contain one JSON object")
-	}
-	return nil
+	return httpapi.DecodeJSONLimit(w, r, destination, 4*1024*1024)
 }
 
 func writeFilesFailure(w http.ResponseWriter, err error) {

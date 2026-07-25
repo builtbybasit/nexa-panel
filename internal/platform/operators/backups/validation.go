@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 )
 
 const (
@@ -16,7 +18,6 @@ const (
 
 var (
 	backupTokenPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
-	siteSlugPattern        = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
 	databaseNamePattern    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,63}$`)
 	postgresVersionPattern = regexp.MustCompile(`^[0-9]{1,2}$`)
 	sha256Pattern          = regexp.MustCompile(`^[a-fA-F0-9]{64}$`)
@@ -166,13 +167,13 @@ func validateBackupToken(label, value string) error {
 }
 
 func validateSiteTarget(site SiteTarget, siteRoot string) error {
-	if !siteSlugPattern.MatchString(site.Slug) {
+	if !naming.ValidSiteSlug(site.Slug) {
 		return errors.New("slug is not a managed site slug")
 	}
 	if site.RootPath != filepath.Join(siteRoot, site.Slug) {
 		return errors.New("root path does not match the managed site layout")
 	}
-	wantUser := "nexa_" + strings.ReplaceAll(site.Slug, "-", "_")
+	wantUser := naming.SiteUnixUser(site.Slug)
 	if site.UnixUser != wantUser {
 		return errors.New("unix user does not match the managed site layout")
 	}

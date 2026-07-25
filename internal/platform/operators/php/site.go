@@ -6,14 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
-)
 
-// slugPattern matches the sites module's own slug shape. It is one half of the
-// per-site confinement: the .user.ini path is derived only from a slug of this
-// shape whose root path resolves back to sitesRoot/slug.
-var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
+)
 
 const (
 	releaseDirName  = "app"
@@ -71,7 +67,7 @@ func currentReleaseDocumentRoot(rootPath string) (string, error) {
 // expectedUnixUser mirrors how the sites module derives a site's unix user, so a
 // scope whose user does not match its slug is rejected before any write.
 func expectedUnixUser(slug string) string {
-	return "nexa_" + strings.ReplaceAll(slug, "-", "_")
+	return naming.SiteUnixUser(slug)
 }
 
 // normalizeSiteScope is the per-site security boundary. The slug must be
@@ -79,7 +75,7 @@ func expectedUnixUser(slug string) string {
 // the unix user the one that slug implies. Only then is a .user.ini path built.
 func (o *HostOperator) normalizeSiteScope(ctx context.Context, scope SiteScope) (SiteScope, error) {
 	scope.Slug = strings.TrimSpace(scope.Slug)
-	if !slugPattern.MatchString(scope.Slug) {
+	if !naming.ValidSiteSlug(scope.Slug) {
 		return SiteScope{}, fmt.Errorf("site slug %q is invalid", scope.Slug)
 	}
 	version, err := o.normalizeVersion(ctx, scope.Version)

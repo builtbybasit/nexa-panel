@@ -9,16 +9,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 )
 
 var (
-	slugPattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
-	domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 	// phpVersionPattern gates the shape only. PHP branches are not enumerated
 	// here: the Applications page offers whatever the node's PHP repository
 	// publishes, and a site must be able to run any branch that can be installed.
 	// The one rule is the floor below.
-	phpVersionPattern = regexp.MustCompile(`^[0-9]{1,2}\.[0-9]{1,2}$`)
 	// htpasswdLine guards the basic-auth secret boundary: every line the operator
 	// renders into auth_basic_user_file must be a hashed "user:$2y$..." entry, so
 	// a plaintext password can never reach the node even if a caller mishandles it.
@@ -47,7 +46,7 @@ const maxIndexFiles = 8
 // phpVersionSupported accepts any well-formed branch at or above the floor, so a
 // PHP release published after this code was written is usable without an edit.
 func phpVersionSupported(version string) bool {
-	if !phpVersionPattern.MatchString(version) {
+	if !naming.ValidPHPVersionShape(version) {
 		return false
 	}
 	return comparePHPVersions(version, phpFloor) >= 0
@@ -416,7 +415,7 @@ func (r Renderer) Render(site Site) (Plan, error) {
 }
 
 func (r Renderer) validate(site Site) error {
-	if site.ID == "" || !slugPattern.MatchString(site.Slug) || !domainPattern.MatchString(site.PrimaryDomain) || !phpVersionSupported(site.PHPVersion) {
+	if site.ID == "" || !naming.ValidSiteSlug(site.Slug) || !naming.ValidHostname(site.PrimaryDomain) || !phpVersionSupported(site.PHPVersion) {
 		return errors.New("site identity, slug, primary domain, and a PHP " + phpFloor + " or newer runtime are required")
 	}
 	if site.DeploymentMode != "" && site.DeploymentMode != standardMode && site.DeploymentMode != deployerMode {
@@ -427,7 +426,7 @@ func (r Renderer) validate(site Site) error {
 	if site.RetiredPHPVersion != "" && !phpVersionSupported(site.RetiredPHPVersion) {
 		return errors.New("site retired PHP version is malformed")
 	}
-	expectedUser := "nexa_" + strings.ReplaceAll(site.Slug, "-", "_")
+	expectedUser := naming.SiteUnixUser(site.Slug)
 	if site.UnixUser != expectedUser {
 		return errors.New("site Unix owner must be derived from its slug")
 	}
@@ -446,7 +445,7 @@ func (r Renderer) validate(site Site) error {
 	}
 	seen := map[string]struct{}{site.PrimaryDomain: {}}
 	for _, route := range site.Routes {
-		if !domainPattern.MatchString(route.Hostname) {
+		if !naming.ValidHostname(route.Hostname) {
 			return errors.New("site route hostname is invalid")
 		}
 		if _, exists := seen[route.Hostname]; exists {
@@ -457,7 +456,7 @@ func (r Renderer) validate(site Site) error {
 			return errors.New("site route kind is invalid")
 		}
 		if route.Kind == "redirect" {
-			if !domainPattern.MatchString(route.RedirectTarget) {
+			if !naming.ValidHostname(route.RedirectTarget) {
 				return errors.New("redirect target must be a hostname")
 			}
 		} else if route.RedirectTarget != "" {

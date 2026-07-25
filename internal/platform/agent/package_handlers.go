@@ -66,12 +66,9 @@ func (s *Server) packagesApplyHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) signPackagePlan(plan packagesoperator.Plan) string {
-	plan.Signature = ""
-	return signPayload(s.token, "package.plan.v1", plan)
+	return s.signPlan("package.plan.v1", &plan.Signature, &plan)
 }
 
 func (s *Server) verifyPackagePlan(plan packagesoperator.Plan) bool {
-	provided := plan.Signature
-	plan.Signature = ""
-	return verifyPayload(s.token, "package.plan.v1", plan, provided)
+	return s.verifyPlan("package.plan.v1", &plan.Signature, &plan)
 }

@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/fsutil"
 )
 
 // systemdRoot is where per-plan timer/service units are written. The agent unit
@@ -143,28 +145,7 @@ func unitDescription(value string) string {
 }
 
 func writeUnitAtomically(path string, content []byte) error {
-	file, err := os.CreateTemp(filepath.Dir(path), ".nexa-backup-unit-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := file.Name()
-	defer os.Remove(temporaryPath)
-	if err := file.Chmod(0o644); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if _, err := file.Write(content); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporaryPath, path)
+	return fsutil.Write(path, content, 0o644)
 }
 
 // ValidateSchedule validates and converts a 5-field cron expression (minute hour day-of-month

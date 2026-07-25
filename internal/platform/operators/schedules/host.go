@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/fsutil"
 	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
@@ -417,32 +418,7 @@ func writeSnapshot(snapshot Snapshot) error {
 }
 
 func atomicWrite(path string, content []byte, mode os.FileMode) error {
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(directory, ".nexa-stage-*")
-	if err != nil {
-		return err
-	}
-	name := temporary.Name()
-	defer os.Remove(name)
-	if err := temporary.Chmod(mode); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(content); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return fsutil.Write(path, content, mode, fsutil.WithMkdirAll(0o755))
 }
 
 func digestBytes(content []byte) string {

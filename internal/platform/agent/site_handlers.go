@@ -94,12 +94,9 @@ func (s *Server) sitePlanMutation(w http.ResponseWriter, r *http.Request, rollba
 }
 
 func (s *Server) signSitePlan(plan siteoperator.Plan) string {
-	plan.Signature = ""
-	return signPayload(s.token, "site.plan.v1", plan)
+	return s.signPlan("site.plan.v1", &plan.Signature, &plan)
 }
 
 func (s *Server) verifySitePlan(plan siteoperator.Plan) bool {
-	provided := plan.Signature
-	plan.Signature = ""
-	return verifyPayload(s.token, "site.plan.v1", plan, provided)
+	return s.verifyPlan("site.plan.v1", &plan.Signature, &plan)
 }

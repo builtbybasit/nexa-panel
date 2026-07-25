@@ -1,20 +1,19 @@
 package admintools
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/fsutil"
 	"github.com/nexa-panel/nexa-panel/internal/platform/hostcmd"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secureid"
 )
@@ -245,40 +244,7 @@ func pgpassEscape(value string) string {
 }
 
 func secureWrite(path string, value []byte, mode os.FileMode) error {
-	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	keep := false
-	defer func() {
-		_ = temporary.Close()
-		if !keep {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
-	if err := temporary.Chmod(mode); err != nil {
-		return err
-	}
-	if _, err := io.Copy(temporary, bytes.NewReader(value)); err != nil {
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return err
-	}
-	keep = true
-	if handle, openErr := os.Open(directory); openErr == nil {
-		_ = handle.Sync()
-		_ = handle.Close()
-	}
-	return nil
+	return fsutil.Write(path, value, mode)
 }
 
 const PGAdminSessionHeaderPrefix = "X-Nexa-PgAdmin-"

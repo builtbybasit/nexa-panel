@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 )
 
 const (
@@ -38,13 +40,6 @@ const (
 	// read the file and logs it as unsafe.
 	sudoersMode = os.FileMode(0o440)
 )
-
-// phpBranchPattern gates the shape of the branch whose FPM master the wrapper
-// reloads. It is restated rather than imported from the sites operator, which
-// this package must not depend on, and it is the only thing standing between a
-// request field and a command line: no space, slash, quote, semicolon, or
-// newline can survive it.
-var phpBranchPattern = regexp.MustCompile(`^[0-9]{1,2}\.[0-9]{1,2}$`)
 
 // sudoersRulePattern is the shape the rendered rule must have before it is
 // allowed anywhere near /etc/sudoers.d. Rendering is already fed from validated
@@ -91,7 +86,7 @@ func (r FPMReloadRequest) validate() error {
 	// A removal does not name a branch: the wrapper it deletes already carries
 	// whichever one it was written for, and demanding a match would leave a
 	// site whose branch moved unable to withdraw its own grant.
-	if r.Enabled && !phpBranchPattern.MatchString(r.PHPVersion) {
+	if r.Enabled && !naming.ValidPHPVersionShape(r.PHPVersion) {
 		return errors.New("fpm reload php version is invalid")
 	}
 	return nil
@@ -131,7 +126,7 @@ var _ reloadSystem = (*SSHHostSystem)(nil)
 // ApplyFPMReload settles the site's ability to reload the PHP-FPM master that
 // serves it: one fixed, argument-less, root-owned wrapper and one sudoers rule
 // naming exactly that path. Nothing a caller sends reaches either file's
-// content except through validateIdentity and phpBranchPattern.
+// content except through validateIdentity and naming.ValidPHPVersionShape.
 func (o *SSHHostOperator) ApplyFPMReload(ctx context.Context, request FPMReloadRequest) (FPMReloadObservation, error) {
 	if err := request.validate(); err != nil {
 		return FPMReloadObservation{}, err

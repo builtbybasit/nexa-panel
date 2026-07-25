@@ -20,15 +20,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 )
 
-var (
-	slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
-	// blobPattern is unpadded-or-padded base64 and nothing else. It exists so a
-	// key body can never carry whitespace, which is the only way a caller could
-	// smuggle an extra field into an authorized_keys line.
-	blobPattern = regexp.MustCompile(`^[A-Za-z0-9+/]+={0,3}$`)
-)
+// blobPattern is unpadded-or-padded base64 and nothing else. It exists so a
+// key body can never carry whitespace, which is the only way a caller could
+// smuggle an extra field into an authorized_keys line.
+var blobPattern = regexp.MustCompile(`^[A-Za-z0-9+/]+={0,3}$`)
 
 const (
 	// SSHDDropInDir holds the per-site Match blocks. The node's sshd_config
@@ -133,10 +132,10 @@ type Operator interface {
 // request reaches it from a compromised caller. Every request this operator
 // accepts starts here.
 func validateIdentity(slug, unixUser, rootPath string) error {
-	if !slugPattern.MatchString(slug) {
+	if !naming.ValidSiteSlug(slug) {
 		return errors.New("ssh access site slug is invalid")
 	}
-	if unixUser != "nexa_"+strings.ReplaceAll(slug, "-", "_") {
+	if unixUser != naming.SiteUnixUser(slug) {
 		return errors.New("ssh access unix user must be derived from the site slug")
 	}
 	if filepath.Clean(rootPath) != filepath.Join(siteRootBase, slug) {

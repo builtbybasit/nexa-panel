@@ -7,6 +7,7 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 	siteoperator "github.com/nexa-panel/nexa-panel/internal/platform/operators/sites"
 )
 
@@ -14,13 +15,13 @@ func (m *Module) Create(ctx context.Context, request CreateRequest, actor *strin
 	request.SiteID = strings.TrimSpace(request.SiteID)
 	request.Hostname = normalize(request.Hostname)
 	request.RedirectTarget = normalize(request.RedirectTarget)
-	if request.SiteID == "" || !hostnamePattern.MatchString(request.Hostname) {
+	if request.SiteID == "" || !naming.ValidHostname(request.Hostname) {
 		return Domain{}, jobs.Job{}, errors.New("site and a valid ASCII hostname are required")
 	}
 	if request.Kind != KindSubdomain && request.Kind != KindAlias && request.Kind != KindRedirect {
 		return Domain{}, jobs.Job{}, errors.New("domain kind must be subdomain, alias, or redirect")
 	}
-	if request.Kind == KindRedirect && !hostnamePattern.MatchString(request.RedirectTarget) {
+	if request.Kind == KindRedirect && !naming.ValidHostname(request.RedirectTarget) {
 		return Domain{}, jobs.Job{}, errors.New("redirect target must be a valid hostname")
 	}
 	if request.Kind != KindRedirect && request.RedirectTarget != "" {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"regexp"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
@@ -15,11 +14,6 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
-)
-
-var (
-	slugPattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{1,31}$`)
-	domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 )
 
 type Status string

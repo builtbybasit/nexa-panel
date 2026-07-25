@@ -8,9 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/naming"
 )
 
 const (
@@ -43,7 +44,6 @@ const (
 // must not start here. It is the first of two gates — the branch must also be
 // installed — and together they are what keeps a caller's string out of a
 // package name.
-var phpVersionPattern = regexp.MustCompile(`^[0-9]{1,2}\.[0-9]{1,2}$`)
 
 // prepareMu serializes prepare runs. It is package-level rather than a field on
 // the operator because what it protects is not this process's state but the
@@ -59,7 +59,7 @@ type PrepareRequest struct {
 }
 
 func (r PrepareRequest) validate() error {
-	if !phpVersionPattern.MatchString(strings.TrimSpace(r.PHPVersion)) {
+	if !naming.ValidPHPVersionShape(strings.TrimSpace(r.PHPVersion)) {
 		return fmt.Errorf("PHP version %q is not a supported branch", r.PHPVersion)
 	}
 	return nil
@@ -252,7 +252,7 @@ func (s *SSHHostSystem) LookPath(name string) (string, error) { return exec.Look
 // concatenated so a value that somehow escaped that check still cannot climb
 // out of /etc/php.
 func (s *SSHHostSystem) PHPBranchInstalled(version string) (bool, error) {
-	if !phpVersionPattern.MatchString(version) {
+	if !naming.ValidPHPVersionShape(version) {
 		return false, errors.New("PHP branch is not a supported version")
 	}
 	info, err := os.Stat(filepath.Join(phpConfigRoot, version, "fpm"))

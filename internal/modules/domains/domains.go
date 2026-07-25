@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"regexp"
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/modules/sites"
@@ -16,8 +15,6 @@ import (
 
 	"github.com/uptrace/bun"
 )
-
-var hostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
 type Kind string
 

@@ -147,6 +147,29 @@ func (m *Module) requireSession(r *http.Request) (principal, error) {
 	return person, nil
 }
 
+// enforceOriginAndCSRF is the unsafe-request gate shared by the authenticated
+// middleware and the pre-authentication step-up path: it confirms the request
+// came from this panel and carries a valid double-submit CSRF token, writing the
+// matching 403 and returning false on failure. When allowToolProxy is set, a
+// request under /tools/ skips only the CSRF check — those reverse-proxied admin
+// tools carry their own tokens, and the strict Origin check above still blocks
+// cross-site requests at the gateway.
+func (m *Module) enforceOriginAndCSRF(w http.ResponseWriter, r *http.Request, person principal, allowToolProxy bool) bool {
+	if !validRequestOrigin(r) {
+		httpapi.WriteError(w, http.StatusForbidden, "invalid_origin", "The request origin is not allowed.")
+		return false
+	}
+	if allowToolProxy && strings.HasPrefix(r.URL.Path, "/tools/") {
+		return true
+	}
+	if !validCSRFToken(r, person) {
+		m.logger.Warn("rejected request without a valid CSRF token", "user", person.Username, "path", r.URL.Path, "remote", remoteAddress(r))
+		httpapi.WriteError(w, http.StatusForbidden, "invalid_csrf_token", "The request could not be verified. Reload the page and try again.")
+		return false
+	}
+	return true
+}
+
 func requestIsHTTPS(r *http.Request) bool {
 	return httpapi.IsHTTPS(r)
 }

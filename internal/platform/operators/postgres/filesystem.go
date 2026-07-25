@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/nexa-panel/nexa-panel/internal/platform/fsutil"
 )
 
 func preparePostgresDirectory(root, path string) error {
@@ -48,30 +50,10 @@ func preparePostgresDirectory(root, path string) error {
 // ownership and 0640 mode PostgreSQL requires. The rename makes the swap atomic
 // so a concurrent reload never observes a partial file.
 func writePgHba(path, content string) error {
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".pg_hba.conf.tmp-*")
-	if err != nil {
-		return fmt.Errorf("stage pg_hba update: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	keep := false
-	defer func() {
-		_ = temporary.Close()
-		if !keep {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
-	if _, err := temporary.WriteString(content); err != nil {
-		return fmt.Errorf("write pg_hba update: %w", err)
-	}
-	if err := temporary.Chmod(0o640); err != nil {
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
+	var opts []fsutil.Option
+	// PostgreSQL requires pg_hba.conf to be owned by the postgres account. Apply
+	// the ownership to the staged file before it is renamed into place so the
+	// swap is atomic and no privileged path-based chown races the rename.
 	if os.Geteuid() == 0 {
 		account, err := user.Lookup("postgres")
 		if err != nil {
@@ -82,14 +64,11 @@ func writePgHba(path, content string) error {
 		if uidErr != nil || gidErr != nil {
 			return errors.New("postgres operating-system account identifiers are invalid")
 		}
-		if err := os.Chown(temporaryPath, uid, gid); err != nil {
-			return fmt.Errorf("assign pg_hba ownership: %w", err)
-		}
+		opts = append(opts, fsutil.WithOwner(uid, gid))
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := fsutil.Write(path, []byte(content), 0o640, opts...); err != nil {
 		return fmt.Errorf("install pg_hba update: %w", err)
 	}
-	keep = true
 	return nil
 }
 
