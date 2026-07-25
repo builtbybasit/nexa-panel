@@ -346,14 +346,14 @@ func (m *Module) pruneRetired(ctx context.Context) {
 	var removed int64
 	err := m.database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		doomed := tx.NewSelect().Model((*jobModel)(nil)).Column("id").
-			Where("state IN (?)", bun.In(terminal)).
+			Where("state IN (?)", bun.List(terminal)).
 			Where("completed_at IS NOT NULL AND completed_at < ?", cutoff)
 		if _, err := tx.NewDelete().Model((*eventModel)(nil)).
 			Where("job_id IN (?)", doomed).Exec(ctx); err != nil {
 			return err
 		}
 		result, err := tx.NewDelete().Model((*jobModel)(nil)).
-			Where("state IN (?)", bun.In(terminal)).
+			Where("state IN (?)", bun.List(terminal)).
 			Where("completed_at IS NOT NULL AND completed_at < ?", cutoff).Exec(ctx)
 		if err != nil {
 			return err
