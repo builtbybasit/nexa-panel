@@ -59,7 +59,7 @@ type DeployKeyRequest struct {
 	Rotate   bool   `json:"rotate"`
 }
 
-// DeployKeyObservation is everything the control plane is allowed to learn
+// DeployKeyObservation is everything the control panel is allowed to learn
 // about a deploy key: the public half, its fingerprint, and where the private
 // half lives. The private half is never in this value, never in a job payload,
 // and never in control.db — a leaked backup therefore leaks no repository

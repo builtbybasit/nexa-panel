@@ -30,7 +30,7 @@ type Module interface {
 }
 
 // Background is implemented by modules that own workers or reconciliation
-// loops. The control plane starts them only after the complete dependency graph
+// loops. The control panel starts them only after the complete dependency graph
 // and route registry have validated, then closes them in reverse dependency
 // order during shutdown.
 type Background interface {

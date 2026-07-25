@@ -37,7 +37,7 @@ is registered on GitHub. Do it with a maintenance window, not mid-deploy.
 
 Notes:
 
-- The private half is generated on the node and never reaches the control plane,
+- The private half is generated on the node and never reaches the control panel,
   so there is nothing to rotate in `control.db` and nothing to shred off-box.
   The pair lives at `{root}/.ssh/id_ed25519`, owned by `nexa_<slug>`, `0600`.
 - `{root}/.ssh/known_hosts` is written by the panel from pinned GitHub host keys.

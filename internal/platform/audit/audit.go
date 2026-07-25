@@ -45,7 +45,7 @@ type Module struct {
 	// two concurrent Record calls cannot both chain from the same predecessor and
 	// fork the chain. The transaction alone would already serialise them under
 	// persistence.Open's single-connection pool, but the mutex keeps the
-	// invariant independent of that pool setting; the control plane is one
+	// invariant independent of that pool setting; the control panel is one
 	// process, so an in-process lock is sufficient.
 	chainMu sync.Mutex
 }
@@ -77,7 +77,7 @@ func (m *Module) Descriptor() module.Descriptor {
 		ID:                 "audit",
 		Name:               "Audit Log",
 		Version:            "0.1.0",
-		Description:        "Append-only record of security and control-plane activity.",
+		Description:        "Append-only record of security and control-panel activity.",
 		EstimatedIdleBytes: 512 * 1024,
 	}
 }

@@ -40,7 +40,7 @@ func (s *Server) selfUpdateTransactionHTTP(w http.ResponseWriter, r *http.Reques
 
 // selfUpdateApplyHTTP downloads, verifies, and transactionally activates the
 // target release. Authorization is the bearer token plus the
-// control plane's own system.update permission gate on the route that reaches
+// control panel's own system.update permission gate on the route that reaches
 // here; the operator itself trusts no caller-supplied path, only a version
 // string it re-validates.
 func (s *Server) selfUpdateApplyHTTP(w http.ResponseWriter, r *http.Request) {

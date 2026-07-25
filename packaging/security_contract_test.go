@@ -166,7 +166,7 @@ func TestPrivilegedAgentRetainsPackageWritesInsideReadOnlyHostSandbox(t *testing
 	requireAbsentDirective(t, directives, "ExecStartPost")
 }
 
-func TestControlPlaneUsesPrivateStateAndSharedAgentCredential(t *testing.T) {
+func TestControlPanelUsesPrivateStateAndSharedAgentCredential(t *testing.T) {
 	directives := readServiceDirectives(t, "systemd/nexa-api.service")
 	requireDirective(t, directives, "User", "nexa")
 	requireDirective(t, directives, "Group", "www-data")
@@ -191,14 +191,14 @@ func TestControlPlaneUsesPrivateStateAndSharedAgentCredential(t *testing.T) {
 
 	execStart := directives["ExecStart"]
 	if len(execStart) != 1 || !strings.Contains(execStart[0], "--unix-socket /run/nexa-panel/api.sock") || !strings.Contains(execStart[0], "--agent-token /etc/nexa-panel/agent.token") {
-		t.Fatalf("control plane must use the local API socket and shared group-scoped credential, got %q", execStart)
+		t.Fatalf("control panel must use the local API socket and shared group-scoped credential, got %q", execStart)
 	}
 	if strings.Contains(execStart[0], "--master-key") {
 		t.Fatalf("pinning --master-key suppresses the relocation out of the state directory, got %q", execStart[0])
 	}
 	writeRoots := directives["ReadWritePaths"]
 	if len(writeRoots) != 1 {
-		t.Fatalf("the control plane must declare one auditable write boundary, got %q", writeRoots)
+		t.Fatalf("the control panel must declare one auditable write boundary, got %q", writeRoots)
 	}
 	// Exactly the state and logs trees: the master key is provisioned by the
 	// privileged pre-start, so /etc must stay read-only for this service.
@@ -208,7 +208,7 @@ func TestControlPlaneUsesPrivateStateAndSharedAgentCredential(t *testing.T) {
 		t.Fatalf("the master key must be provisioned by one privileged pre-start command, got %q", provision)
 	}
 	if !strings.Contains(provision[0], "chown nexa:nexa /etc/nexa-panel/master.key") || !strings.Contains(provision[0], "chmod 0600 /etc/nexa-panel/master.key") {
-		t.Fatalf("the provisioned master key must end up owner-only and readable by the control plane, got %q", provision[0])
+		t.Fatalf("the provisioned master key must end up owner-only and readable by the control panel, got %q", provision[0])
 	}
 	if !strings.Contains(provision[0], "mv -- /var/lib/nexa-panel/master.key /etc/nexa-panel/master.key") {
 		t.Fatalf("an existing key must move out of the state directory rather than be left beside control.db, got %q", provision[0])
@@ -221,7 +221,7 @@ func TestControlPlaneUsesPrivateStateAndSharedAgentCredential(t *testing.T) {
 	requireDirectiveValue(t, directives, "Environment", "NEXA_LOG_LEVEL=info")
 	addressFamilies := directives["RestrictAddressFamilies"]
 	if len(addressFamilies) != 1 {
-		t.Fatalf("control plane address-family contract = %q", addressFamilies)
+		t.Fatalf("control panel address-family contract = %q", addressFamilies)
 	}
 	requireWordSet(t, addressFamilies[0], "AF_UNIX", "AF_INET", "AF_INET6")
 }
@@ -256,7 +256,7 @@ func TestLongRunningUnitsBoundRestartsAndResources(t *testing.T) {
 	requireDirective(t, api, "TasksMax", "512")
 
 	// The agent's ceiling covers apt, dpkg and podman running in its cgroup, so
-	// it must stay well clear of the control plane's, or a legitimate package
+	// it must stay well clear of the control panel's, or a legitimate package
 	// install is killed by the limit meant to catch a leak.
 	agent := readServiceDirectives(t, "systemd/nexa-agent.service")
 	requireDirective(t, agent, "MemoryHigh", "1G")
@@ -472,7 +472,7 @@ func TestMetricsProxyIdentifiesTheLoopbackScraperToTheLocalOnlyGate(t *testing.T
 // attempt can legitimately fail while a /run tree its sandbox references is
 // still being created, so a Requires= edge here left the panel down for the
 // whole boot even though the agent recovered seconds later on its own restart.
-func TestControlPlaneDoesNotHardRequireTheAgentStartJob(t *testing.T) {
+func TestControlPanelDoesNotHardRequireTheAgentStartJob(t *testing.T) {
 	unitSection := readUnitDirectives(t, "systemd/nexa-api.service")
 	for _, requires := range unitSection["Requires"] {
 		if strings.Contains(requires, "nexa-agent.service") {

@@ -9,7 +9,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/operators/sitefs"
 )
 
-// Bounds are part of the wire contract between the control plane and the
+// Bounds are part of the wire contract between the control panel and the
 // agent: no log read ever loads more than one bounded window into memory.
 const (
 	ReadDefaultMaxBytes = 64 * 1024

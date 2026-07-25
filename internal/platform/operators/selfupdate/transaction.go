@@ -858,12 +858,12 @@ func (o *HostOperator) recoverPackageManager(caller context.Context) error {
 func (o *HostOperator) stopAPI(ctx context.Context) error {
 	output, err := o.runner.Run(ctx, Command{Name: "systemctl", Args: []string{"stop", "nexa-api.service"}})
 	if err != nil {
-		return fmt.Errorf("stop control plane before database restore: %s: %w", lastLine(string(output)), err)
+		return fmt.Errorf("stop control panel before database restore: %s: %w", lastLine(string(output)), err)
 	}
 	return nil
 }
 
-// waitAPIReady polls the control plane's readiness endpoint over its unix
+// waitAPIReady polls the control panel's readiness endpoint over its unix
 // socket until it reports ready. A 200 alone is not enough: the endpoint also
 // names the version that answered it, and an activation that restarted the
 // services without the new binary actually taking over would otherwise be
@@ -898,7 +898,7 @@ func waitAPIReady(ctx context.Context, socket, expectVersion string, timeout tim
 					// Keep polling: the old API may still be answering while
 					// systemd brings the new one up, so only the deadline is
 					// terminal. The last mismatch explains the failure.
-					mismatch = fmt.Sprintf("the ready control plane reports version %q, not the expected %q", report.Version, expected)
+					mismatch = fmt.Sprintf("the ready control panel reports version %q, not the expected %q", report.Version, expected)
 				}
 			}
 		}
@@ -907,7 +907,7 @@ func waitAPIReady(ctx context.Context, socket, expectVersion string, timeout tim
 			if mismatch != "" {
 				return errors.New(mismatch)
 			}
-			return fmt.Errorf("new control plane did not become ready: %w", readyCtx.Err())
+			return fmt.Errorf("new control panel did not become ready: %w", readyCtx.Err())
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
@@ -950,7 +950,7 @@ func (o *HostOperator) restoreTransaction(caller context.Context, state updateTr
 			return fmt.Errorf("restore services with %s: %s: %w", command.Name, lastLine(string(output)), err)
 		}
 	}
-	// The restored control plane must report the version this transaction came
+	// The restored control panel must report the version this transaction came
 	// from; anything else means the old binary is not the one now serving.
 	if err := o.readiness(ctx, state.PreviousVersion); err != nil {
 		return err

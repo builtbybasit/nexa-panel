@@ -7,7 +7,7 @@ health_live:
     security: []
     responses:
       '200':
-        description: The control-plane process is running.
+        description: The control-panel process is running.
         content:
           application/json:
             schema:
@@ -23,7 +23,7 @@ health_ready:
     security: []
     responses:
       '200':
-        description: The control-plane database and privileged node agent are reachable.
+        description: The control-panel database and privileged node agent are reachable.
         content:
           application/json:
             schema:

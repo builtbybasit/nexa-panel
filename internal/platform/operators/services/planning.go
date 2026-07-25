@@ -8,7 +8,7 @@ import (
 
 // planExpiry bounds how long a reviewed plan may sit before it must be
 // regenerated. Service plans are planned and applied back-to-back within one
-// control-plane job, so this is a safety bound rather than a review budget.
+// control-panel job, so this is a safety bound rather than a review budget.
 const planExpiry = 10 * time.Minute
 
 // Plan validates a change against the node's real state and returns a

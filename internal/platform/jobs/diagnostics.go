@@ -27,7 +27,7 @@ func diagnosticsHandler(ctx context.Context, request json.RawMessage, report fun
 		progress int
 		message  string
 	}{
-		{20, "Checking control-plane persistence."},
+		{20, "Checking control-panel persistence."},
 		{50, "Checking durable progress events."},
 		{80, "Checking worker cancellation."},
 	}

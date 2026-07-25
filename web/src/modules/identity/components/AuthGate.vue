@@ -157,7 +157,7 @@ function downloadRecoveryCodes() {
       <BrandMark subtitle="Modern Server Management Platform" size="lg" />
 
       <div class="relative max-w-md">
-        <p class="text-[11px] font-bold tracking-[0.14em] text-accent-400 uppercase">Secure local control plane</p>
+        <p class="text-[11px] font-bold tracking-[0.14em] text-accent-400 uppercase">Secure local control panel</p>
         <h1 class="mt-3 text-3xl leading-tight font-semibold tracking-tight text-ink xl:text-4xl">{{ headline }}</h1>
         <p class="mt-4 text-[15px] leading-relaxed text-ink-secondary">
           Passwords and authenticator verification protect access to server, database, domain, and backup operations.

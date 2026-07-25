@@ -44,7 +44,7 @@ const (
 // control.db + master.key. StagingRoot is rejected exactly like RunRequest.
 type SystemRunRequest struct {
 	Account     Account `json:"account"`
-	CopyName    string  `json:"copyName"` // control-plane generated timestamp so copies sort chronologically
+	CopyName    string  `json:"copyName"` // control-panel generated timestamp so copies sort chronologically
 	Limit       int     `json:"limit"`
 	StagingRoot string  `json:"stagingRoot"`
 }
@@ -147,7 +147,7 @@ func (h *HostOperator) RunSystem(ctx context.Context, request SystemRunRequest) 
 }
 
 // ValidateSystemRunRequest applies the trust boundary to the untrusted
-// control-plane payload before the privileged agent creates files or uploads.
+// control-panel payload before the privileged agent creates files or uploads.
 func ValidateSystemRunRequest(request SystemRunRequest) error {
 	if request.StagingRoot != "" {
 		return errors.New("backup staging root is agent-owned and must not be supplied")

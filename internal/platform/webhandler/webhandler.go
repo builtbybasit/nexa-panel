@@ -27,7 +27,7 @@ func Fail(w http.ResponseWriter, err error) { httpapi.Fail(w, err) }
 var errUnauthenticated = httpapi.NewError(http.StatusUnauthorized, "authentication_required", "Sign in to continue.")
 
 // Actor resolves the authenticated user placed on the request context by the
-// control-plane authentication middleware. It returns the shared 401 APIError
+// control-panel authentication middleware. It returns the shared 401 APIError
 // when no user is present, replacing the per-module actorID guard.
 func Actor(r *http.Request) (identity.User, *httpapi.APIError) {
 	user, ok := identity.UserFromContext(r.Context())

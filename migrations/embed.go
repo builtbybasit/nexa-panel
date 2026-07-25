@@ -1,4 +1,4 @@
-// Package migrations holds the control-plane's timestamped up/down SQL
+// Package migrations holds the control-panel's timestamped up/down SQL
 // migrations as an embedded filesystem. Each module contributes its schema as
 // `<timestamp>_<name>.tx.up.sql` / `.tx.down.sql`; persistence.RunMigrations
 // discovers and applies them in timestamp order as one global timeline.

@@ -1,5 +1,5 @@
 // Package httpapi owns the small, security-sensitive HTTP conventions shared
-// by control-plane modules: bounded strict JSON, one error envelope, and trusted
+// by control-panel modules: bounded strict JSON, one error envelope, and trusted
 // reverse-proxy metadata. Feature modules keep business behavior and do not each
 // reimplement transport policy.
 package httpapi

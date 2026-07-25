@@ -19,7 +19,7 @@ type sshAccessModel struct {
 }
 
 // sshKeyModel is one installed public key. Only public material is stored: a
-// private half never reaches the control plane, so a control.db backup cannot
+// private half never reaches the control panel, so a control.db backup cannot
 // leak a login.
 type sshKeyModel struct {
 	bun.BaseModel `bun:"table:site_ssh_keys,alias:site_ssh_keys"`

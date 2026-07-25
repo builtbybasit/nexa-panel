@@ -13,7 +13,7 @@ import (
 )
 
 // fakeRegistry records what each Handle* variant was asked to register so the
-// spec-to-route resolution can be asserted without a live control plane.
+// spec-to-route resolution can be asserted without a live control panel.
 type fakeRegistry struct {
 	authorized    map[string]string // pattern -> permission
 	authenticated []string

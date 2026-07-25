@@ -547,7 +547,7 @@ func (o *HostOperator) validateBinary(ctx context.Context, binary []byte, expect
 
 // restorePreparedTransaction is used before activation starts. No service has
 // consumed the new unit graph yet, so restoring the binary and packaging files
-// is sufficient and avoids bouncing a healthy old control plane.
+// is sufficient and avoids bouncing a healthy old control panel.
 //
 // It runs on a context detached from the caller's: the failure it is undoing is
 // frequently the caller's own cancellation or the apply deadline, and a restore

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
-	"github.com/nexa-panel/nexa-panel/internal/platform/controlplane"
+	"github.com/nexa-panel/nexa-panel/internal/platform/controlpanel"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
@@ -63,10 +63,10 @@ func TestMFAEnrollmentIsOptionalButEnforcedOnceConfirmed(t *testing.T) {
 	}
 	currentTime := time.Unix(1_700_000_000, 0).UTC()
 	identityModule.now = func() time.Time { return currentTime }
-	server, err := controlplane.New("test", []module.Module{identityModule, auditModule}, logger,
-		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(testAuthorization{}))
+	server, err := controlpanel.New("test", []module.Module{identityModule, auditModule}, logger,
+		controlpanel.WithAuthentication(identityModule), controlpanel.WithAuthorization(testAuthorization{}))
 	if err != nil {
-		t.Fatalf("create control plane: %v", err)
+		t.Fatalf("create control panel: %v", err)
 	}
 
 	status := performRequest(server.Handler(), http.MethodGet, "/api/v1/auth/status", "", nil)
@@ -297,10 +297,10 @@ func TestAdministratorCanDisableMFAWithStepUpAndPassword(t *testing.T) {
 	}
 	currentTime := time.Unix(1_700_000_000, 0).UTC()
 	identityModule.now = func() time.Time { return currentTime }
-	server, err := controlplane.New("test", []module.Module{identityModule, auditModule}, logger,
-		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(testAuthorization{}))
+	server, err := controlpanel.New("test", []module.Module{identityModule, auditModule}, logger,
+		controlpanel.WithAuthentication(identityModule), controlpanel.WithAuthorization(testAuthorization{}))
 	if err != nil {
-		t.Fatalf("create control plane: %v", err)
+		t.Fatalf("create control panel: %v", err)
 	}
 
 	bootstrap := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/bootstrap",
@@ -392,10 +392,10 @@ func TestSelfServicePasswordChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create identity module: %v", err)
 	}
-	server, err := controlplane.New("test", []module.Module{identityModule, auditModule}, logger,
-		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(testAuthorization{}))
+	server, err := controlpanel.New("test", []module.Module{identityModule, auditModule}, logger,
+		controlpanel.WithAuthentication(identityModule), controlpanel.WithAuthorization(testAuthorization{}))
 	if err != nil {
-		t.Fatalf("create control plane: %v", err)
+		t.Fatalf("create control panel: %v", err)
 	}
 
 	bootstrap := performRequest(server.Handler(), http.MethodPost, "/api/v1/auth/bootstrap",
@@ -484,7 +484,7 @@ func (testAuthorization) Middleware(_ string, next http.Handler) http.Handler { 
 // echoes its value back in the header, completing the double submit.
 func performRequest(handler http.Handler, method, path, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
-	// The control plane refuses non-loopback plaintext HTTP; these tests exercise
+	// The control panel refuses non-loopback plaintext HTTP; these tests exercise
 	// the documented loopback bootstrap workflow, so present a loopback client.
 	request.RemoteAddr = "127.0.0.1:12345"
 	request.Header.Set("Sec-Fetch-Site", "same-origin")

@@ -23,7 +23,7 @@ const generatedPasswordLength = 24
 
 // generatePassword returns a fresh high-entropy password. It is returned to the
 // operator once over HTTPS and written to the node's /etc/shadow; it is never
-// persisted by the control plane.
+// persisted by the control panel.
 func generatePassword() (string, error) {
 	buffer := make([]byte, generatedPasswordLength)
 	max := big.NewInt(int64(len(passwordAlphabet)))

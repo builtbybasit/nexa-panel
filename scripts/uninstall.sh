@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remove the Nexa Panel control plane from an Ubuntu node.
+# Remove the Nexa Panel control panel from an Ubuntu node.
 #
 # The safe default removes only program-owned runtime files and leaves hosted
 # sites, databases, backups, encryption keys, and the control database intact.

@@ -1,6 +1,6 @@
 //go:build embed
 
-package controlplane
+package controlpanel
 
 import (
 	"io"

@@ -117,7 +117,7 @@ func (m *Module) upsert(ctx context.Context, tx bun.Tx, site sites.Site, enabled
 	return err
 }
 
-// sshState is a point-in-time copy of everything the control plane holds for one
+// sshState is a point-in-time copy of everything the control panel holds for one
 // site's SSH access. It exists so a change the node refuses can be undone after
 // the fact: the rows are committed before the node is driven, because holding
 // the database's single connection across an agent round trip would stall the
@@ -173,7 +173,7 @@ func (m *Module) restore(ctx context.Context, siteID string, state sshState) err
 }
 
 // drive applies the desired state to the node. The key list it sends is the
-// complete set the control plane holds, because the operator rewrites the
+// complete set the control panel holds, because the operator rewrites the
 // authorized-keys file rather than merging into it.
 func (m *Module) drive(ctx context.Context, site sites.Site, enabled bool, keys []sshKeyModel) error {
 	request := deployoperator.SSHAccessRequest{

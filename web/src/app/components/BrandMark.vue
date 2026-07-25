@@ -1,6 +1,6 @@
 <script setup lang="ts">
 withDefaults(defineProps<{ subtitle?: string; size?: 'md' | 'lg' }>(), {
-  subtitle: 'Server control plane',
+  subtitle: 'Server control panel',
   size: 'md',
 })
 </script>

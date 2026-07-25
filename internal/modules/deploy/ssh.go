@@ -155,7 +155,7 @@ func (m *Module) applyKeys(ctx context.Context, site sites.Site, mutate func(con
 // /etc/ssh, runs `sshd -t` and reloads sshd, under a multi-minute client
 // timeout — held inside a transaction would stall every other request in the
 // panel. The property that made the in-transaction call attractive is kept by
-// restoring the pre-change rows when the node refuses, so the control plane
+// restoring the pre-change rows when the node refuses, so the control panel
 // still never claims a state the node did not accept. The mutex serializes SSH
 // changes with each other, which the write lock used to do implicitly.
 func (m *Module) transact(ctx context.Context, site sites.Site, mutate func(context.Context, bun.Tx) (nodeIntent, error)) (SSHAccess, error) {

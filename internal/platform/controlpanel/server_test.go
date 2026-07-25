@@ -1,4 +1,4 @@
-package controlplane
+package controlpanel
 
 import (
 	"context"

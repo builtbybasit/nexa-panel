@@ -47,7 +47,7 @@ func runMFA(args []string) error {
 func runMFAReset(args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("mfa reset", flag.ContinueOnError)
 	username := flags.String("user", "", "username of the account whose second factor is cleared")
-	statePath := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/var/lib/nexa-panel/control.db"), "control-plane state database path")
+	statePath := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/var/lib/nexa-panel/control.db"), "control-panel state database path")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}

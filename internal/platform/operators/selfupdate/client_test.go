@@ -133,9 +133,9 @@ func TestApplyStillFailsWhenNoNewTransactionEverCommits(t *testing.T) {
 // terminal phase. The client must surface that cancellation as context.Canceled,
 // not as a "no update outcome" failure: only context.Canceled tells the jobs
 // worker a shutdown is in progress, so it leaves the row running and RecoveryRetry
-// re-reads the committed outcome after the control plane comes back. Masking it
+// re-reads the committed outcome after the control panel comes back. Masking it
 // recorded a false failure for a node that had already updated correctly.
-func TestApplyPropagatesTheCancellationWhenActivationRestartsTheControlPlane(t *testing.T) {
+func TestApplyPropagatesTheCancellationWhenActivationRestartsTheControlPanel(t *testing.T) {
 	agent := &restartingAgent{
 		applyErr: severedResponse(),
 		// The journal is still activating and never commits before the API is

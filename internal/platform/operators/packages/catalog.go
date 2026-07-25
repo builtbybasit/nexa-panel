@@ -255,7 +255,7 @@ func compareVersions(a, b string) int {
 }
 
 // CatalogEntry is the public description of one installable application, used by
-// the control-plane module to render the catalog without duplicating the table.
+// the control-panel module to render the catalog without duplicating the table.
 type CatalogEntry struct {
 	App      string   `json:"app"`
 	Version  string   `json:"version"`

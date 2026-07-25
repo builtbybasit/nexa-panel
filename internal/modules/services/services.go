@@ -1,4 +1,4 @@
-// Package services is the control-plane feature module behind the Services page.
+// Package services is the control-panel feature module behind the Services page.
 // It surfaces the systemd service units nexa manages on the node and orchestrates
 // start/stop/restart and boot-enablement toggles as durable jobs through the
 // privileged services operator. Each mutation is planned and applied back-to-back
@@ -94,7 +94,7 @@ func (m *Module) Close() {
 
 // List reports the managed service units present on the node, each with its
 // current active and boot-enablement state. It is a direct pass-through to the
-// operator — there is no control-plane state to protect.
+// operator — there is no control-panel state to protect.
 func (m *Module) List(ctx context.Context) ([]servicesoperator.Service, error) {
 	return m.operator.Discover(ctx)
 }

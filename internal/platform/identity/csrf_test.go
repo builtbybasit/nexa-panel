@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
-	"github.com/nexa-panel/nexa-panel/internal/platform/controlplane"
+	"github.com/nexa-panel/nexa-panel/internal/platform/controlpanel"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
 	"github.com/nexa-panel/nexa-panel/internal/platform/secrets"
 )
 
-// csrfHarness is a bootstrapped panel behind the real control-plane handler, so
+// csrfHarness is a bootstrapped panel behind the real control-panel handler, so
 // the tests below exercise the middleware exactly as a browser would reach it.
 type csrfHarness struct {
 	module  *Module
@@ -51,10 +51,10 @@ func newCSRFHarness(t *testing.T, config Config) *csrfHarness {
 	if err != nil {
 		t.Fatalf("create identity module: %v", err)
 	}
-	server, err := controlplane.New("test", []module.Module{identityModule, auditModule}, logger,
-		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(testAuthorization{}))
+	server, err := controlpanel.New("test", []module.Module{identityModule, auditModule}, logger,
+		controlpanel.WithAuthentication(identityModule), controlpanel.WithAuthorization(testAuthorization{}))
 	if err != nil {
-		t.Fatalf("create control plane: %v", err)
+		t.Fatalf("create control panel: %v", err)
 	}
 	harness := &csrfHarness{module: identityModule, handler: server.Handler()}
 	bootstrap := performRequest(harness.handler, http.MethodPost, "/api/v1/auth/bootstrap",

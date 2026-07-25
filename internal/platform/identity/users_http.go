@@ -332,7 +332,7 @@ func (m *Module) replaceUserSitesHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if m.siteDirectory == nil {
-		httpapi.WriteError(w, http.StatusServiceUnavailable, "sites_unavailable", "Site grants are not configured on this control plane.")
+		httpapi.WriteError(w, http.StatusServiceUnavailable, "sites_unavailable", "Site grants are not configured on this control panel.")
 		return
 	}
 	input, decodeErr := httpapi.Decode[replaceSitesRequest](w, r)

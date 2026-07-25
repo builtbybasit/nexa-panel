@@ -1,4 +1,4 @@
-// Package sftp is the control-plane feature module behind per-site SFTP access.
+// Package sftp is the control-panel feature module behind per-site SFTP access.
 // It toggles OpenSSH-jailed SFTP for a site and rotates the account password,
 // driving the privileged SFTP operator synchronously — synchronously, not as a
 // durable job, precisely because a job payload is persisted and the generated

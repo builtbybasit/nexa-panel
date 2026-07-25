@@ -49,7 +49,7 @@ const node = computed(() => {
       dot: 'bg-rose-400',
       ping: false,
       label: 'Node unreachable',
-      detail: 'The control plane is not responding',
+      detail: 'The control panel is not responding',
       title: lastChecked ? `Last successful check: ${formatTime(new Date(lastChecked).toISOString())}` : 'No successful check yet',
     }
   }
@@ -66,7 +66,7 @@ const node = computed(() => {
       title: overview.warnings.join('\n'),
     }
   }
-  return { dot: 'bg-emerald-400', ping: true, label: 'Local node', detail: 'Single-server control plane', title: undefined }
+  return { dot: 'bg-emerald-400', ping: true, label: 'Local node', detail: 'Single-server control panel', title: undefined }
 })
 </script>
 

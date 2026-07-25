@@ -11,11 +11,11 @@ Target branch base: `release/v1-hardening` (or `main` after it merges).
 
 ## 0. Naming, module identity, and cross-cutting decisions
 
-### 0.1 One new control-plane module and one new operator
+### 0.1 One new control-panel module and one new operator
 
 | Layer | Package | ID |
 |---|---|---|
-| Control plane | `internal/modules/deploy` | module id `deploy` |
+| Control panel | `internal/modules/deploy` | module id `deploy` |
 | Privileged node operator | `internal/platform/operators/deploy` | agent routes under `/v1/deploy/…` |
 | Frontend | `web/src/modules/sites` (sub-pages) + new `web/src/modules/deploy` for the shared views | route `/sites/:siteId/deployment` |
 
@@ -52,7 +52,7 @@ Extend the matrix in `internal/platform/authorization/authorization_test.go:24-5
 
 ### 0.3 Secrets policy (SECURITY DECISION)
 
-- **No private key ever reaches the control plane.** The deploy key is generated
+- **No private key ever reaches the control panel.** The deploy key is generated
   **on the node** by the operator (`ssh-keygen -t ed25519 -N ''`), written to
   `{root}/.ssh/id_ed25519` mode `0600` owned by `nexa_<slug>`, and the operator
   returns **only** the public key + fingerprint. The `site_deploy_keys` table has
@@ -154,7 +154,7 @@ Facts that constrain this phase:
   `ForceCommand none` / `ChrootDirectory none` win. That is precisely why we must
   never allow both to be enabled at once.
 - **SSH access and SFTP access are mutually exclusive per site, enforced in the
-  control plane, with the SFTP module unmodified except for one additive
+  control panel, with the SFTP module unmodified except for one additive
   read-only accessor.** Enabling SSH while SFTP is on returns HTTP 409
   `sftp_access_enabled` with a message telling the operator to disable SFTP
   first; the SFTP module's own enable path is unchanged, so the reverse race is
@@ -406,7 +406,7 @@ Note the `REFERENCES sites(id) ON DELETE CASCADE` — do **not** copy
 
 ---
 
-**P1-E · `PARALLEL-GROUP P1-E` — control-plane module (depends on P1-B, P1-D)**
+**P1-E · `PARALLEL-GROUP P1-E` — control-panel module (depends on P1-B, P1-D)**
 
 Create `internal/modules/deploy/deploy.go`:
 
@@ -731,7 +731,7 @@ Note deliberately: **no `private_key_ciphertext` column.**
 
 ---
 
-**P2-D · `PARALLEL-GROUP P2-D` — control-plane endpoints + test job (depends on P2-B, P2-C)**
+**P2-D · `PARALLEL-GROUP P2-D` — control-panel endpoints + test job (depends on P2-B, P2-C)**
 
 Edit `internal/modules/deploy/deploy.go` — register the job kind in the
 constructor, **before** any submit
@@ -856,7 +856,7 @@ equality (`internal/platform/operators/sites/activation.go:116`,
 
 ---
 
-**P3-A · `PARALLEL-GROUP P3-A` — schema + control-plane field**
+**P3-A · `PARALLEL-GROUP P3-A` — schema + control-panel field**
 
 `migrations/20260722000005_site_deployment_mode.tx.up.sql`:
 
@@ -972,7 +972,7 @@ Also edit:
 
 **P3-D · `PARALLEL-GROUP P3-D` — mode switch + `.env` editor (depends on P3-A..C)**
 
-Control plane, `internal/modules/deploy/layout_http.go`:
+Control panel, `internal/modules/deploy/layout_http.go`:
 
 | Pattern | Permission |
 |---|---|
@@ -1112,7 +1112,7 @@ report as a warning not a pass) **or** a rule exists with `Port == "22"` and
 warning with the exact `ufw allow 22/tcp` remediation. Rationale: opening a
 firewall port must stay behind the MFA-gated `firewall.write` path.
 
-Control plane: register `queue.RegisterHandler("deploy.prepare", m.prepareJob)`
+Control panel: register `queue.RegisterHandler("deploy.prepare", m.prepareJob)`
 in the module constructor; route
 `POST /api/v1/sites/{id}/deployment/prepare` → `deploy.write` → 202. Audit
 `deploy.node_prepared` fail-closed at submit time.

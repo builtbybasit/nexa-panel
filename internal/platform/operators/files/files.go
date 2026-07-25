@@ -10,7 +10,7 @@ import (
 )
 
 // ChunkMaxBytes bounds one upload chunk; it is part of the wire contract
-// between the control plane, the agent, and browser clients.
+// between the control panel, the agent, and browser clients.
 const ChunkMaxBytes = 8 * 1024 * 1024
 
 type Entry struct {

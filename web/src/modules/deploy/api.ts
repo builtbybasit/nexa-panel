@@ -137,7 +137,7 @@ export interface SharedEnv {
   modifiedAt?: string
 }
 
-/** The cap the control plane and the node both enforce, restated for the editor. */
+/** The cap the control panel and the node both enforce, restated for the editor. */
 export const SHARED_ENV_MAX_BYTES = 64 * 1024
 
 function deploymentPath(siteId: string, suffix = ''): string {

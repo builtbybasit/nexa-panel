@@ -90,7 +90,7 @@ var legacyLedger = []legacyMigration{
 	{Name: "20260721000025", Module: "backups", Version: 6},
 }
 
-// RunMigrations brings the control-plane schema up to date. It is called once,
+// RunMigrations brings the control-panel schema up to date. It is called once,
 // in the API composition root, after Open and before the module constructors.
 func RunMigrations(ctx context.Context, database *bun.DB, opts ...MigrateOption) error {
 	set := migrate.NewMigrations()

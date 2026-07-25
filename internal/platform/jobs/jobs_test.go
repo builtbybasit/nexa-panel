@@ -18,7 +18,7 @@ import (
 
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/authorization"
-	"github.com/nexa-panel/nexa-panel/internal/platform/controlplane"
+	"github.com/nexa-panel/nexa-panel/internal/platform/controlpanel"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/module"
 	"github.com/nexa-panel/nexa-panel/internal/platform/persistence"
@@ -493,7 +493,7 @@ func TestJobAPIRedactsCredentialsInRequestAndResult(t *testing.T) {
 	}
 }
 
-func newAuthenticatedTestServer(t *testing.T) (*controlplane.Server, *Module, *http.Cookie, string) {
+func newAuthenticatedTestServer(t *testing.T) (*controlpanel.Server, *Module, *http.Cookie, string) {
 	t.Helper()
 	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
 	if err != nil {
@@ -525,10 +525,10 @@ func newAuthenticatedTestServer(t *testing.T) (*controlplane.Server, *Module, *h
 	}
 	jobsModule.Start(context.Background())
 	t.Cleanup(jobsModule.Close)
-	server, err := controlplane.New("test", []module.Module{auditLog, identityModule, jobsModule}, logger,
-		controlplane.WithAuthentication(identityModule), controlplane.WithAuthorization(authorization.New()))
+	server, err := controlpanel.New("test", []module.Module{auditLog, identityModule, jobsModule}, logger,
+		controlpanel.WithAuthentication(identityModule), controlpanel.WithAuthorization(authorization.New()))
 	if err != nil {
-		t.Fatalf("create control plane: %v", err)
+		t.Fatalf("create control panel: %v", err)
 	}
 
 	bootstrapRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/bootstrap",

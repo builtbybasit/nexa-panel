@@ -1,4 +1,4 @@
-// Package applications is the control-plane feature module behind the
+// Package applications is the control-panel feature module behind the
 // Applications page. It renders the installable catalog joined with observed
 // package state, and orchestrates install/remove as durable plan/apply jobs
 // through the privileged packages operator. phpMyAdmin and pgAdmin are surfaced

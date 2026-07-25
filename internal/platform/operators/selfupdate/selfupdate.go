@@ -1,7 +1,7 @@
 // Package selfupdate is the privileged node operator behind the panel's
 // self-update feature. Only nexa-agent (User=root, /usr writable, full caps) can
 // replace /usr/bin/nexa and restart the units, so this operator lives on the
-// agent side; the control plane reaches it over the same authenticated unix
+// agent side; the control panel reaches it over the same authenticated unix
 // socket as every other operator.
 //
 // The operation is deliberately narrow. The only thing a caller may name is a
@@ -135,7 +135,7 @@ type Result struct {
 	TargetVersion   string `json:"targetVersion"`
 	Swapped         bool   `json:"swapped"`
 	// Activated is true only after the detached activation helper has restarted
-	// the packaged services and the control plane's readiness endpoint has
+	// the packaged services and the control panel's readiness endpoint has
 	// authenticated the newly started agent, confirmed its schema is migrated,
 	// and reported the target version as the one now serving.
 	Activated bool `json:"activated"`
@@ -153,7 +153,7 @@ type Result struct {
 	PackagingNote string `json:"packagingNote,omitempty"`
 }
 
-// Operator is the interface the control plane depends on (via a unix-socket
+// Operator is the interface the control panel depends on (via a unix-socket
 // client) and the agent serves.
 type Operator interface {
 	// Latest reports the installed version and, when a newer release exists, the
@@ -286,7 +286,7 @@ type HostConfig struct {
 	Arch                   string
 	activationPollInterval time.Duration
 	activate               func(context.Context, string) error
-	// readiness proves the control plane that is live after a phase change is
+	// readiness proves the control panel that is live after a phase change is
 	// both healthy and running the version that phase intended. The string is
 	// that expected version; an empty or non-semver value asserts health only.
 	readiness       func(context.Context, string) error

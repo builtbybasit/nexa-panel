@@ -8,7 +8,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/agentclient"
 )
 
-// UnixClient is the control-plane side of the operator: it speaks HTTP over the
+// UnixClient is the control-panel side of the operator: it speaks HTTP over the
 // agent's Unix socket. It mirrors the pattern used by every other operator
 // (see operators/postgres/client.go).
 type UnixClient struct {

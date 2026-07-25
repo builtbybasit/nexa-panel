@@ -26,7 +26,7 @@ func (s *Server) sitePlanHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // siteTeardownPlanHTTP issues the plan that strips a site from the node. The
-// control plane must not build this shape itself: the signature covers the whole
+// control panel must not build this shape itself: the signature covers the whole
 // plan, so any post-signing edit makes the agent reject it as unissued.
 func (s *Server) siteTeardownPlanHTTP(w http.ResponseWriter, r *http.Request) {
 	var site siteoperator.Site

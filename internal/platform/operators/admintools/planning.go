@@ -42,7 +42,7 @@ func (o *HostOperator) Plan(ctx context.Context, change Change) (Plan, error) {
 	case ActionStop:
 		steps = []string{"Stop the tool service.", "Verify the service is inactive."}
 	case ActionLaunch:
-		steps = []string{"Create a short-lived server-side tool session.", "Return session material only to the trusted control plane."}
+		steps = []string{"Create a short-lived server-side tool session.", "Return session material only to the trusted control panel."}
 	}
 	now := o.now().UTC()
 	return Plan{ID: randomID(), Kind: PlanKind, Change: change, Steps: steps, Warnings: warnings, ObservedFingerprint: fingerprint, PlannedAt: now, ExpiresAt: now.Add(20 * time.Minute)}, nil

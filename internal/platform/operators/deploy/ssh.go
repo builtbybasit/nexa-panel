@@ -8,7 +8,7 @@
 // different files and neither reconciles the other's. They must never both be
 // enabled for one site, because `nexa-access-<slug>.conf` sorts before
 // `nexa-site-<slug>.conf` and sshd keeps the first setting of each keyword, so
-// the SSH block would silently unchroot the SFTP jail. The control plane
+// the SSH block would silently unchroot the SFTP jail. The control panel
 // enforces the exclusion; ApplySSHAccess re-checks it on the node so a racing
 // caller cannot slip past.
 package deploy
@@ -61,7 +61,7 @@ var keyAlgorithms = map[string]bool{
 }
 
 // SupportedKeyAlgorithm reports whether this operator will install a key of the
-// given type. It is exported so the control plane can refuse an unsupported
+// given type. It is exported so the control panel can refuse an unsupported
 // paste where it is pasted, instead of storing a key the node rejects later — on
 // an unrelated apply that then fails as a whole.
 func SupportedKeyAlgorithm(algorithm string) bool { return keyAlgorithms[algorithm] }
@@ -96,7 +96,7 @@ type SSHAccessObservation struct {
 	KeyCount           int    `json:"keyCount"`
 }
 
-// Operator is the node-side surface the control plane drives over the agent
+// Operator is the node-side surface the control panel drives over the agent
 // socket. SSHHostOperator is the real implementation; UnixClient is the proxy.
 type Operator interface {
 	ApplySSHAccess(ctx context.Context, request SSHAccessRequest) (SSHAccessObservation, error)
@@ -106,7 +106,7 @@ type Operator interface {
 	GenerateUserKey(ctx context.Context, request SSHAccessRequest) (GeneratedKey, error)
 	// EnsureDeployKey settles the site's GitHub material on the node and reports
 	// the public half. The private half stays on the node, so this is the only
-	// thing the control plane ever learns about the key.
+	// thing the control panel ever learns about the key.
 	EnsureDeployKey(ctx context.Context, request DeployKeyRequest) (DeployKeyObservation, error)
 	// TestGitHub proves the deploy key can read a repository, as the site
 	// account and against the pinned host keys.

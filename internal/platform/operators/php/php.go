@@ -1,7 +1,7 @@
 // Package php is the privileged node operator behind the PHP page's two
 // features: per-version extension (module) management, and per-version php.ini
 // directive editing. Like the other operators it follows the plan -> sign ->
-// apply -> verify model: the control plane may only name a PHP branch, an
+// apply -> verify model: the control panel may only name a PHP branch, an
 // extension, and directive values; the package names, file paths, and ini keys
 // that reach a command line or the disk are derived and gated here against
 // strict shapes, never taken from the caller verbatim.
@@ -52,7 +52,7 @@ type SiteScope struct {
 
 // DeploymentModeStandard and DeploymentModeDeployer mirror the sites module's
 // constants. They are restated rather than imported because an operator never
-// depends on a control-plane module.
+// depends on a control-panel module.
 const (
 	DeploymentModeStandard = "standard"
 	DeploymentModeDeployer = "deployer"
@@ -121,7 +121,7 @@ type Observation struct {
 	Verified   bool        `json:"verified"`
 }
 
-// Operator is the interface the control plane depends on (via a Unix-socket
+// Operator is the interface the control panel depends on (via a Unix-socket
 // client) and the agent serves.
 type Operator interface {
 	// Versions reports the PHP branches installed on the node, so the control

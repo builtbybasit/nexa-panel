@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate the embedded OpenAPI artifacts consumed by the control plane:
+# Regenerate the embedded OpenAPI artifacts consumed by the control panel:
 #   internal/platform/httpapi/apispec/openapi.gen.json  (bundled contract, embedded for spec-driven routing)
 #   internal/platform/httpapi/apispec/models.gen.go     (oapi-codegen request/response models)
 #

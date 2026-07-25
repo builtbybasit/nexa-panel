@@ -65,7 +65,7 @@ match the managed server. Site backup creation additionally uses the host
 ## Filesystem and service contract
 
 The packaged tmpfiles rules create the shared runtime socket directory, private
-control-plane state and logs, managed site roots, ACME webroot, generated task
+control-panel state and logs, managed site roots, ACME webroot, generated task
 definitions, and administration-tool data directories with explicit ownership
 and modes.
 
@@ -82,7 +82,7 @@ with systemd hardening and an explicit writable-path boundary covering the host
 trees managed by package, service, site, database, certificate, schedule, and
 backup operations.
 
-The master key is `/etc/nexa-panel/master.key`, apart from the control-plane
+The master key is `/etc/nexa-panel/master.key`, apart from the control-panel
 state in `/var/lib/nexa-panel`, so that a stolen state backup does not also hand
 over the key that opens it. `/etc/nexa-panel` stays root-owned `0711`: a
 privileged `ExecStartPre` on `nexa-api.service` mints the key, or moves a
@@ -93,7 +93,7 @@ which then only reads it. The unit therefore needs no write access to `/etc`.
 
 A node needs at least 2 GiB of memory; the panel reports anything smaller as an
 unsupported capacity profile. Both long-running units are capped so neither can
-exhaust that floor: the control plane throttles at 256M and is stopped at 512M,
+exhaust that floor: the control panel throttles at 256M and is stopped at 512M,
 and the agent — whose cgroup also contains `apt`, `dpkg`, and `podman` — at 1G
 and 1536M. Both cap tasks and open files, and both enter a failed state after
 ten restarts in five minutes instead of restarting forever.

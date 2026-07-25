@@ -29,7 +29,7 @@ func TestOpenCreatesNestedDirectoriesAndUsableDatabase(t *testing.T) {
 	_ = again.Close()
 }
 
-// The packaged control plane runs as User=nexa with Group=www-data, so every
+// The packaged control panel runs as User=nexa with Group=www-data, so every
 // file it creates — including this database — is group-owned by the account
 // Nginx runs as, contradicting the nexa:nexa contract the tmpfiles snippet
 // declares. Open must hand the file back to the owning account's own group.

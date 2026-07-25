@@ -93,7 +93,7 @@ func (o *HostOperator) Plan(_ context.Context, task Task, removal bool) (Plan, e
 }
 
 // validatePlan re-renders the plan's task and rejects any artifact the
-// renderer would not produce, so a compromised control plane cannot use the
+// renderer would not produce, so a compromised control panel cannot use the
 // agent to write arbitrary files.
 func (o *HostOperator) validatePlan(plan Plan) error {
 	if plan.ID == "" || plan.Kind != PlanKind || len(plan.Artifacts) == 0 || len(plan.Artifacts) != len(plan.Before) {

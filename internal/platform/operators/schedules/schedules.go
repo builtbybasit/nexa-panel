@@ -25,7 +25,7 @@ const PlanTTL = 15 * time.Minute
 const RunsMaxRecords = 200
 
 // Task is one scheduled command for a managed site. It is sent by the
-// control plane and independently re-validated by the agent before any
+// control panel and independently re-validated by the agent before any
 // artifact is rendered or executed.
 type Task struct {
 	ID             string       `json:"id"`
@@ -184,7 +184,7 @@ func conflict(message string) *OperationError {
 
 var taskIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
-// Field bounds are shared with the control-plane module so both sides reject
+// Field bounds are shared with the control-panel module so both sides reject
 // the same tasks; the agent still re-validates because plans and run requests
 // arrive over the socket.
 const (

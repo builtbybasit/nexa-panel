@@ -27,7 +27,7 @@ type SiteTarget struct {
 }
 
 // DatabaseTarget is a resolved database to dump. Engine selects the dump tool;
-// Version/Port/Socket carry the connection details the control plane read from
+// Version/Port/Socket carry the connection details the control panel read from
 // the owning engine instance.
 type DatabaseTarget struct {
 	Engine  string `json:"engine"` // "postgres" | "mysql" | "mariadb"
@@ -43,7 +43,7 @@ type DatabaseTarget struct {
 type RunRequest struct {
 	Account     Account          `json:"account"`
 	PlanID      string           `json:"planId"`
-	CopyName    string           `json:"copyName"` // timestamp dir, control-plane generated so it sorts chronologically
+	CopyName    string           `json:"copyName"` // timestamp dir, control-panel generated so it sorts chronologically
 	Limit       int              `json:"limit"`
 	Sites       []SiteTarget     `json:"sites"`
 	Databases   []DatabaseTarget `json:"databases"`

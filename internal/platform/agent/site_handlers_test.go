@@ -46,7 +46,7 @@ func (teardownPlanOperator) Rollback(context.Context, siteoperator.Plan) (siteop
 
 // A site teardown sends the issued plan straight back to the agent, so the plan
 // the agent signs must verify unchanged. This previously failed in production
-// with "The site plan was not issued by this agent." because the control plane
+// with "The site plan was not issued by this agent." because the control panel
 // built the synthetic shape itself by editing an already-signed activation plan;
 // the signature covers the whole plan, so any such edit invalidates it.
 func TestTeardownPlanVerifiesAsIssued(t *testing.T) {

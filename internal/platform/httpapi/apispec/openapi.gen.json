@@ -3,7 +3,7 @@
   "info": {
     "title": "Nexa Panel HTTP Interface",
     "version": "0.1.0",
-    "description": "Initial control-plane contract for the Nexa Panel foundation."
+    "description": "Initial control-panel contract for the Nexa Panel foundation."
   },
   "servers": [
     {
@@ -21,7 +21,7 @@
         "security": [],
         "responses": {
           "200": {
-            "description": "The control-plane process is running.",
+            "description": "The control-panel process is running.",
             "content": {
               "application/json": {
                 "schema": {
@@ -46,7 +46,7 @@
         "security": [],
         "responses": {
           "200": {
-            "description": "The control-plane database and privileged node agent are reachable.",
+            "description": "The control-panel database and privileged node agent are reachable.",
             "content": {
               "application/json": {
                 "schema": {
@@ -979,7 +979,7 @@
             }
           },
           "503": {
-            "description": "Site grants are not configured on this control plane.",
+            "description": "Site grants are not configured on this control panel.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1440,7 +1440,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Desired sites managed by the control plane.",
+            "description": "Desired sites managed by the control panel.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5852,7 +5852,7 @@
       "post": {
         "operationId": "restoreBackupCopy",
         "summary": "Restore Backup Copy",
-        "description": "Queues only the exact restore plan bound by a current preview token. The control plane resolves and hashes the source copy, account, selections, and destination state again at submission and in the worker before the node operator may mutate a destination.",
+        "description": "Queues only the exact restore plan bound by a current preview token. The control panel resolves and hashes the source copy, account, selections, and destination state again at submission and in the worker before the node operator may mutate a destination.",
         "tags": [
           "Backups"
         ],
@@ -10171,7 +10171,7 @@
       },
       "DeployKey": {
         "type": "object",
-        "description": "The site's Git deploy key. The pair is minted on the node and only the public half ever reaches the control plane, so `present` rather than a non-empty publicKey is what says a key exists.",
+        "description": "The site's Git deploy key. The pair is minted on the node and only the public half ever reaches the control panel, so `present` rather than a non-empty publicKey is what says a key exists.",
         "required": [
           "siteId",
           "present",

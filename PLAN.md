@@ -49,7 +49,7 @@ does not mean release-accepted; gaps are listed in later sections.
 
 | Area | Current implementation | v1 qualification still needed |
 | --- | --- | --- |
-| Control plane | Go modular monolith, SQLite/WAL state, embedded migrations, encrypted secrets, Unix-socket HTTP | Contract generation, migration rollback policy, production topology tests |
+| Control panel | Go modular monolith, SQLite/WAL state, embedded migrations, encrypted secrets, Unix-socket HTTP | Contract generation, migration rollback policy, production topology tests |
 | Privileged execution | Separate root agent, authenticated Unix socket, plan/apply/observe flows, hardened systemd units | Split API/Nginx trust from agent trust; remove root-equivalent local update RPC exposure |
 | Identity | Password sessions, CSRF/origin checks, RBAC, site scopes, TOTP and recovery codes | Mandatory admin MFA, break-glass recovery, truthful OpenAPI/UI policy |
 | Jobs and audit | Durable jobs, restart recovery, progress streams, audit hash chain | Redacted display DTOs and complete audit-sink use for destructive file operations |
@@ -370,7 +370,7 @@ These are not substitutes for the gates above, but should be closed before or
 immediately after the first release candidate.
 
 - Fix `/metrics` through the packaged Nginx topology. A local request on
-  `nexa-node` currently returns 404 because the control plane cannot recognize
+  `nexa-node` currently returns 404 because the control panel cannot recognize
   the Unix-socket proxy peer as loopback and the metrics location does not send
   the trusted local forwarding signal.
 - Generate or validate server/client types from OpenAPI. The current schema
@@ -392,7 +392,7 @@ immediately after the first release candidate.
 
 ### Deepen module boundaries
 
-- Keep the control plane/agent split, but make privileged interfaces narrow and
+- Keep the control panel/agent split, but make privileged interfaces narrow and
   semantic. Callers request “activate verified release X,” never “read and run
   this path.”
 - Extract the common MySQL/PostgreSQL lifecycle shell—list/detail/status,

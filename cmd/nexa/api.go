@@ -37,7 +37,7 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/audit"
 	"github.com/nexa-panel/nexa-panel/internal/platform/authorization"
 	"github.com/nexa-panel/nexa-panel/internal/platform/capacity"
-	"github.com/nexa-panel/nexa-panel/internal/platform/controlplane"
+	"github.com/nexa-panel/nexa-panel/internal/platform/controlpanel"
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/identity"
 	"github.com/nexa-panel/nexa-panel/internal/platform/jobs"
@@ -75,7 +75,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 	address := flags.String("address", envOrDefault("NEXA_API_ADDRESS", "127.0.0.1:8888"), "HTTP listen address")
 	unixSocket := flags.String("unix-socket", envOrDefault("NEXA_API_UNIX_SOCKET", ""), "Unix socket for a trusted local reverse proxy (disables TCP listener)")
 	allowInsecureHTTP := flags.Bool("allow-insecure-http", envBool("NEXA_ALLOW_INSECURE_HTTP"), "serve authenticated traffic over plaintext HTTP on a non-loopback bind (unsafe; TLS should front the panel)")
-	state := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/tmp/nexa-panel/control.db"), "SQLite control-plane state path")
+	state := flags.String("state", envOrDefault("NEXA_STATE_DATABASE", "/tmp/nexa-panel/control.db"), "SQLite control-panel state path")
 	masterKey := flags.String("master-key", envOrDefault("NEXA_MASTER_KEY", secrets.DefaultKeyPath), "AES master key path")
 	agentSocket := flags.String("agent-socket", envOrDefault("NEXA_AGENT_SOCKET", "/tmp/nexa-panel/agent.sock"), "privileged agent Unix socket")
 	agentToken := flags.String("agent-token", envOrDefault("NEXA_AGENT_TOKEN", "/tmp/nexa-panel/agent.token"), "shared agent credential path")
@@ -89,12 +89,12 @@ func runAPI(args []string, logger *slog.Logger) error {
 
 	database, err := persistence.Open(*state)
 	if err != nil {
-		return fmt.Errorf("open control-plane state: %w", err)
+		return fmt.Errorf("open control-panel state: %w", err)
 	}
 	defer database.Close()
 	secretBox, err := secrets.OpenDefaultKeyFile(*masterKey, logger)
 	if err != nil {
-		return fmt.Errorf("open control-plane master key: %w", err)
+		return fmt.Errorf("open control-panel master key: %w", err)
 	}
 
 	// Migrations run under their own generous budget rather than the tight 10s
@@ -103,7 +103,7 @@ func runAPI(args []string, logger *slog.Logger) error {
 	migrateCtx, cancelMigrate := context.WithTimeout(context.Background(), 2*time.Minute)
 	if err := persistence.RunMigrations(migrateCtx, database, persistence.WithPreMigrationSnapshot(*state, logger)); err != nil {
 		cancelMigrate()
-		return fmt.Errorf("run control-plane migrations: %w", err)
+		return fmt.Errorf("run control-panel migrations: %w", err)
 	}
 	cancelMigrate()
 
@@ -266,15 +266,15 @@ func runAPI(args []string, logger *slog.Logger) error {
 		system.New(capacity.NewProcReader(), podman.NewInspector(), system.WithUpdates(jobsModule, selfupdateoperator.NewUnixClient(*agentSocket, *agentToken))),
 	}
 
-	app, err := controlplane.New(
+	app, err := controlpanel.New(
 		version.Version, modules, logger,
-		controlplane.WithAuthentication(identityModule),
-		controlplane.WithAuthorization(authorization.New()),
-		controlplane.WithReadiness(apiReadiness(database, authenticatedAgentReadiness(*agentSocket, *agentToken))),
-		controlplane.WithInsecureHTTPAllowed(*allowInsecureHTTP),
+		controlpanel.WithAuthentication(identityModule),
+		controlpanel.WithAuthorization(authorization.New()),
+		controlpanel.WithReadiness(apiReadiness(database, authenticatedAgentReadiness(*agentSocket, *agentToken))),
+		controlpanel.WithInsecureHTTPAllowed(*allowInsecureHTTP),
 	)
 	if err != nil {
-		return fmt.Errorf("create control plane: %w", err)
+		return fmt.Errorf("create control panel: %w", err)
 	}
 
 	// Start background execution only after the complete module graph and every
@@ -316,7 +316,7 @@ func envBool(name string) bool {
 // socket behind nginx and never reaches this; it guards the direct
 // `nexa api --address` path so a public bind cannot silently serve
 // authentication (and the session cookie) over cleartext HTTP. The request-time
-// guard in the control plane covers the socket topology.
+// guard in the control panel covers the socket topology.
 func insecureTCPBindAllowed(address string, allowInsecure bool) error {
 	if allowInsecure || bindIsLoopback(address) {
 		return nil

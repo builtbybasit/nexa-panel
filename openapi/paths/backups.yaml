@@ -265,7 +265,7 @@ backups_copies_copyId_restore:
     summary: Restore Backup Copy
     description: >-
       Queues only the exact restore plan bound by a current preview token. The
-      control plane resolves and hashes the source copy, account, selections,
+      control panel resolves and hashes the source copy, account, selections,
       and destination state again at submission and in the worker before the
       node operator may mutate a destination.
     tags:

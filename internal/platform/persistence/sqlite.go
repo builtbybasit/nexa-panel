@@ -18,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Open creates the small, local control-plane database. Feature modules declare
+// Open creates the small, local control-panel database. Feature modules declare
 // their schemas as timestamped SQL files applied centrally by RunMigrations.
 func Open(path string) (*bun.DB, error) {
 	if path == "" {
@@ -39,7 +39,7 @@ func Open(path string) (*bun.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
-	// A single writer is enough for this low-traffic control plane and avoids
+	// A single writer is enough for this low-traffic control panel and avoids
 	// lock contention while keeping connection overhead predictable.
 	sqlDatabase.SetMaxOpenConns(1)
 	sqlDatabase.SetMaxIdleConns(1)
@@ -53,7 +53,7 @@ func Open(path string) (*bun.DB, error) {
 		return nil, fmt.Errorf("ping sqlite database: %w", err)
 	}
 	// The ping is what actually creates the file, so the group fix belongs here
-	// and not before it. It is best-effort: a control plane that can talk to its
+	// and not before it. It is best-effort: a control panel that can talk to its
 	// database must not refuse to boot over a cosmetic group, and every
 	// deployment where the fix matters also has tmpfiles as a second chance.
 	_ = alignStateGroup(absolute, ownerGroup(absolute))
@@ -63,7 +63,7 @@ func Open(path string) (*bun.DB, error) {
 // ownerGroup is the login group of the account that OWNS the state file, which
 // is the group the packaged tmpfiles snippet declares for it. It is read from
 // the file rather than from the running process because Open runs under two
-// different identities. The packaged control plane runs as User=nexa with
+// different identities. The packaged control panel runs as User=nexa with
 // Group=www-data so that Nginx can connect to the API socket, so everything it
 // creates inherits www-data — the drift this fixes. The root recovery CLIs
 // (nexa mfa reset, nexa audit verify, nexa backup system) open the same

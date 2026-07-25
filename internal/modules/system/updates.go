@@ -21,7 +21,7 @@ const updateJobKind = "system.update"
 var errNoUpdateAvailable = errors.New("no panel update is available")
 
 // updates holds the dependencies behind the self-update routes. It is only set
-// when WithUpdates is supplied, so a control plane running without a self-update
+// when WithUpdates is supplied, so a control panel running without a self-update
 // operator simply omits the feature.
 type updates struct {
 	jobs     *jobs.Module

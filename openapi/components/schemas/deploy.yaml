@@ -95,7 +95,7 @@ GeneratedSshKey:
       $ref: '#/SshAccess'
 DeployKey:
   type: object
-  description: The site's Git deploy key. The pair is minted on the node and only the public half ever reaches the control plane, so `present` rather than a non-empty publicKey is what says a key exists.
+  description: The site's Git deploy key. The pair is minted on the node and only the public half ever reaches the control panel, so `present` rather than a non-empty publicKey is what says a key exists.
   required:
   - siteId
   - present

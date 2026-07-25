@@ -31,18 +31,18 @@ const (
 	// Includes this directory (the installer guarantees the Include line).
 	SSHDDropInDir = "/etc/ssh/sshd_config.d"
 	siteRootBase  = "/srv/nexa/sites"
-	// minPasswordLength is a floor; the control plane generates far longer
+	// minPasswordLength is a floor; the control panel generates far longer
 	// secrets. It only guards against a caller supplying something trivial.
 	minPasswordLength = 12
 )
 
 // Request is the desired SFTP state for a single site. Password is never
-// persisted by the control plane: it travels this struct to the node and is
+// persisted by the control panel: it travels this struct to the node and is
 // written straight into /etc/shadow via chpasswd. An empty Password with Enabled
 // true reconciles the configuration without rotating the existing password.
 //
 // PasswordHash is the alternative credential form for the staged-at-creation
-// flow: the control plane holds only a crypt(3) hash until activation, and this
+// flow: the control panel holds only a crypt(3) hash until activation, and this
 // carries that hash to the node, where chpasswd -e installs it verbatim. At
 // most one of Password and PasswordHash may be set.
 type Request struct {
@@ -63,7 +63,7 @@ type Observation struct {
 	DropInPath  string `json:"dropInPath"`
 }
 
-// Operator is the node-side surface the control plane drives over the agent
+// Operator is the node-side surface the control panel drives over the agent
 // socket. HostOperator is the real implementation; UnixClient is the proxy.
 type Operator interface {
 	Apply(ctx context.Context, request Request) (Observation, error)
