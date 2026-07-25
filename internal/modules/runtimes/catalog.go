@@ -15,7 +15,11 @@ import (
 	"github.com/nexa-panel/nexa-panel/internal/platform/webhandler"
 )
 
-var phpVersionPattern = regexp.MustCompile(`^(?:7\.4|8\.[0-9]{1,2})$`)
+// phpVersionPattern admits the 7.4 end-of-life legacy exception plus any modern
+// PHP major.minor from 8 upward. It must not cap at 8.x: the packages/php
+// operators install and manage any major.minor, so a narrower gate here would
+// strand a site from ever targeting PHP 9.x (or later) once it publishes.
+var phpVersionPattern = regexp.MustCompile(`^(?:7\.4|(?:[89]|[1-9][0-9])\.[0-9]{1,2})$`)
 
 type Runtime struct {
 	Engine        string `json:"engine"`
