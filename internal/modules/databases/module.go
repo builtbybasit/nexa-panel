@@ -81,6 +81,15 @@ type CreateDatabaseRequest struct {
 	SiteID string `json:"siteId,omitempty"`
 }
 
+// CreateRestorePointRequest names the database to back up. It rides in the body
+// rather than the path so the route stays a plain collection: a
+// /databases/{id}/… route is ambiguous against the /databases/users/{id} and
+// /databases/grants/{id} siblings, and ServeMux rejects that pair outright the
+// moment two such routes share a method.
+type CreateRestorePointRequest struct {
+	DatabaseID string `json:"databaseId"`
+}
+
 type CreateGrantRequest struct {
 	DatabaseID string `json:"databaseId"`
 	UserID     string `json:"userId"`

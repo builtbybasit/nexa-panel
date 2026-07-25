@@ -187,7 +187,10 @@ export function dropGrant(id: string): Promise<{ job: Job }> {
 }
 
 export function createBackup(databaseId: string): Promise<{ restorePoint: RestorePoint; job: Job }> {
-  return request(`/api/v1/databases/${encodeURIComponent(databaseId)}/backups`, { method: 'POST' })
+  return request('/api/v1/databases/restore-points', {
+    method: 'POST',
+    body: JSON.stringify({ databaseId }),
+  })
 }
 
 export function restoreBackup(

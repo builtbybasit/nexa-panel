@@ -2289,6 +2289,11 @@ type ListDatabaseRestorePointsParams struct {
 	DatabaseId *string `form:"databaseId,omitempty" json:"databaseId,omitempty"`
 }
 
+// CreateDatabaseRestorePointJSONBody defines parameters for CreateDatabaseRestorePoint.
+type CreateDatabaseRestorePointJSONBody struct {
+	DatabaseId string `json:"databaseId"`
+}
+
 // ListDatabaseUsersParams defines parameters for ListDatabaseUsers.
 type ListDatabaseUsersParams struct {
 	ServerId *string `form:"serverId,omitempty" json:"serverId,omitempty"`
@@ -2502,6 +2507,9 @@ type CreateManagedDatabaseJSONRequestBody = CreateManagedDatabase
 
 // CreateDatabaseGrantJSONRequestBody defines body for CreateDatabaseGrant for application/json ContentType.
 type CreateDatabaseGrantJSONRequestBody = CreateDatabaseGrant
+
+// CreateDatabaseRestorePointJSONRequestBody defines body for CreateDatabaseRestorePoint for application/json ContentType.
+type CreateDatabaseRestorePointJSONRequestBody CreateDatabaseRestorePointJSONBody
 
 // CreateDatabaseServerJSONRequestBody defines body for CreateDatabaseServer for application/json ContentType.
 type CreateDatabaseServerJSONRequestBody = CreateDatabaseServer

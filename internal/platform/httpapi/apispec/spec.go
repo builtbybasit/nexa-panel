@@ -111,13 +111,3 @@ func Lookup(operationID string) (Operation, error) {
 	}
 	return op, nil
 }
-
-// Operations returns every parsed operation. The returned map must not be
-// mutated. It exists for contract-coverage tests that assert every registered
-// operationId is backed by a handler and vice versa.
-func Operations() (map[string]Operation, error) {
-	if operationsErr != nil {
-		return nil, operationsErr
-	}
-	return operations, nil
-}

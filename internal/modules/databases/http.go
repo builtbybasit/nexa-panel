@@ -221,7 +221,12 @@ func (m *Module) createBackupHTTP(w http.ResponseWriter, r *http.Request) {
 		webhandler.Fail(w, authErr)
 		return
 	}
-	point, job, err := m.CreateBackup(r.Context(), r.PathValue("id"), &actor.ID)
+	request, decodeErr := webhandler.Decode[CreateRestorePointRequest](w, r)
+	if decodeErr != nil {
+		webhandler.Fail(w, decodeErr)
+		return
+	}
+	point, job, err := m.CreateBackup(r.Context(), request.DatabaseID, &actor.ID)
 	if err != nil {
 		httpapi.WriteError(w, http.StatusConflict, "databases_backup_invalid", err.Error())
 		return

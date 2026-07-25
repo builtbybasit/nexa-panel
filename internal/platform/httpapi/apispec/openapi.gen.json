@@ -5105,39 +5105,6 @@
         }
       }
     },
-    "/databases/{id}/backups": {
-      "post": {
-        "operationId": "createDatabaseRestorePoint",
-        "summary": "Create Database Restore Point",
-        "tags": [
-          "Databases"
-        ],
-        "x-permission": "databases.write",
-        "security": [
-          {
-            "sessionCookie": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "202": {
-            "description": "Verified logical backup plan was queued"
-          },
-          "4XX": {
-            "$ref": "#/components/responses/ClientError"
-          }
-        }
-      }
-    },
     "/databases/restore-points": {
       "get": {
         "operationId": "listDatabaseRestorePoints",
@@ -5179,6 +5146,45 @@
                 }
               }
             }
+          },
+          "4XX": {
+            "$ref": "#/components/responses/ClientError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createDatabaseRestorePoint",
+        "summary": "Create Database Restore Point",
+        "tags": [
+          "Databases"
+        ],
+        "x-permission": "databases.write",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "databaseId"
+                ],
+                "properties": {
+                  "databaseId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Verified logical backup plan was queued"
           },
           "4XX": {
             "$ref": "#/components/responses/ClientError"

@@ -65,6 +65,30 @@ run_postgres() {
     -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_PASSWORD=acceptance \
     "$POSTGRES_IMAGE" >/dev/null
 
+  # The image's entrypoint initialises the cluster with a temporary server on
+  # the very socket the suite connects to, then shuts it down and starts the
+  # real one. pg_isready answers during that bootstrap window — roughly 130ms —
+  # so waiting on readiness alone can hand back a server that vanishes before
+  # the test connects, which is the intermittent
+  #   psql: connection to server on socket ".s.PGSQL.5432" failed:
+  #   No such file or directory
+  # seen in CI. Wait for the entrypoint to announce that initialisation is done
+  # first; only the real server can be ready after that. The container is
+  # always freshly created above, so this marker is always printed.
+  local initialised=0
+  for _ in $(seq 1 "$READY_ATTEMPTS"); do
+    if docker logs "$POSTGRES_CONTAINER" 2>&1 | grep -q 'init process complete; ready for start up'; then
+      initialised=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$initialised" -ne 1 ]]; then
+    docker logs --tail 100 "$POSTGRES_CONTAINER" >&2 || true
+    echo "error: $POSTGRES_IMAGE did not finish initialising" >&2
+    return 1
+  fi
+
   local ready=0
   for _ in $(seq 1 "$READY_ATTEMPTS"); do
     if docker exec "$POSTGRES_CONTAINER" pg_isready -h /var/run/postgresql >/dev/null 2>&1; then

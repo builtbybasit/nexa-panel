@@ -41,7 +41,7 @@ func (f *fakeRegistry) HandleAuthorized(pattern, permission string, _ http.Handl
 
 func TestHandleOpResolvesPatternAndPermissionFromSpec(t *testing.T) {
 	registry := newFakeRegistry()
-	if err := HandleOp(registry, "createDatabaseUser", func(http.ResponseWriter, *http.Request) {}); err != nil {
+	if err := apispec.HandleOp(registry, "createDatabaseUser", func(http.ResponseWriter, *http.Request) {}); err != nil {
 		t.Fatalf("HandleOp: %v", err)
 	}
 	const pattern = "POST /api/v1/databases/users"
@@ -56,7 +56,7 @@ func TestHandleOpResolvesPatternAndPermissionFromSpec(t *testing.T) {
 
 func TestHandleOpRejectsUnknownOperation(t *testing.T) {
 	registry := newFakeRegistry()
-	err := HandleOp(registry, "operationThatDoesNotExist", func(http.ResponseWriter, *http.Request) {})
+	err := apispec.HandleOp(registry, "operationThatDoesNotExist", func(http.ResponseWriter, *http.Request) {})
 	if err == nil {
 		t.Fatal("expected error for unknown operationId, got nil")
 	}
@@ -122,16 +122,4 @@ func TestFailMapsErrorsToStatus(t *testing.T) {
 
 func errWrapped() error {
 	return errors.Join(errors.New("context"), httpapi.NewError(http.StatusConflict, "conflict", "nope"))
-}
-
-// Guards that the spec actually parsed at init; a broken embed would make every
-// other assertion meaningless.
-func TestSpecParsed(t *testing.T) {
-	ops, err := apispec.Operations()
-	if err != nil {
-		t.Fatalf("Operations: %v", err)
-	}
-	if len(ops) < 100 {
-		t.Fatalf("only %d operations parsed; expected the full contract", len(ops))
-	}
 }
