@@ -38,7 +38,6 @@ watch(jobsQuery.data, (jobs) => {
 })
 
 const open = ref(false)
-const trigger = ref<HTMLButtonElement>()
 
 const visible = computed(() => activeJobs.value.length > 0 || settledJobs.value.length > 0)
 
@@ -52,7 +51,6 @@ watch(visible, (nowVisible) => {
   <Popover v-if="visible" v-model:open="open">
     <PopoverTrigger as-child>
       <button
-        ref="trigger"
         type="button"
         class="relative grid size-9 place-items-center rounded-lg border border-outline text-ink-secondary transition-colors hover:border-outline-strong hover:text-ink"
         :aria-label="activeJobs.length ? `${activeJobs.length} active ${activeJobs.length === 1 ? 'job' : 'jobs'}` : 'Recently finished jobs'"

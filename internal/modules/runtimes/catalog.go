@@ -27,7 +27,6 @@ type Runtime struct {
 	Installed     bool   `json:"installed"`
 	Enabled       bool   `json:"enabled"`
 	SupportStatus string `json:"supportStatus"`
-	PoolDirectory string `json:"-"`
 }
 
 type Discoverer interface {
@@ -135,7 +134,7 @@ func (d FilesystemDiscoverer) Discover(_ context.Context) ([]Runtime, error) {
 		}
 		items = append(items, Runtime{
 			Engine: "php", Version: version, Installed: true, Enabled: true,
-			SupportStatus: supportStatus, PoolDirectory: poolDirectory,
+			SupportStatus: supportStatus,
 		})
 	}
 	return items, nil

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi"
 	"github.com/nexa-panel/nexa-panel/internal/platform/httpapi/apispec"
 )
 
@@ -96,7 +97,7 @@ func TestFailMapsErrorsToStatus(t *testing.T) {
 		wantStatus int
 		wantCode   string
 	}{
-		{"api error", NewError(http.StatusConflict, "conflict", "nope"), http.StatusConflict, "conflict"},
+		{"api error", httpapi.NewError(http.StatusConflict, "conflict", "nope"), http.StatusConflict, "conflict"},
 		{"wrapped api error", errWrapped(), http.StatusConflict, "conflict"},
 		{"no rows", sql.ErrNoRows, http.StatusNotFound, "not_found"},
 		{"opaque", errors.New("boom"), http.StatusInternalServerError, "internal_error"},
@@ -120,7 +121,7 @@ func TestFailMapsErrorsToStatus(t *testing.T) {
 }
 
 func errWrapped() error {
-	return errors.Join(errors.New("context"), NewError(http.StatusConflict, "conflict", "nope"))
+	return errors.Join(errors.New("context"), httpapi.NewError(http.StatusConflict, "conflict", "nope"))
 }
 
 // Guards that the spec actually parsed at init; a broken embed would make every

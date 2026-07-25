@@ -3,7 +3,6 @@ package httpapi
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 )
 
@@ -40,13 +39,6 @@ func NewError(status int, code, message string) *APIError {
 	return &APIError{Status: status, Code: code, Message: message}
 }
 
-// Errorf builds an APIError whose message is formatted from args. A wrapped
-// error (via %w) is preserved for errors.Is/As on the returned value.
-func Errorf(status int, code, format string, args ...any) *APIError {
-	wrapped := fmt.Errorf(format, args...)
-	return &APIError{Status: status, Code: code, Message: wrapped.Error(), Err: errors.Unwrap(wrapped)}
-}
-
 // Decode reads a bounded, strict JSON body into a fresh T. On any decode problem
 // it returns a 400 APIError carrying the specific reason, so the caller writes
 // one line instead of the decode-then-writeError block.
@@ -71,27 +63,4 @@ func Fail(w http.ResponseWriter, err error) {
 	default:
 		WriteError(w, http.StatusInternalServerError, "internal_error", "The request could not be completed.")
 	}
-}
-
-// FailWith writes err like Fail, but when err is not an *APIError (and not
-// sql.ErrNoRows) it uses the supplied status and code and surfaces err.Error().
-// This keeps the existing per-branch status/code/message of handlers that have
-// not yet moved their domain layer onto APIError, while still centralizing the
-// APIError and ErrNoRows cases.
-func FailWith(w http.ResponseWriter, err error, status int, code string) {
-	var apiErr *APIError
-	switch {
-	case errors.As(err, &apiErr):
-		WriteError(w, apiErr.Status, apiErr.Code, apiErr.Error())
-	case errors.Is(err, sql.ErrNoRows):
-		WriteError(w, http.StatusNotFound, "not_found", "The requested resource does not exist.")
-	default:
-		WriteError(w, status, code, err.Error())
-	}
-}
-
-// OK writes value as a JSON body at status. It is a thin, intention-revealing
-// alias over WriteJSON.
-func OK(w http.ResponseWriter, status int, value any) {
-	WriteJSON(w, status, value)
 }
