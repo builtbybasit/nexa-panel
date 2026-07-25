@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,6 +201,26 @@ func TestARiskyChangeIsRefusedWithoutAGuard(t *testing.T) {
 
 	if _, err := module.Submit(context.Background(), change, &actor, "198.51.100.4", true); err == nil {
 		t.Fatal("a risky change was accepted with no guard to arm a revert")
+	}
+}
+
+// Denying a panel port for the caller's own address must be flagged in
+// deny-specific language: a deny rule does not "admit" the session, so the
+// allow-worded session reason must never appear on this path.
+func TestDenyingThePanelPortForTheCallerReadsAsADenial(t *testing.T) {
+	status := firewalloperator.Status{Installed: true, Active: true, Rules: []firewalloperator.Rule{sshRule, httpsRule}}
+	change := firewalloperator.Change{
+		Action: firewalloperator.ActionDeny,
+		Rule:   firewalloperator.Rule{Port: "443", Protocol: "tcp", Action: "deny"},
+	}
+	reasons := assessLockout(status, change, "203.0.113.9")
+	if len(reasons) != 1 || reasons[0] != "It denies the panel over HTTPS (port 443) for the address you are connected from." {
+		t.Fatalf("reasons = %q", reasons)
+	}
+	for _, reason := range reasons {
+		if strings.Contains(reason, "admitting the session") {
+			t.Fatalf("a deny reason contradictorily claims to admit the session: %q", reason)
+		}
 	}
 }
 

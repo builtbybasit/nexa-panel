@@ -127,7 +127,12 @@ type Settings struct {
 	HSTS       bool  `json:"hsts,omitempty"`       // false => off (hardened default)
 	HSTSMaxAge int   `json:"hstsMaxAge,omitempty"` // 0 => 15552000 (180d); used only when HSTS
 	HTTP2      *bool `json:"http2,omitempty"`      // nil => on
-	HTTP3      bool  `json:"http3,omitempty"`      // false => off
+	// HTTP3 emits the QUIC listeners and `http3 on;`, which nginx only understands
+	// from 1.25. Nodes get an HTTP/3-capable build from the nginx.org stable
+	// repository that scripts/install.sh provisions (Ubuntu's own 1.24 has no
+	// QUIC); if a node somehow runs an older nginx, activation's `nginx -t` catches
+	// the unknown directive and rolls the change back rather than serving it.
+	HTTP3 bool `json:"http3,omitempty"` // false => off
 	// HTTPSRedirect governs the forced HTTP->HTTPS 301 on the port-80 block. It
 	// only has an effect when the site has TLS. nil => on, which reproduces the
 	// historical unconditional redirect byte-for-byte; an explicit false makes
@@ -690,17 +695,16 @@ func isPrintableRealm(realm string) bool {
 // never fire. The shared vhost body is defined once and included into whichever
 // server block actually serves the site (HTTP when no TLS, HTTPS when TLS).
 //
-// HTTP/2 is enabled with the `listen ... http2` parameter rather than the newer
-// standalone `http2 on;` directive, which reads as the modern form but is only
-// understood from nginx 1.25.1. Ubuntu 24.04 — the platform scripts/install.sh
-// targets — ships nginx 1.24.0, where `http2 on;` is an unknown directive: it
-// fails `nginx -t`, so ValidateNginx rejects and every HTTPS activation rolls
-// back. The listen parameter is accepted by both 1.24 and 1.25+ (newer builds
-// only log a deprecation warning, which does not fail the config test), so it is
-// the one portable spelling. Do NOT "modernise" this without raising the
-// supported nginx floor, and do not branch on the node's version either: Render
+// HTTP/2 uses the standalone `http2 on;` directive (understood from nginx
+// 1.25.1) rather than the older `listen ... http2` parameter. scripts/install.sh
+// provisions nginx from the nginx.org stable repository (>= 1.26, for HTTP/3), so
+// the directive is always understood; Ubuntu's own 1.24 — where `http2 on;`
+// fails `nginx -t` — never serves a site. The deprecated listen parameter still
+// works on the newer build but logs a warning on every `nginx -t`, so the modern
+// spelling is the clean one. Do not branch on the node's nginx version: Render
 // must stay a pure function of Settings or validatePlan's byte-exact re-render
-// gate breaks.
+// gate breaks — the node's own `nginx -t` at activation is the backstop if a
+// node somehow runs an nginx too old for these directives.
 const nginxTemplate = `# Managed by Nexa Panel.
 {{- define "vhostBody"}}
     root {{.Eff.DocRoot}};
@@ -764,9 +768,10 @@ const nginxTemplate = `# Managed by Nexa Panel.
 {{end}}}
 {{if .Site.TLS}}
 server {
-    listen 443 ssl{{if .Eff.HTTP2}} http2{{end}};
-    listen [::]:443 ssl{{if .Eff.HTTP2}} http2{{end}};
-{{if .Eff.HTTP3}}    listen 443 quic;
+    listen 443 ssl;
+    listen [::]:443 ssl;
+{{if .Eff.HTTP2}}    http2 on;
+{{end}}{{if .Eff.HTTP3}}    listen 443 quic;
     listen [::]:443 quic;
     http3 on;
 {{end}}    server_name {{.TLSNames}};

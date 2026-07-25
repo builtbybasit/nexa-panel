@@ -176,6 +176,7 @@ for path in \
   /etc/nginx/sites-enabled/nexa-panel.conf \
   /etc/nginx/sites-available/nexa-panel.conf \
   /etc/nginx/snippets/nexa-panel-proxy.conf \
+  /etc/nginx/conf.d/zzz-nexa-sites-enabled.conf \
   /etc/nginx/sites-enabled/nexa-phpmyadmin.conf \
   /etc/nginx/sites-available/nexa-phpmyadmin.conf \
   /etc/phpmyadmin/conf.d/nexa-panel.php \

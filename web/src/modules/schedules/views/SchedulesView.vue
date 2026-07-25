@@ -108,11 +108,10 @@ const collection = useCollection(() => tasks.value, {
 
 const runner = useJobRunner()
 
-// exactOptionalPropertyTypes: optional props are only bound while they hold a value.
-const runnerJobLink = computed(() => (runner.jobId.value === undefined ? {} : { jobId: runner.jobId.value }))
-const runnerElapsed = computed(() => (runner.startedAtMs.value === undefined ? {} : { startedAtMs: runner.startedAtMs.value }))
-
-const inFlightStatuses = new Set(['planning', 'activating'])
+// Mirrors the control plane's busy() guard: a lifecycle job is in flight in
+// each of these states, so a mutation would 409. rolling_back must be here or
+// Edit/Delete stay enabled through a rollback and fail on submit.
+const inFlightStatuses = new Set(['planning', 'activating', 'rolling_back'])
 const canMutate = (task: ScheduledTask) => canWrite.value && !task.pendingRemoval && !inFlightStatuses.has(task.status)
 const canRun = (task: ScheduledTask) =>
   identity.can('operations.apply') && task.status === 'active' && task.enabled && !task.pendingRemoval
@@ -493,12 +492,11 @@ watch(
         The selected site is not active or not accessible. Choose another site.
       </AppAlert>
 
-      <JobFailureNotice v-if="runner.error.value && !planDialog" :message="runner.error.value" v-bind="runnerJobLink" />
+      <JobFailureNotice v-if="runner.error.value && !planDialog" v-bind="runner.failureProps.value" />
       <JobProgress
         v-if="runner.progress.value && !planDialog"
         :event="runner.progress.value"
-        :messages="runner.messages.value"
-        v-bind="runnerElapsed"
+        v-bind="runner.progressProps.value"
       />
 
       <!-- Manual run result -->
@@ -744,12 +742,11 @@ watch(
           Rolling back removes the partially applied cron entry and wrapper script from
           <strong class="font-semibold text-ink">{{ planDialog.task.name }}</strong> so the host returns to a clean state.
         </p>
-        <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="runnerJobLink" />
+        <JobFailureNotice v-if="runner.error.value" v-bind="runner.failureProps.value" />
         <JobProgress
           v-if="runner.progress.value"
           :event="runner.progress.value"
-          :messages="runner.messages.value"
-          v-bind="runnerElapsed"
+          v-bind="runner.progressProps.value"
         />
       </div>
       <template #footer>
@@ -799,12 +796,11 @@ watch(
           </div>
         </template>
 
-        <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="runnerJobLink" />
+        <JobFailureNotice v-if="runner.error.value" v-bind="runner.failureProps.value" />
         <JobProgress
           v-if="runner.progress.value"
           :event="runner.progress.value"
-          :messages="runner.messages.value"
-          v-bind="runnerElapsed"
+          v-bind="runner.progressProps.value"
         />
       </div>
     </PlanReviewDialog>

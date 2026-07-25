@@ -314,18 +314,8 @@ function stageState(key: StageKey): 'pending' | 'running' | 'done' | 'failed' {
 
 const activeRunner = computed(() => (stage.value ? stageRunners[stage.value] : undefined))
 const activeProgress = computed(() => activeRunner.value?.progress.value)
-const progressExtras = computed(() => {
-  const runner = activeRunner.value
-  if (!runner) return {}
-  return {
-    messages: runner.messages.value,
-    ...(runner.startedAtMs.value !== undefined ? { startedAtMs: runner.startedAtMs.value } : {}),
-  }
-})
-
-function failureLink(runner: ReturnType<typeof useJobRunner>) {
-  return runner.jobId.value !== undefined ? { jobId: runner.jobId.value } : {}
-}
+// The progress props come from whichever stage runner is currently active.
+const progressExtras = computed(() => activeRunner.value?.progressProps.value ?? {})
 
 /** Resolves once the runner is idle again — terminal job state, queue failure, or stream loss. */
 function untilIdle(runner: ReturnType<typeof useJobRunner>): Promise<void> {
@@ -898,9 +888,9 @@ const successProps = computed(() => ({
           </div>
         </AppCard>
 
-        <JobFailureNotice v-if="siteRunner.error.value" :message="siteRunner.error.value" v-bind="failureLink(siteRunner)" />
-        <JobFailureNotice v-if="dbUserRunner.error.value" :message="dbUserRunner.error.value" v-bind="failureLink(dbUserRunner)" />
-        <JobFailureNotice v-if="dbRunner.error.value" :message="dbRunner.error.value" v-bind="failureLink(dbRunner)" />
+        <JobFailureNotice v-if="siteRunner.error.value" v-bind="siteRunner.failureProps.value" />
+        <JobFailureNotice v-if="dbUserRunner.error.value" v-bind="dbUserRunner.failureProps.value" />
+        <JobFailureNotice v-if="dbRunner.error.value" v-bind="dbRunner.failureProps.value" />
 
         <div class="flex items-center justify-between gap-3">
           <AppButton variant="secondary" icon="arrow-left" :disabled="submitted" @click="step = 0">Back</AppButton>

@@ -69,11 +69,13 @@ func assessLockout(status firewalloperator.Status, change firewalloperator.Chang
 		}
 	case firewalloperator.ActionDeny:
 		// A deny rule over an access port shuts the door just as firmly as
-		// deleting the allow rule that holds it open.
+		// deleting the allow rule that holds it open. The per-port check reports,
+		// in deny-specific language, every access port this rule closes for the
+		// caller's own address — including the port carrying the current session.
+		// There is deliberately no separate "carries session" line: sessionReason
+		// is worded for the allow/delete path ("the rule admitting the session"),
+		// so reusing it here would wrongly claim a deny rule admits the session.
 		rule := change.Rule
-		if carriesSession(rule, peer) {
-			reasons = append(reasons, sessionReason(rule, peer))
-		}
 		for _, port := range accessPorts {
 			if ruleAdmits(rule, port.number) && fromCovers(rule.From, peer) {
 				reasons = append(reasons, fmt.Sprintf("It denies %s (port %d) for the address you are connected from.", port.label, port.number))

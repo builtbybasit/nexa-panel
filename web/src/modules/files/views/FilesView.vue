@@ -878,16 +878,11 @@ const toolbarButton =
         The selected site is not active or not accessible. Choose another site.
       </AppAlert>
 
-      <JobFailureNotice
-        v-if="runner.error.value"
-        :message="runner.error.value"
-        v-bind="runner.jobId.value !== undefined ? { jobId: runner.jobId.value } : {}"
-      />
+      <JobFailureNotice v-if="runner.error.value" v-bind="runner.failureProps.value" />
       <JobProgress
         v-if="runner.progress.value"
         :event="runner.progress.value"
-        :messages="runner.messages.value"
-        v-bind="runner.startedAtMs.value !== undefined ? { startedAtMs: runner.startedAtMs.value } : {}"
+        v-bind="runner.progressProps.value"
       />
 
       <AppAlert v-if="sizeResult" tone="info" :title="`Folder size — /${sizeResult.path}`">

@@ -166,8 +166,6 @@ const runner = useJobRunner()
 
 // Spread-bound so the optional props are omitted (not passed as undefined),
 // which exactOptionalPropertyTypes requires.
-const runnerJobLink = computed(() => (runner.jobId.value === undefined ? {} : { jobId: runner.jobId.value }))
-const runnerTiming = computed(() => (runner.startedAtMs.value === undefined ? {} : { startedAtMs: runner.startedAtMs.value }))
 
 async function runDiagnostics() {
 	if (!identity.can('operations.apply')) return
@@ -214,10 +212,10 @@ async function runDiagnostics() {
       <template #actions>
         <StatusPill :status="runner.progress.value.state" />
       </template>
-      <JobProgress :event="runner.progress.value" :messages="runner.messages.value" v-bind="runnerTiming" />
+      <JobProgress :event="runner.progress.value" v-bind="runner.progressProps.value" />
     </AppCard>
 
-    <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="runnerJobLink" />
+    <JobFailureNotice v-if="runner.error.value" v-bind="runner.failureProps.value" />
     <AppAlert v-if="pinnedError" tone="danger">{{ pinnedError }}</AppAlert>
 
     <AppCard v-if="jobsQuery.isPending.value" flush>

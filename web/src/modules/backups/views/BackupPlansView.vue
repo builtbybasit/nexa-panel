@@ -138,8 +138,7 @@ async function doDelete() {
     <JobProgress
       v-if="runner.progress.value"
       :event="runner.progress.value"
-      :messages="runner.messages.value"
-      :started-at-ms="runner.startedAtMs.value"
+      v-bind="runner.progressProps.value"
     />
 
     <div v-if="plansQuery.isPending.value" class="space-y-2">

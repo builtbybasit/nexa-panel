@@ -22,7 +22,7 @@ func TestStandardRenderIsByteIdenticalToPreDeployerBaseline(t *testing.T) {
 		digest string
 	}{
 		{"baseline", baselineSite(), "50bd739c3bcbb0dab955e0264bc1406c257f5610408634eae90b240791d45ad7"},
-		{"tls-and-routes", goldenRoutedSite(), "06e3ced94ea8fcf3066247185bc72463cbabbefee18c179ce33e745c00874b43"},
+		{"tls-and-routes", goldenRoutedSite(), "b6b433c144cdade0e6aec8dd2c27b53af72513de0c62c0a8db9817e3d235e9e9"},
 		{"every-setting", goldenTunedSite(), "cdb30e604176e38537d5446ea3777bf4643e6e2a220fd2e1ebdd899d2638e494"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

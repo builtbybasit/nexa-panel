@@ -84,7 +84,8 @@ func TestRendererBakesHardenedDefaults(t *testing.T) {
 		"gzip on;",
 		"gzip_comp_level 5;",
 		"expires 30d;",
-		"listen 443 ssl http2;",
+		"listen 443 ssl;",
+		"http2 on;",
 		"include /etc/nginx/nexa-includes/nexa-demo-site.d/*.conf;",
 		"auth_basic off;", // acme challenge is never gated
 		"location / { return 301 https://demo.example.com$request_uri; }",

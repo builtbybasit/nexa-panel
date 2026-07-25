@@ -29,7 +29,6 @@ import {
 import { useIdentityStore } from '@/modules/identity/store'
 
 import { createDatabase, createUser } from '../api'
-import { failureProps, progressProps } from '../composables/runnerProps'
 import { useDatabasesData } from '../composables/useDatabasesData'
 import { ENGINES, serverLabel, userLabel } from '../lib/engines'
 
@@ -269,16 +268,16 @@ async function submit() {
           <JobProgress
             v-if="stage === 'user' && userRunner.progress.value"
             :event="userRunner.progress.value"
-            v-bind="progressProps(userRunner)"
+            v-bind="userRunner.progressProps.value"
           />
           <JobProgress
             v-if="stage === 'database' && databaseRunner.progress.value"
             :event="databaseRunner.progress.value"
-            v-bind="progressProps(databaseRunner)"
+            v-bind="databaseRunner.progressProps.value"
           />
         </div>
-        <JobFailureNotice v-if="userRunner.error.value" v-bind="failureProps(userRunner)" />
-        <JobFailureNotice v-if="databaseRunner.error.value" v-bind="failureProps(databaseRunner)" />
+        <JobFailureNotice v-if="userRunner.error.value" v-bind="userRunner.failureProps.value" />
+        <JobFailureNotice v-if="databaseRunner.error.value" v-bind="databaseRunner.failureProps.value" />
 
         <div class="flex flex-wrap justify-end gap-2 pt-1">
           <RouterLink to="/databases"><AppButton :disabled="submitted">Cancel</AppButton></RouterLink>

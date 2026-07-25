@@ -111,20 +111,9 @@ const hostnameError = computed(() => {
 
 // exactOptionalPropertyTypes: optional props with possibly-undefined values
 // are passed as conditional v-bind objects instead of direct bindings.
-const failureLink = computed(() =>
-  runner.progress.value?.state === 'failed' && runner.jobId.value !== undefined
-    ? { jobId: runner.jobId.value }
-    : {},
-)
-
 const storedFailureLink = computed(() =>
   selected.value?.lastJobId !== undefined ? { jobId: selected.value.lastJobId } : {},
 )
-
-const progressExtras = computed(() => ({
-  messages: runner.messages.value,
-  ...(runner.startedAtMs.value !== undefined ? { startedAtMs: runner.startedAtMs.value } : {}),
-}))
 
 const hostnameFieldError = computed(() => (hostnameError.value ? { error: hostnameError.value } : {}))
 
@@ -432,16 +421,12 @@ const planDnsRows = computed(() =>
 
         <div class="space-y-4">
           <JobFailureNotice v-if="selected.failure" :message="selected.failure" v-bind="storedFailureLink" />
-          <JobFailureNotice
-            v-if="runner.error.value && !createOpen"
-            :message="runner.error.value"
-            v-bind="failureLink"
-          />
+          <JobFailureNotice v-if="runner.error.value && !createOpen" v-bind="runner.failureProps.value" />
           <AppAlert v-if="planError" tone="danger">{{ planError }}</AppAlert>
           <JobProgress
             v-if="runner.busy.value && runner.progress.value && !createOpen"
             :event="runner.progress.value"
-            v-bind="progressExtras"
+            v-bind="runner.progressProps.value"
           />
 
           <FactList :facts="detailFacts" />
@@ -532,11 +517,11 @@ const planDnsRows = computed(() =>
           <AppInput v-model="redirectTarget" placeholder="example.com" required />
         </FormField>
 
-        <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="failureLink" />
+        <JobFailureNotice v-if="runner.error.value" v-bind="runner.failureProps.value" />
         <JobProgress
           v-if="runner.busy.value && runner.progress.value"
           :event="runner.progress.value"
-          v-bind="progressExtras"
+          v-bind="runner.progressProps.value"
         />
 
         <AppButton

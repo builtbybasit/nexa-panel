@@ -63,14 +63,6 @@ async function saveSettings(next: SiteSettings, phpVersion?: string) {
   )
 }
 
-// exactOptionalPropertyTypes: only bind optional props when a value exists.
-const runnerFailureLink = computed(() =>
-  runner.progress.value?.state === 'failed' && runner.jobId.value !== undefined ? { jobId: runner.jobId.value } : {},
-)
-const progressExtras = computed(() => ({
-  messages: runner.messages.value,
-  ...(runner.startedAtMs.value !== undefined ? { startedAtMs: runner.startedAtMs.value } : {}),
-}))
 </script>
 
 <template>
@@ -113,8 +105,8 @@ const progressExtras = computed(() => ({
     </EmptyState>
 
     <template v-else>
-      <JobFailureNotice v-if="runner.error.value" :message="runner.error.value" v-bind="runnerFailureLink" />
-      <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="progressExtras" />
+      <JobFailureNotice v-if="runner.error.value" v-bind="runner.failureProps.value" />
+      <JobProgress v-if="runner.progress.value" :event="runner.progress.value" v-bind="runner.progressProps.value" />
 
       <SiteSettingsCard
         :settings="mergeSiteSettings(site.settings)"

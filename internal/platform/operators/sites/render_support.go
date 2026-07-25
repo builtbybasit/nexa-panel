@@ -237,11 +237,10 @@ func fpmDataFor(site Site) any {
 	if start < 1 {
 		start = 1
 	}
+	// children is validated to 0 (→ default 3) or [1, 1024], so it is always at
+	// least 1 here and min_spare of 1 never exceeds max_spare.
 	maxSpare := children
 	minSpare := 1
-	if minSpare > maxSpare {
-		minSpare = maxSpare
-	}
 	return struct {
 		Slug, UnixUser, SocketPath, RootPath, PM       string
 		ChdirPath                                      string

@@ -85,8 +85,7 @@ async function confirmSwitch() {
       <JobProgress
         v-if="runner.progress.value"
         :event="runner.progress.value"
-        :messages="runner.messages.value"
-        :started-at-ms="runner.startedAtMs.value"
+        v-bind="runner.progressProps.value"
       />
 
       <div v-if="canWrite" class="border-t border-outline pt-4">

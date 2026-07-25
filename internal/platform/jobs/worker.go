@@ -17,12 +17,20 @@ func (m *Module) worker(ctx context.Context) {
 	defer close(m.done)
 	ticker := time.NewTicker(m.config.PollInterval)
 	defer ticker.Stop()
+	pruneTicker := time.NewTicker(m.config.PruneInterval)
+	defer pruneTicker.Stop()
+	// Sweep once on startup so a node that was down past the retention window
+	// reclaims accumulated history immediately rather than waiting a full interval.
+	m.pruneRetired(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-m.notify:
 		case <-ticker.C:
+		case <-pruneTicker.C:
+			m.pruneRetired(ctx)
+			continue
 		}
 		if err := m.recoverExpired(ctx); err != nil {
 			if ctx.Err() != nil {
@@ -320,6 +328,48 @@ func (m *Module) recoverExpired(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// pruneRetired deletes terminal jobs whose completion is older than the
+// retention window, along with their events. Queued and running rows are never
+// eligible, so in-flight work and its live event stream are untouched. Events
+// are removed explicitly in the same transaction rather than relying on the
+// ON DELETE CASCADE foreign key, so the sweep is correct even if a connection
+// has foreign-key enforcement off. Failures are logged, not fatal: pruning is
+// background hygiene and the next sweep retries.
+func (m *Module) pruneRetired(ctx context.Context) {
+	if m.config.RetentionPeriod <= 0 {
+		return
+	}
+	cutoff := m.now().UTC().Add(-m.config.RetentionPeriod)
+	terminal := []string{string(StateSucceeded), string(StateFailed)}
+	var removed int64
+	err := m.database.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		doomed := tx.NewSelect().Model((*jobModel)(nil)).Column("id").
+			Where("state IN (?)", bun.In(terminal)).
+			Where("completed_at IS NOT NULL AND completed_at < ?", cutoff)
+		if _, err := tx.NewDelete().Model((*eventModel)(nil)).
+			Where("job_id IN (?)", doomed).Exec(ctx); err != nil {
+			return err
+		}
+		result, err := tx.NewDelete().Model((*jobModel)(nil)).
+			Where("state IN (?)", bun.In(terminal)).
+			Where("completed_at IS NOT NULL AND completed_at < ?", cutoff).Exec(ctx)
+		if err != nil {
+			return err
+		}
+		removed, err = result.RowsAffected()
+		return err
+	})
+	if err != nil {
+		if ctx.Err() == nil {
+			m.logger.Error("prune retired jobs", "error", err)
+		}
+		return
+	}
+	if removed > 0 {
+		m.logger.Info("pruned retired jobs", "removed", removed, "olderThan", cutoff)
+	}
 }
 
 func (m *Module) wake() {

@@ -601,3 +601,93 @@ func waitForState(t *testing.T, module *Module, id int64, wanted State) Job {
 	t.Fatalf("job %d did not reach state %s", id, wanted)
 	return Job{}
 }
+
+func TestPruneRetiredRemovesOldTerminalJobsAndTheirEvents(t *testing.T) {
+	module, _ := newTestModule(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	insertJob := func(state State, completedAt *time.Time) int64 {
+		t.Helper()
+		model := &jobModel{
+			Kind: "test.retention", State: string(state), RequestJSON: "{}",
+			ScopeSiteIDs: "[]", RecoveryPolicy: string(RecoveryFail),
+			CreatedAt: now, UpdatedAt: now, CompletedAt: completedAt,
+		}
+		if _, err := module.database.NewInsert().Model(model).Exec(ctx); err != nil {
+			t.Fatalf("insert job: %v", err)
+		}
+		event := &eventModel{JobID: model.ID, State: string(state), Progress: 0, Message: "seed", OccurredAt: now}
+		if _, err := module.database.NewInsert().Model(event).Exec(ctx); err != nil {
+			t.Fatalf("insert event: %v", err)
+		}
+		return model.ID
+	}
+
+	old := now.Add(-8 * 24 * time.Hour) // beyond the 7-day default retention
+	recent := now.Add(-time.Hour)
+	oldSucceeded := insertJob(StateSucceeded, &old)
+	oldFailed := insertJob(StateFailed, &old)
+	recentSucceeded := insertJob(StateSucceeded, &recent)
+	queued := insertJob(StateQueued, nil)
+
+	module.pruneRetired(ctx)
+
+	for _, id := range []int64{oldSucceeded, oldFailed} {
+		if _, err := module.Get(ctx, id); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("retired job %d should have been pruned, got err=%v", id, err)
+		}
+		events, err := module.EventsAfter(ctx, id, 0)
+		if err != nil {
+			t.Fatalf("events for pruned job %d: %v", id, err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("events for pruned job %d should be gone, got %d", id, len(events))
+		}
+	}
+	for _, id := range []int64{recentSucceeded, queued} {
+		if _, err := module.Get(ctx, id); err != nil {
+			t.Fatalf("job %d should have survived pruning, got err=%v", id, err)
+		}
+	}
+}
+
+func TestPruneRetiredDisabledByNegativeRetention(t *testing.T) {
+	database, err := persistence.Open(filepath.Join(t.TempDir(), "control.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := persistence.RunMigrations(context.Background(), database); err != nil {
+		t.Fatalf("run migrations: %v", err)
+	}
+	auditLog, err := audit.New(context.Background(), database)
+	if err != nil {
+		t.Fatalf("create audit module: %v", err)
+	}
+	module, err := NewWithConfig(context.Background(), database, auditLog,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Config{PollInterval: 10 * time.Millisecond, RetentionPeriod: -1})
+	if err != nil {
+		t.Fatalf("create jobs module: %v", err)
+	}
+	t.Cleanup(module.Close)
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	ancient := now.Add(-365 * 24 * time.Hour)
+	model := &jobModel{
+		Kind: "test.retention", State: string(StateSucceeded), RequestJSON: "{}",
+		ScopeSiteIDs: "[]", RecoveryPolicy: string(RecoveryFail),
+		CreatedAt: now, UpdatedAt: now, CompletedAt: &ancient,
+	}
+	if _, err := module.database.NewInsert().Model(model).Exec(ctx); err != nil {
+		t.Fatalf("insert job: %v", err)
+	}
+
+	module.pruneRetired(ctx)
+
+	if _, err := module.Get(ctx, model.ID); err != nil {
+		t.Fatalf("job should survive when pruning is disabled, got err=%v", err)
+	}
+}

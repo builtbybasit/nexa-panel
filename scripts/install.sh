@@ -1345,6 +1345,11 @@ print_install_plan() {
   fi
 
   if [[ "$MODE" != "sync-packaging" ]]; then
+    if grep -rqs 'nginx.org/packages' /etc/apt/sources.list.d/ 2>/dev/null; then
+      emit "RETAIN the already-configured nginx repository (nginx.org stable)"
+    else
+      emit "CONFIGURE the nginx repository (nginx.org stable, for HTTP/3) before installing nginx"
+    fi
     emit "RUN apt-get update"
     for package in "${PREREQUISITE_PACKAGES[@]}"; do
       emit "INSTALL_PACKAGE $package"
@@ -1391,6 +1396,16 @@ print_install_plan() {
   emit "WRITE $OWNERSHIP_MARKER (mode 0600)"
   if [[ -n "$GITHUB_TOKEN" && "$SAVE_TOKEN" -eq 1 ]]; then
     emit "WRITE $RELEASE_TOKEN_PATH (mode 0600)"
+  fi
+  if [[ "$MODE" != "sync-packaging" && -f /etc/nginx/nginx.conf ]]; then
+    if grep -qsE '^[[:space:]]*user[[:space:]]' /etc/nginx/nginx.conf &&
+       ! grep -qsE '^[[:space:]]*user[[:space:]]+www-data[[:space:]]*;' /etc/nginx/nginx.conf; then
+      emit "EDIT /etc/nginx/nginx.conf (set worker user to www-data)"
+    fi
+    if ! grep -qsE 'sites-enabled' /etc/nginx/nginx.conf &&
+       [[ ! -f /etc/nginx/conf.d/zzz-nexa-sites-enabled.conf ]]; then
+      emit "WRITE /etc/nginx/conf.d/zzz-nexa-sites-enabled.conf (include sites-enabled/*)"
+    fi
   fi
   emit "WRITE /etc/nginx/snippets/nexa-panel-proxy.conf (mode 0644)"
   emit "WRITE /etc/nginx/sites-available/nexa-panel.conf (mode 0644)"
@@ -1588,6 +1603,39 @@ else
   if ! "$PREFLIGHT_BINARY" "${PREFLIGHT_ARGS[@]}"; then
     die "preflight found blockers; resolve them and re-run, or pass --skip-preflight to install anyway"
   fi
+fi
+
+# --- nginx repository -------------------------------------------------------
+# Ubuntu 24.04 ships nginx 1.24, which has no QUIC/HTTP3 module: a site with
+# HTTP/3 enabled fails `nginx -t` and rolls the activation back, which is why
+# the sites renderer refuses HTTP/3 at plan time on this floor
+# (validateSettings, internal/platform/operators/sites/render.go). nginx.org's
+# stable line carries the http_v3 module, so the panel pulls nginx from there
+# instead of the distro archive. This must land before the `nginx` prerequisite
+# is installed, so the package resolves to the repository build rather than the
+# archive's 1.24; adding it afterwards would leave 1.24 in place until an
+# apt upgrade. Idempotent and skipped during a packaging refresh, matching the
+# ppa:ondrej/php and PGDG blocks further down.
+if [[ "$MODE" != "sync-packaging" ]] && ! grep -rqs 'nginx.org/packages' /etc/apt/sources.list.d/ 2>/dev/null; then
+  log "Configuring the nginx repository (nginx.org stable, for HTTP/3)"
+  # curl and gnupg normally arrive with the prerequisites below, but the signing
+  # key has to be imported now — install just those two first. The full set still
+  # lands in the prerequisites transaction, so this only fetches what a minimal
+  # host is missing.
+  apt-get update -qq
+  apt-get install -y --no-install-recommends ca-certificates curl gnupg
+  journal_path /usr/share/keyrings/nginx-archive-keyring.gpg
+  curl -fsSL https://nginx.org/keys/nginx_signing.key |
+    gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
+  chmod 0644 /usr/share/keyrings/nginx-archive-keyring.gpg
+  journal_path /etc/apt/sources.list.d/nginx.list
+  printf 'deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/ubuntu %s nginx\n' \
+    "$VERSION_CODENAME" > /etc/apt/sources.list.d/nginx.list
+  # Pin nginx.org above the Ubuntu archive so `nginx` resolves to the repository
+  # build; without the pin apt can prefer the distro package on a version tie.
+  journal_path /etc/apt/preferences.d/99nginx
+  printf 'Package: *\nPin: origin nginx.org\nPin: release o=nginx\nPin-Priority: 900\n' \
+    > /etc/apt/preferences.d/99nginx
 fi
 
 # --- prerequisites ----------------------------------------------------------
@@ -1959,6 +2007,38 @@ if [[ -f "$PANEL_VHOST" ]]; then
       "$TLS_ACTIVE" "$PRESERVED_EXTERNAL_TLS"
   fi
 fi
+# The nginx.org package installed above for HTTP/3 differs from Ubuntu's stock
+# nginx in two ways the panel depends on; reconcile them before the first
+# `nginx -t` below. Both guards are idempotent and no-op on a node that already
+# matches (including a stock-Ubuntu layout), so re-running is safe.
+if [[ "$MODE" != "sync-packaging" && -f /etc/nginx/nginx.conf ]]; then
+  # (1) Worker user. nginx.org ships `user nginx;`, but the panel's file model is
+  # www-data end to end — per-site FPM sockets are listen.owner/group www-data
+  # 0660, site logs are nexa_<slug>:www-data, and logrotate runs `su <site>
+  # www-data`. A worker running as nginx cannot read any of it, so every site
+  # would 502. Force the worker back to www-data.
+  if grep -qsE '^[[:space:]]*user[[:space:]]' /etc/nginx/nginx.conf &&
+     ! grep -qsE '^[[:space:]]*user[[:space:]]+www-data[[:space:]]*;' /etc/nginx/nginx.conf; then
+    log "Setting the nginx worker user to www-data"
+    journal_path /etc/nginx/nginx.conf
+    sed -i -E 's/^[[:space:]]*user[[:space:]]+[^;]+;/user  www-data;/' /etc/nginx/nginx.conf
+  fi
+  # (2) sites-enabled include. nginx.org's nginx.conf loads only conf.d/*.conf, so
+  # no panel-managed vhost (nor the panel's own) would load. Add the include via a
+  # conf.d drop-in — only when the main config lacks it, so a stock-Ubuntu node
+  # (whose nginx.conf already includes sites-enabled) never loads a vhost twice.
+  # The zzz- prefix sorts the drop-in last among conf.d/*.conf, so every per-site
+  # limit_req_zone (conf.d/nexa-<slug>-ratelimit.conf) is defined before the vhost
+  # that references it is parsed.
+  if ! grep -qsE 'sites-enabled' /etc/nginx/nginx.conf &&
+     [[ ! -f /etc/nginx/conf.d/zzz-nexa-sites-enabled.conf ]]; then
+    log "Enabling the sites-enabled include for panel-managed vhosts"
+    journal_path /etc/nginx/conf.d/zzz-nexa-sites-enabled.conf
+    printf '# Managed by Nexa Panel: load panel-managed vhosts from sites-enabled/.\ninclude /etc/nginx/sites-enabled/*;\n' \
+      > /etc/nginx/conf.d/zzz-nexa-sites-enabled.conf
+  fi
+fi
+
 # Only ever link a vhost that exists: a --sync-packaging run on a node the panel
 # was never published on has nothing to link, and a dangling symlink in
 # sites-enabled fails `nginx -t` outright, taking every other site down with it.
