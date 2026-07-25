@@ -87,7 +87,22 @@ type handlerRegistration struct {
 type Config struct {
 	PollInterval  time.Duration
 	LeaseDuration time.Duration
+	// RetentionPeriod is how long a terminal (succeeded/failed) job is kept
+	// before the worker prunes it and its events. Scheduled work (e.g. per-minute
+	// backup timers) mints a fresh durable row every minute, so without this the
+	// jobs and job_events tables grow without bound. Zero selects the default; a
+	// negative value disables pruning entirely.
+	RetentionPeriod time.Duration
+	// PruneInterval is how often the worker sweeps for retired jobs. Zero selects
+	// the default. It is always clamped positive so the sweep ticker is valid;
+	// disable pruning via a negative RetentionPeriod, not this.
+	PruneInterval time.Duration
 }
+
+const (
+	defaultRetentionPeriod = 7 * 24 * time.Hour
+	defaultPruneInterval   = time.Hour
+)
 
 type Module struct {
 	database *bun.DB
@@ -166,6 +181,12 @@ func NewWithConfig(ctx context.Context, database *bun.DB, recorder audit.Recorde
 	}
 	if config.LeaseDuration <= 0 {
 		return nil, errors.New("job lease duration must be positive")
+	}
+	if config.RetentionPeriod == 0 {
+		config.RetentionPeriod = defaultRetentionPeriod
+	}
+	if config.PruneInterval <= 0 {
+		config.PruneInterval = defaultPruneInterval
 	}
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
