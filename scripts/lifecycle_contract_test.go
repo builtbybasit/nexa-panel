@@ -507,6 +507,48 @@ func TestInstallerRequiresExplicitExposureAndFirewallConsent(t *testing.T) {
 	}
 }
 
+// The stock Ubuntu nginx (1.24) has no QUIC, so a site with HTTP/3 enabled fails
+// `nginx -t` and rolls back. The installer provisions an HTTP/3-capable build
+// from nginx.org's stable repository, which it must configure BEFORE the
+// prerequisite `nginx` package is installed (otherwise apt pulls the 1.24 archive
+// build), then reconcile to the panel's layout: the worker user back to www-data
+// (nginx.org ships `user nginx;`, which cannot read the www-data FPM sockets or
+// site trees) and a sites-enabled include (nginx.org's nginx.conf loads only
+// conf.d/*.conf).
+func TestInstallerProvisionsHTTP3CapableNginx(t *testing.T) {
+	content := readScript(t, "install.sh")
+	repo := strings.Index(content, "nginx.org/packages/ubuntu")
+	prereqInstall := strings.Index(content, `apt-get install -y --no-install-recommends "${PREREQUISITE_PACKAGES[@]}"`)
+	if repo < 0 || prereqInstall < 0 {
+		t.Fatal("installer no longer configures the nginx repository or installs the prerequisites")
+	}
+	if repo > prereqInstall {
+		t.Fatal("nginx.org repository is configured after nginx is installed; apt would pull Ubuntu's 1.24 build")
+	}
+	// Security-relevant: a worker running as nginx cannot reach the www-data FPM
+	// sockets, so the reconciliation must force the worker user back to www-data.
+	if !strings.Contains(content, "user  www-data;") {
+		t.Error("installer does not force the nginx worker user to www-data")
+	}
+	// The repo files and the reconciliation edit must be rollback-safe, and the
+	// sites-enabled include must sort last among conf.d/*.conf (zzz- prefix) so
+	// every per-site limit_req_zone is defined before the vhost that uses it.
+	for _, required := range []string{
+		"journal_path /usr/share/keyrings/nginx-archive-keyring.gpg",
+		"journal_path /etc/apt/sources.list.d/nginx.list",
+		"journal_path /etc/nginx/nginx.conf",
+		"journal_path /etc/nginx/conf.d/zzz-nexa-sites-enabled.conf",
+	} {
+		if !strings.Contains(content, required) {
+			t.Errorf("installer does not journal %q for rollback", required)
+		}
+	}
+	// A purge must remove the include drop-in the installer created.
+	if !strings.Contains(readScript(t, "uninstall.sh"), "/etc/nginx/conf.d/zzz-nexa-sites-enabled.conf") {
+		t.Error("uninstall does not remove the sites-enabled include drop-in")
+	}
+}
+
 func TestDownloadHandsOffBeforeLifecycleLockAcquisition(t *testing.T) {
 	content := readScript(t, "install.sh")
 	handoff := strings.Index(content, "if [[ \"$DOWNLOAD\" -eq 1 ]]")
