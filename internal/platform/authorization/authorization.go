@@ -43,6 +43,21 @@ const (
 	UsersManage       Permission = "users.manage"
 )
 
+// AllPermissions is the canonical enumeration of every permission the panel
+// recognizes. It is the single source of truth for exhaustive iteration (tests,
+// tooling): a new permission constant must be appended here, and the
+// role-matrix test guards that every granted permission appears in this list so
+// a new grant can never be silently skipped.
+var AllPermissions = []Permission{
+	SystemRead, SystemUpdate, JobsRead, AuditRead, RuntimesRead,
+	SitesRead, SitesWrite, DomainsRead, DomainsWrite,
+	CertificatesRead, CertificatesWrite, DatabasesRead, DatabasesWrite,
+	OperationsApply, FilesRead, FilesWrite, LogsRead,
+	SchedulesRead, SchedulesWrite, ApplicationsRead, ApplicationsWrite,
+	BackupsRead, BackupsWrite, ServicesRead, ServicesWrite,
+	FirewallRead, FirewallWrite, DeployRead, DeployWrite, UsersManage,
+}
+
 type Policy struct {
 	grants    map[string]map[Permission]struct{}
 	now       func() time.Time
