@@ -26,7 +26,8 @@
     "vue-router": "^5.2.0"
   },
   "overrides": {
-    "dompurify": "3.4.12"
+    "dompurify": "3.4.12",
+    "minimatch": "9.0.8"
   },
   "devDependencies": {
     "@redocly/cli": "2.40.0",
