@@ -1,7 +1,14 @@
 import type { Job } from '../jobs/api'
 import { apiRequest } from '@/shared/api/request'
 
-type TaskStatus = 'draft' | 'planning' | 'plan_ready' | 'activating' | 'active' | 'failed'
+type TaskStatus =
+  | 'planning'
+  | 'plan_ready'
+  | 'activating'
+  | 'active'
+  | 'rolling_back'
+  | 'rolled_back'
+  | 'failed'
 
 export interface ScheduledTask {
   id: string

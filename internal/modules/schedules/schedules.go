@@ -19,7 +19,6 @@ import (
 type Status string
 
 const (
-	StatusDraft       Status = "draft"
 	StatusPlanning    Status = "planning"
 	StatusPlanReady   Status = "plan_ready"
 	StatusActivating  Status = "activating"

@@ -112,7 +112,10 @@ const runner = useJobRunner()
 const runnerJobLink = computed(() => (runner.jobId.value === undefined ? {} : { jobId: runner.jobId.value }))
 const runnerElapsed = computed(() => (runner.startedAtMs.value === undefined ? {} : { startedAtMs: runner.startedAtMs.value }))
 
-const inFlightStatuses = new Set(['planning', 'activating'])
+// Mirrors the control plane's busy() guard: a lifecycle job is in flight in
+// each of these states, so a mutation would 409. rolling_back must be here or
+// Edit/Delete stay enabled through a rollback and fail on submit.
+const inFlightStatuses = new Set(['planning', 'activating', 'rolling_back'])
 const canMutate = (task: ScheduledTask) => canWrite.value && !task.pendingRemoval && !inFlightStatuses.has(task.status)
 const canRun = (task: ScheduledTask) =>
   identity.can('operations.apply') && task.status === 'active' && task.enabled && !task.pendingRemoval

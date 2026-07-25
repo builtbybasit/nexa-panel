@@ -519,7 +519,6 @@ func (e SchedulePlanKind) Valid() bool {
 const (
 	ScheduledTaskStatusActivating  ScheduledTaskStatus = "activating"
 	ScheduledTaskStatusActive      ScheduledTaskStatus = "active"
-	ScheduledTaskStatusDraft       ScheduledTaskStatus = "draft"
 	ScheduledTaskStatusFailed      ScheduledTaskStatus = "failed"
 	ScheduledTaskStatusPlanReady   ScheduledTaskStatus = "plan_ready"
 	ScheduledTaskStatusPlanning    ScheduledTaskStatus = "planning"
@@ -533,8 +532,6 @@ func (e ScheduledTaskStatus) Valid() bool {
 	case ScheduledTaskStatusActivating:
 		return true
 	case ScheduledTaskStatusActive:
-		return true
-	case ScheduledTaskStatusDraft:
 		return true
 	case ScheduledTaskStatusFailed:
 		return true
