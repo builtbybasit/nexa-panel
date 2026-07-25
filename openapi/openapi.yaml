@@ -158,8 +158,6 @@ paths:
     $ref: ./paths/databases.yaml#/databases_grants
   /databases/grants/{id}:
     $ref: ./paths/databases.yaml#/databases_grants_id
-  /databases/{id}/backups:
-    $ref: ./paths/databases.yaml#/databases_id_backups
   /databases/restore-points:
     $ref: ./paths/databases.yaml#/databases_restore-points
   /databases/restore-points/{id}/restore:
