@@ -17,7 +17,7 @@
         "vue-router": "^5.2.0",
       },
       "devDependencies": {
-        "@redocly/cli": "2.40.0",
+        "@redocly/cli": "2.43.1",
         "@tailwindcss/vite": "^4.3.3",
         "@types/node": "^26.1.1",
         "@vitejs/plugin-vue": "^6.0.0",
@@ -164,7 +164,7 @@
 
     "@pkgjs/parseargs": ["@pkgjs/parseargs@0.11.0", "", {}, "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg=="],
 
-    "@redocly/cli": ["@redocly/cli@2.40.0", "", { "bin": { "openapi": "bin/cli.js", "redocly": "bin/cli.js" } }, "sha512-1uQ4GeNjhApy9EtypZgp70ZN5GC2JFfst3UkNEXSqkXgVIPGdEAnlz5Xwgax/4cEUGOvaZoM3X25iSQcqbplFg=="],
+    "@redocly/cli": ["@redocly/cli@2.43.1", "", { "bin": { "openapi": "bin/cli.js", "redocly": "bin/cli.js" } }, "sha512-UGQkgd0Dgjt35p1cbOfC1Y8GEz7rCpktbhwCGh04mzD6yyKW9EnpKIa+NRh/CSORDeW7iqaRGjxu3ISjSx6gPQ=="],
 
     "@rolldown/binding-android-arm64": ["@rolldown/binding-android-arm64@1.1.5", "", { "os": "android", "cpu": "arm64" }, "sha512-lZg8fqIv2v7FF237bwMgzGZEJvGL79/s5knJ/i6FmsGF4XXlzccZ4jb+TrFIxtSSxFtIpdsgrPZeMk1I9AFcyQ=="],
 
