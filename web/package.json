@@ -36,7 +36,7 @@
     "@vitejs/plugin-vue": "^6.0.0",
     "@vue/test-utils": "^2.4.11",
     "happy-dom": "^20.11.1",
-    "knip": "6.29.0",
+    "knip": "6.32.0",
     "tailwindcss": "^4.3.3",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^6.0.3",
