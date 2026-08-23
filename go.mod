@@ -10,7 +10,7 @@ module github.com/nexa-panel/nexa-panel
 go 1.25.12
 
 require (
-	github.com/oapi-codegen/runtime v1.6.0
+	github.com/oapi-codegen/runtime v1.7.0
 	github.com/uptrace/bun v1.2.18
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18
 	golang.org/x/crypto v0.54.0
