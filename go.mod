@@ -7,13 +7,13 @@ module github.com/nexa-panel/nexa-panel
 // vulnerabilities, which govulncheck failed the build over. This line is now the
 // single place the toolchain is chosen, so `go mod tidy` drops the redundant
 // toolchain directive that used to sit below it.
-go 1.25.12
+go 1.26.0
 
 require (
 	github.com/oapi-codegen/runtime v1.6.0
 	github.com/uptrace/bun v1.2.18
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/mod v0.38.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.54.0
@@ -44,7 +44,7 @@ require (
 	github.com/vmware-labs/yaml-jsonpath v0.3.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.74.1 // indirect
